@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-import demo_organic as sim
+import simulation as sim
 from paysignal import Engine, Payment
 from paysignal.organic import OrganicEngine, Post, load_posts_csv
 

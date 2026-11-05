@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-import demo_audit
-import demo_organic as sim
+
+import simulation as sim
 from paysignal import Engine
 from paysignal.ai import MetaAI
 from paysignal.audit import audit_summary, audit_text, build_audit
@@ -83,7 +83,7 @@ def test_reimport_is_idempotent():
 
 @pytest.fixture(scope="module")
 def demo_audit_result():
-    orders_csv, posts_csv = demo_audit.write_exports()
+    orders_csv, posts_csv = sim.write_exports()
     e = Engine("d")
     e.ingest(import_auto(orders_csv, "d")["payments"])
     posts = import_auto(posts_csv, "d")["posts"]

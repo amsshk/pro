@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-import demo_organic as sim
+import simulation as sim
 from paysignal import Engine
 from paysignal.ai import MetaAI
 from paysignal.assistant import ask, build_campaign, business_context, validate_campaign

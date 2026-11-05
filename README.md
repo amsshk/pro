@@ -4,15 +4,20 @@ Detects every payment a business receives, works out which post or ad caused it,
 scores what it is really worth, and sends that real value to Meta so its
 algorithm learns to find people who pay, not people who watch.
 
-## Run it
+## Start
 
 ```bash
-pip install pandas numpy scikit-learn requests pytest   # lightgbm optional, preferred
-python demo.py           # payments -> real value -> Meta events
-python demo_organic.py   # organic engine on 60 simulated posts
-python demo_audit.py     # day-one audit from Shopify + Meta export files
-pytest -q                # 69 tests
+pip install -r requirements.txt
+cp clients.example.json clients.json   # one entry per business; never commit this file
+python -m paysignal.server             # then follow "Going live" below
 ```
+
+Onboard a business in its first week:
+1. `POST /import/<id>` its Shopify or Stripe orders export and its Meta posts export
+2. `GET /audit/<id>?summary=1` for the first-week audit
+3. Connect its Stripe/Shopify webhooks and put a tracking link or code on every new post
+
+`pytest -q` runs 69 checks, using generated test data that ships only in `tests/`.
 
 ## Organic engine (`organic.py`)
 
