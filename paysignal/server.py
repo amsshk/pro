@@ -50,13 +50,29 @@ RETRAIN_SECONDS = 24 * 3600
 def load_clients(path: str | None) -> dict:
     """Client settings live in a JSON file outside git (see clients.example.json),
     or in the PAYSIGNAL_CLIENTS environment variable on a hosted server."""
-    raw = os.environ.get("PAYSIGNAL_CLIENTS")
-    if raw:
-        return json.loads(raw)
-    if path and os.path.exists(path):
-        with open(path) as f:
-            return json.load(f)
-    return {}
+    raw = (os.environ.get("PAYSIGNAL_CLIENTS") or "").strip()
+    source = "the PAYSIGNAL_CLIENTS setting"
+    if not raw and path and os.path.exists(path):
+        with open(path, encoding="utf-8-sig") as f:
+            raw, source = f.read().strip(), path
+    if not raw:
+        return {}
+    # curly quotes sneak in when copying from chat apps or documents
+    raw = raw.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
+    try:
+        clients = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise SystemExit(
+            f"PaySignal cannot start: {source} is not valid JSON ({e.msg} at character {e.pos}). "
+            'It must start with { and look like: {"client-id": {"api_key": "...", "currency": "AED"}}. '
+            "Check that it is the whole JSON, not only the key, and that quotes are straight quotes.") from None
+    if not isinstance(clients, dict) or not all(isinstance(v, dict) for v in clients.values()):
+        raise SystemExit(f'PaySignal cannot start: {source} must be {{"client-id": {{...settings...}}}}.')
+    for cid, cfg in clients.items():
+        if not cfg.get("api_key") or len(str(cfg["api_key"])) < 20 or "REPLACE" in str(cfg["api_key"]).upper() \
+                or "PUT-YOUR-KEY" in str(cfg["api_key"]).upper():
+            log.warning("client %s has a missing, short or placeholder api_key: set a long random key", cid)
+    return clients
 
 
 class App:
