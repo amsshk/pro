@@ -1,8 +1,22 @@
-# PaySignal
+# ProAds
 
 Detects every payment a business receives, works out which post or ad caused it,
 scores what it is really worth, and sends that real value to Meta so its
 algorithm learns to find people who pay, not people who watch.
+
+## Web app
+
+Open **https://pro.ezdevsoft.net** and sign in with a business ID and its access key
+(the `api_key` in the client settings). Three screens:
+
+- **Audit**: sales, refunds, real profit, money-losing discount codes, refund hot spots, posts,
+  and a "do this week" list. AI summary in English or Arabic, report download.
+- **Connect & upload**: drop Shopify/Stripe/posts exports, webhook addresses to copy, and a
+  tracking link + promo code for every new post (saved, so later sales match the post).
+- **Ask & campaigns**: chat with Meta Muse about the results, and draft campaigns.
+
+Everything uploaded is shown as plain text, never run as code. The access key stays in the
+browser tab only and is cleared when the tab closes.
 
 ## Start
 
@@ -103,7 +117,7 @@ If a model fails, the next one in the chain is tried. Change routes with
 `PAYSIGNAL_MODELS='{"chat": ["muse-spark-1.3"]}'`. Every reply reports its model and cost.
 
 **Contributor tier** (`-contributor` models, ~95% cheaper): Meta trains on everything sent to
-it, so PaySignal never uses it for client data. It can be enabled for labelling public captions
+it, so ProAds never uses it for client data. It can be enabled for labelling public captions
 only, with `PAYSIGNAL_ALLOW_CONTRIBUTOR=1`.
 
 **Endpoints**

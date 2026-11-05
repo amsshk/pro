@@ -1,4 +1,4 @@
-"""PaySignal live server.
+"""ProAds live server.
 
 Receives payment notifications 24/7, checks they are genuine, stores them,
 and regularly sends their real value to Meta.
@@ -25,17 +25,19 @@ import hmac
 import json
 import logging
 import os
+import re
 import threading
 import time
 from datetime import datetime, timezone
 
-from flask import Flask, abort, jsonify, request
+from flask import Flask, abort, jsonify, request, send_from_directory
 
 from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
 from .ai import MetaAI
+from .attribution import make_promo_code, tag_link
 from .assistant import CampaignError, ask, build_campaign, business_context
 from .audit import audit_summary, audit_text, build_audit
 from .importers import import_auto
@@ -45,6 +47,7 @@ from .store import PaymentStore
 
 log = logging.getLogger("paysignal")
 RETRAIN_SECONDS = 24 * 3600
+WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
 
 
 def load_clients(path: str | None) -> dict:
@@ -63,11 +66,11 @@ def load_clients(path: str | None) -> dict:
         clients = json.loads(raw)
     except json.JSONDecodeError as e:
         raise SystemExit(
-            f"PaySignal cannot start: {source} is not valid JSON ({e.msg} at character {e.pos}). "
+            f"ProAds cannot start: {source} is not valid JSON ({e.msg} at character {e.pos}). "
             'It must start with { and look like: {"client-id": {"api_key": "...", "currency": "AED"}}. '
             "Check that it is the whole JSON, not only the key, and that quotes are straight quotes.") from None
     if not isinstance(clients, dict) or not all(isinstance(v, dict) for v in clients.values()):
-        raise SystemExit(f'PaySignal cannot start: {source} must be {{"client-id": {{...settings...}}}}.')
+        raise SystemExit(f'ProAds cannot start: {source} must be {{"client-id": {{...settings...}}}}.')
     for cid, cfg in clients.items():
         if not cfg.get("api_key") or len(str(cfg["api_key"])) < 20 or "REPLACE" in str(cfg["api_key"]).upper() \
                 or "PUT-YOUR-KEY" in str(cfg["api_key"]).upper():
@@ -94,10 +97,23 @@ class App:
     def engine(self, client_id: str) -> Engine:
         if client_id not in self.engines:
             cfg = self.config(client_id)
-            promo = {k: tuple(v) for k, v in cfg.get("promo_map", {}).items()}
+            promo = {k.upper(): tuple(v) for k, v in cfg.get("promo_map", {}).items()}
+            promo.update({r["code"]: (r["platform"], r["post_id"]) for r in self.store.promos(client_id)})
             self.engines[client_id] = Engine(client_id, store=self.store, promo_map=promo,
                                              default_margin=cfg.get("default_margin", 0.4))
         return self.engines[client_id]
+
+    def posts_for(self, client_id: str) -> list:
+        if client_id not in self.posts:
+            self.posts[client_id] = self.store.load_posts(client_id)
+        return self.posts[client_id]
+
+    def save_posts(self, client_id: str, posts: list) -> None:
+        """Merge by post id and keep in the database, so posts survive restarts."""
+        merged = {p.post_id: p for p in self.posts_for(client_id)}
+        merged.update({p.post_id: p for p in posts})
+        self.store.save_posts(client_id, posts)
+        self.posts[client_id] = sorted(merged.values(), key=lambda p: p.posted_at)
 
     def ensure_trained(self, client_id: str, force: bool = False) -> None:
         if force or time.time() - self.trained_at.get(client_id, 0) > RETRAIN_SECONDS:
@@ -186,7 +202,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             return jsonify({"errors": errors}), 400
         labels = label_posts(posts, make_labeler())     # Meta AI, Claude, or rules: whichever is set up
         with state.lock:
-            state.posts[client_id] = posts
+            state.save_posts(client_id, posts)
         return {"posts": len(posts), "errors": errors, "labels": labels}
 
     @flask.post("/import/<client_id>")
@@ -205,9 +221,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if res["posts"]:
             labels = label_posts(res["posts"], make_labeler())
             with state.lock:
-                merged = {p.post_id: p for p in state.posts.get(client_id, [])}
-                merged.update({p.post_id: p for p in res["posts"]})
-                state.posts[client_id] = list(merged.values())
+                state.save_posts(client_id, res["posts"])
             out.update(posts=len(res["posts"]), labels=labels)
         return out
 
@@ -217,7 +231,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         state.require_key(client_id)
         with state.lock:
             eng = state.engine(client_id)
-            audit = build_audit(eng, state.posts.get(client_id), currency=state.config(client_id).get("currency", "AED"))
+            audit = build_audit(eng, (state.posts_for(client_id) or None), currency=state.config(client_id).get("currency", "AED"))
             state.trained_at[client_id] = time.time()
         if "error" in audit:
             return jsonify(audit), 400
@@ -240,7 +254,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             state.ensure_trained(client_id)
             eng = state.engine(client_id)
             out = {"totals": eng.store.totals(client_id)}
-            posts = state.posts.get(client_id)
+            posts = (state.posts_for(client_id) or None)
             if posts:
                 org = OrganicEngine(eng, posts)
                 out["report_text"] = org.report()
@@ -263,7 +277,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         with state.lock:
             state.ensure_trained(client_id)
             eng = state.engine(client_id)
-            posts = state.posts.get(client_id)
+            posts = (state.posts_for(client_id) or None)
             org = OrganicEngine(eng, posts) if posts else None
             return business_context(eng, org, state.config(client_id).get("currency", "AED"))
 
@@ -306,6 +320,77 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             abort(503, str(e))
         except (RuntimeError, CampaignError) as e:
             abort(502, str(e))
+
+    @flask.get("/")
+    @flask.get("/app")
+    def web_app():
+        """The ProAds web app: sign-in, audit, upload, tracking links, AI assistant."""
+        resp = send_from_directory(WEB_DIR, "index.html")
+        resp.headers["Cache-Control"] = "no-cache"
+        resp.headers["X-Frame-Options"] = "DENY"
+        resp.headers["Referrer-Policy"] = "no-referrer"
+        return resp
+
+    @flask.get("/status/<client_id>")
+    def status(client_id):
+        """What is connected for this business; also used to check a sign-in."""
+        state.require_key(client_id)
+        cfg = state.config(client_id)
+        meta = cfg.get("meta", {})
+        ai = state.ai or MetaAI()
+        with state.lock:
+            payments = state.store.last_payment_by_source(client_id)
+            totals = state.store.totals(client_id)
+            posts = len(state.posts_for(client_id))
+            codes = len(state.store.promos(client_id))
+        return {
+            "client_id": client_id,
+            "name": cfg.get("name", client_id),
+            "currency": cfg.get("currency", "AED"),
+            "website": cfg.get("website", ""),
+            "connections": {
+                "shopify": {"configured": bool(cfg.get("shopify_webhook_secret")), **payments.get("shopify", {})},
+                "stripe": {"configured": bool(cfg.get("stripe_webhook_secret")), **payments.get("stripe", {})},
+                "uploads": payments.get("csv", {}),
+                "meta_capi": {"configured": bool(meta.get("dataset_id") and meta.get("access_token")),
+                              "live": bool(meta.get("live"))},
+                "ai": {"configured": ai.available},
+            },
+            "totals": totals, "posts": posts, "tracking_codes": codes,
+            "webhooks": {"stripe": f"/webhooks/stripe/{client_id}", "shopify": f"/webhooks/shopify/{client_id}"},
+        }
+
+    @flask.post("/tracking/<client_id>")
+    def new_tracking(client_id):
+        """A tracking link and promo code for one new post, saved so sales match it."""
+        state.require_key(client_id)
+        body = request.get_json(silent=True) or {}
+        name = (body.get("post_name") or "").strip()
+        platform = (body.get("platform") or "instagram").strip().lower()
+        if not name:
+            abort(400, "send JSON with a 'post_name'")
+        if platform not in ("instagram", "tiktok", "facebook", "snapchat", "youtube", "whatsapp"):
+            abort(400, "unknown platform")
+        cfg = state.config(client_id)
+        url = (body.get("url") or cfg.get("website") or "").strip()
+        if url and not re.match(r"^https?://", url):
+            url = "https://" + url
+        post_id = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40] or "post"
+        link = tag_link(url, platform, post_id) if url else ""
+        with state.lock:
+            existing = {r["code"] for r in state.store.promos(client_id)}
+            code = make_promo_code(post_id, prefix=name)
+            while code in existing:
+                code = make_promo_code(post_id, prefix=name)
+            state.store.add_promo(client_id, code, platform, post_id, link)
+            state.engine(client_id).promo_map[code] = (platform, post_id)
+        return {"post_id": post_id, "platform": platform, "link": link, "code": code}
+
+    @flask.get("/tracking/<client_id>")
+    def list_tracking(client_id):
+        state.require_key(client_id)
+        with state.lock:
+            return {"codes": state.store.promos(client_id)}
 
     @flask.errorhandler(401)
     @flask.errorhandler(400)

@@ -31,6 +31,21 @@ CREATE TABLE IF NOT EXISTS payments (
 );
 CREATE INDEX IF NOT EXISTS idx_cust ON payments(client_id, customer_key);
 CREATE INDEX IF NOT EXISTS idx_refund ON payments(client_id, refund_of);
+CREATE TABLE IF NOT EXISTS posts (
+    client_id TEXT NOT NULL,
+    post_id   TEXT NOT NULL,
+    data      TEXT NOT NULL,
+    PRIMARY KEY (client_id, post_id)
+);
+CREATE TABLE IF NOT EXISTS promo_codes (
+    client_id TEXT NOT NULL,
+    code      TEXT NOT NULL,
+    platform  TEXT NOT NULL,
+    post_id   TEXT NOT NULL,
+    link      TEXT,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (client_id, code)
+);
 """
 
 
@@ -91,6 +106,41 @@ class PaymentStore:
         rows = self.db.execute("SELECT data FROM payments WHERE client_id=? AND kind='purchase'"
                                " AND sent_to_meta=0 ORDER BY occurred_at", (client_id,))
         return [self._load(r) for r in rows]
+
+    # ----- posts (kept across restarts) -----
+    def save_posts(self, client_id: str, posts: list) -> None:
+        rows = []
+        for p in posts:
+            d = asdict(p)
+            d["posted_at"] = p.posted_at.isoformat()
+            rows.append((client_id, p.post_id, json.dumps(d, ensure_ascii=False)))
+        self.db.executemany("INSERT OR REPLACE INTO posts (client_id, post_id, data) VALUES (?,?,?)", rows)
+        self.db.commit()
+
+    def load_posts(self, client_id: str) -> list:
+        from .organic import Post
+        out = []
+        for (raw,) in self.db.execute("SELECT data FROM posts WHERE client_id=?", (client_id,)):
+            d = json.loads(raw)
+            d["posted_at"] = datetime.fromisoformat(d["posted_at"])
+            out.append(Post(**d))
+        return sorted(out, key=lambda p: p.posted_at)
+
+    # ----- tracking codes -----
+    def add_promo(self, client_id: str, code: str, platform: str, post_id: str, link: str) -> None:
+        self.db.execute("INSERT OR REPLACE INTO promo_codes (client_id, code, platform, post_id, link, created_at)"
+                        " VALUES (?,?,?,?,?,datetime('now'))", (client_id, code.upper(), platform, post_id, link))
+        self.db.commit()
+
+    def promos(self, client_id: str) -> list[dict]:
+        rows = self.db.execute("SELECT code, platform, post_id, link, created_at FROM promo_codes"
+                               " WHERE client_id=? ORDER BY created_at DESC", (client_id,))
+        return [dict(zip(("code", "platform", "post_id", "link", "created_at"), r)) for r in rows]
+
+    def last_payment_by_source(self, client_id: str) -> dict[str, str]:
+        rows = self.db.execute("SELECT source, MAX(occurred_at), COUNT(*) FROM payments WHERE client_id=?"
+                               " AND kind='purchase' GROUP BY source", (client_id,))
+        return {src: {"last": last, "count": n} for src, last, n in rows}
 
     def totals(self, client_id: str) -> dict:
         gross, = self.db.execute("SELECT COALESCE(SUM(amount),0) FROM payments WHERE client_id=? AND kind='purchase'",
