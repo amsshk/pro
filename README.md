@@ -10,7 +10,8 @@ algorithm learns to find people who pay, not people who watch.
 pip install pandas numpy scikit-learn requests pytest   # lightgbm optional, preferred
 python demo.py           # payments -> real value -> Meta events
 python demo_organic.py   # organic engine on 60 simulated posts
-pytest -q                # 56 tests
+python demo_audit.py     # day-one audit from Shopify + Meta export files
+pytest -q                # 69 tests
 ```
 
 ## Organic engine (`organic.py`)
@@ -57,6 +58,30 @@ python label_posts.py posts.csv labelled.csv
 Only captions are sent, never customer or payment data. Any AI error falls back to the rules.
 Force a choice with `PAYSIGNAL_LABEL_PROVIDER=meta|claude|rules`.
 The server labels posts automatically on `/upload/posts`.
+
+## Day one: first-week audit (`importers.py`, `audit.py`)
+
+Results in week one, not month two: import the business's history and audit it immediately.
+
+| Upload to `POST /import/<id>` | Where to get it |
+|---|---|
+| Shopify orders export | Shopify admin > Orders > Export (CSV) |
+| Stripe payments export | Stripe dashboard > Payments > Export |
+| Posts export | Meta Business Suite > Insights > Content > Export (also Instagram/TikTok exports) |
+| Any sales list | CSV with `id,date,amount,currency` |
+
+The file type is detected automatically and columns are matched by name, so slightly
+different export versions still work. Re-uploading the same file never double-counts.
+
+`GET /audit/<id>` (add `?summary=1&language=Arabic` for a Muse-written summary) shows:
+- **Measured from real orders:** sales, refunds and real profit by month; discount codes that
+  lose money; products with high refunds; how much profit comes from repeat customers; when people buy.
+- **Estimated:** which old posts came before sales jumps. Old posts had no tracking links, so this
+  is a timing estimate and is labelled as one. It often isn't strong enough to call patterns confident.
+- **Do this week:** specific actions from the numbers above.
+
+Day one gives measured money findings; tracking links from day one turn the post findings from
+estimates into measurements within a few weeks.
 
 ## Meta AI (`ai.py`, `assistant.py`)
 

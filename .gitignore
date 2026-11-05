@@ -8,3 +8,4 @@ clients.json
 *.db
 *.db-wal
 *.db-shm
+sample_*_export.csv

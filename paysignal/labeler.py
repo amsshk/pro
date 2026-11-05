@@ -62,6 +62,19 @@ _OFFER_RULES = {   # checked in this order: the most specific offer wins
 }
 
 
+def _media_format(media_type: str) -> str:
+    """'REELS', 'IG reel', 'Photos', 'FB video', 'Carousel album' -> reel/image/video/carousel."""
+    m = re.sub(r"^(ig|fb|instagram|facebook)\s+", "", (media_type or "").strip().lower()).replace(" ", "_")
+    if m in _MEDIA:
+        return _MEDIA[m]
+    if m.endswith("s") and m[:-1] in _MEDIA:
+        return _MEDIA[m[:-1]]
+    for key in ("reel", "story", "carousel", "live", "video", "photo", "image"):
+        if key in m:
+            return _MEDIA[key]
+    return ""
+
+
 def _norm(text: str) -> str:
     t = (text or "").lower()
     t = re.sub(r"[ً-ْـ]", "", t)            # Arabic diacritics and tatweel
@@ -81,7 +94,7 @@ class Labels:
 class RuleLabeler:
     def label(self, caption: str, media_type: str = "", platform: str = "") -> Labels:
         text = _norm(caption)
-        fmt = _MEDIA.get(media_type.strip().lower(), "")
+        fmt = _media_format(media_type)
         if not fmt:
             if platform.lower() == "tiktok":
                 fmt = "video"

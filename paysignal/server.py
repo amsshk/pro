@@ -10,6 +10,8 @@ Endpoints (one set per agency client, chosen by <client_id>):
   POST /upload/posts/<client_id>       post stats for the organic engine        [API key]
   GET  /report/<client_id>             organic report + totals as JSON          [API key]
   POST /sync/meta/<client_id>          send unsent payments to Meta now         [API key]
+  POST /import/<client_id>             day one: Shopify/Stripe/posts history     [API key]
+  GET  /audit/<client_id>              first-week audit (?summary=1 for Muse)    [API key]
   POST /ask/<client_id>                ask a question about the results (AI)    [API key]
   POST /campaign/<client_id>           draft a Meta campaign (AI, best model)   [API key]
   GET  /health
@@ -35,6 +37,8 @@ from .connectors.stripe import verify_signature
 from .engine import Engine
 from .ai import MetaAI
 from .assistant import CampaignError, ask, build_campaign, business_context
+from .audit import audit_summary, audit_text, build_audit
+from .importers import import_auto
 from .labeler import label_posts, make_labeler
 from .organic import OrganicEngine, load_posts_csv
 from .store import PaymentStore
@@ -168,6 +172,50 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         with state.lock:
             state.posts[client_id] = posts
         return {"posts": len(posts), "errors": errors, "labels": labels}
+
+    @flask.post("/import/<client_id>")
+    def import_history(client_id):
+        """Day one: upload a Shopify/Stripe export, a posts export or a sales CSV. Type is detected."""
+        state.require_key(client_id)
+        cfg = state.config(client_id)
+        res = import_auto(request.get_data(as_text=True), client_id, cfg.get("costs", {}),
+                          request.args.get("platform", "instagram"))
+        if res["kind"] == "unknown":
+            return jsonify({"errors": res["errors"]}), 400
+        out = {"kind": res["kind"], "errors": res["errors"]}
+        if res["payments"]:
+            out.update(state.ingest(client_id, res["payments"]))
+            state.trained_at.pop(client_id, None)       # retrain with the new history
+        if res["posts"]:
+            labels = label_posts(res["posts"], make_labeler())
+            with state.lock:
+                merged = {p.post_id: p for p in state.posts.get(client_id, [])}
+                merged.update({p.post_id: p for p in res["posts"]})
+                state.posts[client_id] = list(merged.values())
+            out.update(posts=len(res["posts"]), labels=labels)
+        return out
+
+    @flask.get("/audit/<client_id>")
+    def audit_endpoint(client_id):
+        """First-week audit. ?summary=1&language=Arabic adds a Muse-written summary."""
+        state.require_key(client_id)
+        with state.lock:
+            eng = state.engine(client_id)
+            audit = build_audit(eng, state.posts.get(client_id), currency=state.config(client_id).get("currency", "AED"))
+            state.trained_at[client_id] = time.time()
+        if "error" in audit:
+            return jsonify(audit), 400
+        out = {"audit": audit, "text": audit_text(audit)}
+        if request.args.get("summary") == "1":
+            ai = state.ai or MetaAI()
+            if ai.available:
+                try:
+                    out["summary"] = audit_summary(ai, audit, request.args.get("language", "English"))
+                except (PermissionError, RuntimeError) as e:
+                    out["summary_error"] = str(e)
+            else:
+                out["summary_error"] = "AI is not set up: add MODEL_API_KEY from dev.meta.ai"
+        return out
 
     @flask.get("/report/<client_id>")
     def report(client_id):
