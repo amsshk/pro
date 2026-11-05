@@ -1,0 +1,16 @@
+{
+  "demo-store": {
+    "api_key": "make-a-long-random-key-for-this-client",
+    "stripe_webhook_secret": "whsec_from_stripe_dashboard",
+    "shopify_webhook_secret": "from_shopify_app_settings",
+    "default_margin": 0.4,
+    "costs": {"SKU-123": 45.0},
+    "promo_map": {"GLOW-7K2F": ["instagram", "story_0413"]},
+    "meta": {
+      "dataset_id": "your_pixel_or_dataset_id",
+      "access_token": "your_conversions_api_token",
+      "test_event_code": "TEST12345",
+      "live": false
+    }
+  }
+}

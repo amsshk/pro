@@ -1,0 +1,7 @@
+flask>=3.0
+gunicorn>=22.0
+numpy>=1.26
+scikit-learn>=1.4
+requests>=2.31
+lightgbm>=4.0
+pytest>=8.0

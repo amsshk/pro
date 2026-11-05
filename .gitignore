@@ -4,3 +4,7 @@ __pycache__/
 sample_meta_event.json
 *.db
 .env
+clients.json
+*.db
+*.db-wal
+*.db-shm

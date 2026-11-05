@@ -36,7 +36,11 @@ CREATE INDEX IF NOT EXISTS idx_refund ON payments(client_id, refund_of);
 
 class PaymentStore:
     def __init__(self, path: str = ":memory:"):
-        self.db = sqlite3.connect(path)
+        # The server calls the store from several threads; the server serialises
+        # access with one lock, so sharing the connection across threads is safe.
+        self.db = sqlite3.connect(path, check_same_thread=False)
+        if path != ":memory:":
+            self.db.execute("PRAGMA journal_mode=WAL")   # survives crashes, faster writes
         self.db.executescript(SCHEMA)
 
     def add(self, p: Payment) -> bool:

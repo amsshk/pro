@@ -1,0 +1,20 @@
+# One-click deploy on Render (render.com): New > Blueprint > pick this repo.
+# Then set PAYSIGNAL_CLIENTS (the contents of your clients.json) in the
+# service's Environment tab. Never commit real secrets to git.
+services:
+  - type: web
+    name: paysignal
+    runtime: python
+    plan: starter          # the free plan sleeps and would miss webhooks
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn "paysignal.server:create_app()" --workers 1 --threads 8 --bind 0.0.0.0:$PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PAYSIGNAL_DB
+        value: /var/data/paysignal.db
+      - key: PAYSIGNAL_CLIENTS
+        sync: false
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1

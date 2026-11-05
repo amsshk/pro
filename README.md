@@ -10,7 +10,7 @@ algorithm learns to find people who pay, not people who watch.
 pip install pandas numpy scikit-learn requests pytest   # lightgbm optional, preferred
 python demo.py           # payments -> real value -> Meta events
 python demo_organic.py   # organic engine on 60 simulated posts
-pytest -q                # 23 tests
+pytest -q                # 33 tests
 ```
 
 ## Organic engine (`organic.py`)
@@ -58,9 +58,42 @@ Simulation is not proof; the real test is your own posts.
 5. Keep sending purchases to Meta (`push_to_meta`, start with a `test_event_code`).
    When ads start, Meta already knows what a paying customer looks like.
 
+## Live server (`paysignal/server.py`)
+
+Receives payments 24/7, rejects fakes (signature check), ignores retried
+duplicates, and sends new payments' real value to Meta every 10 minutes.
+
+**Run locally**
+```bash
+pip install -r requirements.txt
+cp clients.example.json clients.json      # fill in each client's settings
+python -m paysignal.server                # http://localhost:8000/health
+```
+
+**Endpoints** (`<id>` = the client's key in clients.json)
+
+| Endpoint | Who calls it |
+|---|---|
+| `POST /webhooks/stripe/<id>` | Stripe (events: `charge.succeeded`, `charge.refunded`) |
+| `POST /webhooks/shopify/<id>` | Shopify (topics: `orders/paid`, `refunds/create`) |
+| `POST /upload/csv/<id>` | You: offline sales CSV, header `X-API-Key` |
+| `POST /upload/posts/<id>` | You: post stats CSV, header `X-API-Key` |
+| `GET /report/<id>` | You: organic report as JSON, header `X-API-Key` |
+| `POST /sync/meta/<id>` | You: push to Meta now (also runs automatically) |
+
+**Going live, step by step**
+1. Deploy (e.g. Render using `render.yaml`; check Render's current plans and settings
+   when you do). Use a paid always-on plan: a sleeping server misses payments.
+2. Put the clients JSON in the `PAYSIGNAL_CLIENTS` environment variable, never in git.
+3. In Stripe: Developers > Webhooks > add `https://YOUR-SERVER/webhooks/stripe/<id>`,
+   copy its signing secret into `stripe_webhook_secret`.
+4. In Shopify: add webhooks for `orders/paid` and `refunds/create` to
+   `https://YOUR-SERVER/webhooks/shopify/<id>`, put the signing secret in `shopify_webhook_secret`.
+5. Meta: keep `"live": false` and check the dry run, then set `test_event_code` and
+   `"live": true` and watch Events Manager > Test events. Remove the test code when correct.
+
 ## Not built yet
 
-- Web server for live webhooks (FastAPI)
 - Pulling post stats automatically (Instagram/TikTok APIs) instead of CSV
 - Auto-labelling post format/hook/offer with AI from the caption and video
 - TikTok Events API sender
