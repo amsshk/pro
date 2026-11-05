@@ -31,6 +31,7 @@ from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
+from .labeler import ClaudeLabeler, label_posts
 from .organic import OrganicEngine, load_posts_csv
 from .store import PaymentStore
 
@@ -158,9 +159,10 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         posts, errors = load_posts_csv(request.get_data(as_text=True))
         if errors and not posts:
             return jsonify({"errors": errors}), 400
+        labels = label_posts(posts, ClaudeLabeler())     # AI if ANTHROPIC_API_KEY is set, else rules
         with state.lock:
             state.posts[client_id] = posts
-        return {"posts": len(posts), "errors": errors}
+        return {"posts": len(posts), "errors": errors, "labels": labels}
 
     @flask.get("/report/<client_id>")
     def report(client_id):

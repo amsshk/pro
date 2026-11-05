@@ -46,6 +46,9 @@ class Post:
     shares: int = 0
     saves: int = 0
     link_clicks: int = 0
+    caption: str = ""            # used by the labeller
+    media_type: str = ""         # as exported by the platform, e.g. REELS, STORY, CAROUSEL_ALBUM
+    label_source: str = "manual" # manual | rules | ai
 
     @property
     def engagement_rate(self) -> float:
@@ -54,8 +57,9 @@ class Post:
 
 def load_posts_csv(text: str) -> tuple[list[Post], list[str]]:
     """Columns: post_id, platform, posted_at, views (required); format, hook, offer, topic,
-    likes, comments, shares, saves, link_clicks (optional). Export from Meta Business Suite /
-    TikTok analytics, or fill in by hand."""
+    likes, comments, shares, saves, link_clicks, caption, media_type (optional).
+    Export from Meta Business Suite / TikTok analytics, or fill in by hand.
+    Leave format/hook/offer blank to have the labeller fill them in from the caption."""
     reader = csv.DictReader(io.StringIO(text))
     cols = {c.strip().lower() for c in reader.fieldnames or []}
     missing = {"post_id", "platform", "posted_at", "views"} - cols
@@ -70,9 +74,10 @@ def load_posts_csv(text: str) -> tuple[list[Post], list[str]]:
             num = lambda k: int(float(r.get(k) or 0))
             posts.append(Post(r["post_id"], r["platform"].lower(), dt,
                               (r.get("format") or "unknown").lower(), (r.get("hook") or "unknown").lower(),
-                              (r.get("offer") or "none").lower(), r.get("topic", ""),
+                              (r.get("offer") or "unknown").lower(), r.get("topic", ""),
                               num("views"), num("likes"), num("comments"), num("shares"),
-                              num("saves"), num("link_clicks")))
+                              num("saves"), num("link_clicks"),
+                              caption=r.get("caption", ""), media_type=r.get("media_type", "")))
         except (ValueError, KeyError) as e:
             errors.append(f"row {n}: {e}")
     return posts, errors

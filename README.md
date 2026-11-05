@@ -10,7 +10,7 @@ algorithm learns to find people who pay, not people who watch.
 pip install pandas numpy scikit-learn requests pytest   # lightgbm optional, preferred
 python demo.py           # payments -> real value -> Meta events
 python demo_organic.py   # organic engine on 60 simulated posts
-pytest -q                # 33 tests
+pytest -q                # 43 tests
 ```
 
 ## Organic engine (`organic.py`)
@@ -38,6 +38,23 @@ print(OrganicEngine(engine, posts).report())
 Tested on simulated data with known hidden patterns: across 6 datasets it found the
 paying hooks and formats and never recommended a refund-heavy discount post.
 Simulation is not proof; the real test is your own posts.
+
+## Post labeller (`labeler.py`)
+
+Fills in blank `format`, `hook` and `offer` from each post's caption and media type.
+Labels typed in by hand are never overwritten.
+
+```bash
+python label_posts.py posts.csv labelled.csv
+```
+
+| Layer | Cost | Accuracy (measured) |
+|---|---|---|
+| Rules (default) | free, offline | 32/32 on clear captions; on subtle captions it usually can't tell, so it labels them `other` and lists them for checking. It is never confidently wrong in the test set. |
+| Claude AI | small API cost | for subtle captions. Set `ANTHROPIC_API_KEY` (console.anthropic.com). Default model `claude-haiku-5-5`, change with `PAYSIGNAL_LABEL_MODEL`. Only captions are sent, never customer or payment data. Any API error falls back to the rules. |
+
+The AI layer is tested with simulated replies only; check its labels on your first real batch.
+The server labels posts automatically on `/upload/posts`.
 
 ## How it works
 
@@ -95,7 +112,7 @@ python -m paysignal.server                # http://localhost:8000/health
 ## Not built yet
 
 - Pulling post stats automatically (Instagram/TikTok APIs) instead of CSV
-- Auto-labelling post format/hook/offer with AI from the caption and video
+- Labelling from the video itself (the labeller reads captions only)
 - TikTok Events API sender
 - Client onboarding (Meta login, connect store)
 - Dashboard
