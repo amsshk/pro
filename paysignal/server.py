@@ -10,6 +10,8 @@ Endpoints (one set per agency client, chosen by <client_id>):
   POST /upload/posts/<client_id>       post stats for the organic engine        [API key]
   GET  /report/<client_id>             organic report + totals as JSON          [API key]
   POST /sync/meta/<client_id>          send unsent payments to Meta now         [API key]
+  POST /ask/<client_id>                ask a question about the results (AI)    [API key]
+  POST /campaign/<client_id>           draft a Meta campaign (AI, best model)   [API key]
   GET  /health
 
 Run locally:   python -m paysignal.server
@@ -31,7 +33,9 @@ from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
-from .labeler import ClaudeLabeler, label_posts
+from .ai import MetaAI
+from .assistant import CampaignError, ask, build_campaign, business_context
+from .labeler import label_posts, make_labeler
 from .organic import OrganicEngine, load_posts_csv
 from .store import PaymentStore
 
@@ -59,6 +63,7 @@ class App:
         self.engines: dict[str, Engine] = {}
         self.posts: dict[str, list] = {}
         self.trained_at: dict[str, float] = {}
+        self.ai: MetaAI | None = None          # set in tests; otherwise built from MODEL_API_KEY
 
     def config(self, client_id: str) -> dict:
         cfg = self.clients.get(client_id)
@@ -159,7 +164,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         posts, errors = load_posts_csv(request.get_data(as_text=True))
         if errors and not posts:
             return jsonify({"errors": errors}), 400
-        labels = label_posts(posts, ClaudeLabeler())     # AI if ANTHROPIC_API_KEY is set, else rules
+        labels = label_posts(posts, make_labeler())     # Meta AI, Claude, or rules: whichever is set up
         with state.lock:
             state.posts[client_id] = posts
         return {"posts": len(posts), "errors": errors, "labels": labels}
@@ -189,9 +194,60 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         state.require_key(client_id)
         return state.sync_meta(client_id)
 
+    def ai_context(client_id):
+        """Aggregated business data for the AI (built under the lock, sent outside it)."""
+        with state.lock:
+            state.ensure_trained(client_id)
+            eng = state.engine(client_id)
+            posts = state.posts.get(client_id)
+            org = OrganicEngine(eng, posts) if posts else None
+            return business_context(eng, org, state.config(client_id).get("currency", "AED"))
+
+    def need_ai() -> MetaAI:
+        ai = state.ai or MetaAI()
+        if not ai.available:
+            abort(503, "AI is not set up: add MODEL_API_KEY from dev.meta.ai")
+        return ai
+
+    @flask.post("/ask/<client_id>")
+    def ask_endpoint(client_id):
+        state.require_key(client_id)
+        body = request.get_json(silent=True) or {}
+        question = (body.get("question") or "").strip()
+        if not question:
+            abort(400, "send JSON with a 'question'")
+        ai = need_ai()
+        try:
+            reply = ask(ai, question, ai_context(client_id), body.get("history"))
+        except PermissionError as e:
+            abort(503, str(e))
+        except RuntimeError as e:
+            abort(502, str(e))
+        return {"answer": reply.text, "model": reply.model, "cost_usd": reply.cost_usd}
+
+    @flask.post("/campaign/<client_id>")
+    def campaign_endpoint(client_id):
+        state.require_key(client_id)
+        body = request.get_json(silent=True) or {}
+        try:
+            budget = float(body.get("daily_budget", 0))
+        except (TypeError, ValueError):
+            budget = 0
+        if budget <= 0:
+            abort(400, "send JSON with a positive 'daily_budget'")
+        ai = need_ai()
+        try:
+            return build_campaign(ai, ai_context(client_id), budget, body.get("goal", ""), body.get("notes", ""))
+        except PermissionError as e:
+            abort(503, str(e))
+        except (RuntimeError, CampaignError) as e:
+            abort(502, str(e))
+
     @flask.errorhandler(401)
     @flask.errorhandler(400)
     @flask.errorhandler(404)
+    @flask.errorhandler(502)
+    @flask.errorhandler(503)
     def err(e):
         return jsonify({"error": e.description}), e.code
 

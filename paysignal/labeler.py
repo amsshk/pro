@@ -2,8 +2,10 @@
 
 Two layers:
   RuleLabeler   free, offline, instant. English + Arabic keywords and emojis.
-  ClaudeLabeler optional, more accurate on unusual captions. Uses the Claude API,
-                labels up to 20 posts per request, and falls back to rules on any error.
+  AI labeller   optional, more accurate on unusual captions: Meta Model API
+                (MetaLabeler, default when MODEL_API_KEY is set) or Claude
+                (ClaudeLabeler). Labels up to 20 posts per request, and falls
+                back to rules on any error.
 
 Labels a person already filled in are never overwritten.
 """
@@ -100,22 +102,33 @@ class RuleLabeler:
         return Labels(fmt, hook, offer, round(max(conf, 0.2), 2), "rules")
 
 
-class ClaudeLabeler:
-    """Labels with the Claude API. Needs ANTHROPIC_API_KEY (from console.anthropic.com).
+class AILabeler:
+    """Shared logic for AI labellers: prompt, batching, parsing, validation and
+    fallback to rules. Each provider only implements _call().
     Sends captions only: no customer data, no payment data."""
-    URL = "https://api.anthropic.com/v1/messages"
-    VERSION = "2026-10-21"
     BATCH = 20
+    KEY_ENV = ""
+    DEFAULT_MODEL = ""
+    name = "ai"
 
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, session=None):
-        self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-        self.model = model or os.environ.get("PAYSIGNAL_LABEL_MODEL", "claude-haiku-5-5")
+        self.api_key = api_key if api_key is not None else os.environ.get(self.KEY_ENV, "")
+        self.model = model or os.environ.get("PAYSIGNAL_LABEL_MODEL", self.DEFAULT_MODEL)
         self.session = session
         self.rules = RuleLabeler()
 
     @property
     def available(self) -> bool:
         return bool(self.api_key)
+
+    def _http(self):
+        if self.session is None:
+            import requests
+            self.session = requests.Session()
+        return self.session
+
+    def _call(self, prompt: str) -> str:
+        raise NotImplementedError
 
     def _prompt(self, items: list[dict]) -> str:
         hooks = "\n".join(f"- {h}: {m}" for h, m in HOOK_MEANING.items())
@@ -130,16 +143,6 @@ class ClaudeLabeler:
             '[{"post_id": "...", "format": "...", "hook": "...", "offer": "...", "confidence": 0.0}]\n\n'
             f"Posts:\n{json.dumps(items, ensure_ascii=False)}"
         )
-
-    def _call(self, prompt: str) -> str:
-        if self.session is None:
-            import requests
-            self.session = requests.Session()
-        r = self.session.post(self.URL, timeout=60, headers={
-            "x-api-key": self.api_key, "anthropic-version": self.VERSION, "content-type": "application/json"},
-            json={"model": self.model, "max_tokens": 2048, "messages": [{"role": "user", "content": prompt}]})
-        r.raise_for_status()
-        return "".join(b.get("text", "") for b in r.json().get("content", []) if b.get("type") == "text")
 
     @staticmethod
     def _parse(text: str) -> list[dict]:
@@ -172,17 +175,70 @@ class ClaudeLabeler:
                     conf = min(max(float(r.get("confidence", 0.8)), 0.0), 1.0)
                 except (TypeError, ValueError):
                     conf = 0.8
-                out[p.post_id] = Labels(fmt, hook, offer, round(conf, 2), "ai")
+                out[p.post_id] = Labels(fmt, hook, offer, round(conf, 2), self.name)
         return out
 
 
-def label_posts(posts: list, ai: Optional[ClaudeLabeler] = None) -> dict:
+class MetaLabeler(AILabeler):
+    """Meta Model API (dev.meta.ai) through the model router: task 'labelling'.
+    Needs MODEL_API_KEY."""
+    KEY_ENV = "MODEL_API_KEY"
+    name = "meta"
+
+    def __init__(self, api_key: Optional[str] = None, session=None, client=None):
+        from .ai import MetaAI
+        super().__init__(api_key, None, session)
+        self.client = client or MetaAI(api_key=self.api_key, session=session)
+        self.model = self.client.models_for("labelling")[0][0]
+
+    def _call(self, prompt: str) -> str:
+        instructions, _, posts = prompt.partition("\n\nPosts:\n")
+        return self.client.chat("labelling", [
+            {"role": "developer", "content": instructions},
+            {"role": "user", "content": "Posts:\n" + posts}]).text
+
+
+class ClaudeLabeler(AILabeler):
+    """Claude API. Needs ANTHROPIC_API_KEY (console.anthropic.com)."""
+    URL = "https://api.anthropic.com/v1/messages"
+    VERSION = "2026-10-21"
+    KEY_ENV = "ANTHROPIC_API_KEY"
+    DEFAULT_MODEL = "claude-haiku-5-5"
+    name = "claude"
+
+    def _call(self, prompt: str) -> str:
+        r = self._http().post(self.URL, timeout=60, headers={
+            "x-api-key": self.api_key, "anthropic-version": self.VERSION, "content-type": "application/json"},
+            json={"model": self.model, "max_tokens": 2048, "messages": [{"role": "user", "content": prompt}]})
+        r.raise_for_status()
+        return "".join(b.get("text", "") for b in r.json().get("content", []) if b.get("type") == "text")
+
+
+PROVIDERS = {"meta": MetaLabeler, "claude": ClaudeLabeler}
+
+
+def make_labeler(provider: Optional[str] = None) -> Optional[AILabeler]:
+    """PAYSIGNAL_LABEL_PROVIDER = meta | claude | rules | auto (default).
+    auto: Meta if MODEL_API_KEY is set, else Claude if ANTHROPIC_API_KEY is set, else rules only."""
+    provider = (provider or os.environ.get("PAYSIGNAL_LABEL_PROVIDER", "auto")).lower()
+    if provider == "rules":
+        return None
+    if provider in PROVIDERS:
+        return PROVIDERS[provider]()
+    for cls in (MetaLabeler, ClaudeLabeler):
+        lab = cls()
+        if lab.available:
+            return lab
+    return None
+
+
+def label_posts(posts: list, ai: Optional[AILabeler] = None) -> dict:
     """Fill in missing labels on posts, in place. Returns a short summary."""
     need = [p for p in posts if "unknown" in (p.format, p.hook, p.offer)]
     if not need:
         return {"labelled": 0, "source": None, "low_confidence": []}
     if ai is not None and ai.available:
-        labels, source = ai.label_many(need), "ai"
+        labels, source = ai.label_many(need), ai.name
     else:
         rules = RuleLabeler()
         labels, source = {p.post_id: rules.label(p.caption, p.media_type, p.platform) for p in need}, "rules"

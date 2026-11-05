@@ -10,7 +10,7 @@ algorithm learns to find people who pay, not people who watch.
 pip install pandas numpy scikit-learn requests pytest   # lightgbm optional, preferred
 python demo.py           # payments -> real value -> Meta events
 python demo_organic.py   # organic engine on 60 simulated posts
-pytest -q                # 43 tests
+pytest -q                # 56 tests
 ```
 
 ## Organic engine (`organic.py`)
@@ -51,10 +51,40 @@ python label_posts.py posts.csv labelled.csv
 | Layer | Cost | Accuracy (measured) |
 |---|---|---|
 | Rules (default) | free, offline | 32/32 on clear captions; on subtle captions it usually can't tell, so it labels them `other` and lists them for checking. It is never confidently wrong in the test set. |
-| Claude AI | small API cost | for subtle captions. Set `ANTHROPIC_API_KEY` (console.anthropic.com). Default model `claude-haiku-5-5`, change with `PAYSIGNAL_LABEL_MODEL`. Only captions are sent, never customer or payment data. Any API error falls back to the rules. |
+| Meta AI (default when `MODEL_API_KEY` is set) | small API cost | for subtle captions, via the model router below. |
+| Claude AI (if `ANTHROPIC_API_KEY` is set instead) | small API cost | same job; default model `claude-haiku-5-5`. |
 
-The AI layer is tested with simulated replies only; check its labels on your first real batch.
+Only captions are sent, never customer or payment data. Any AI error falls back to the rules.
+Force a choice with `PAYSIGNAL_LABEL_PROVIDER=meta|claude|rules`.
 The server labels posts automatically on `/upload/posts`.
+
+## Meta AI (`ai.py`, `assistant.py`)
+
+All AI features use the Meta Model API (dev.meta.ai). Put your key in `MODEL_API_KEY`.
+Each feature asks for a task; the router picks the model:
+
+| Task | Model | Price per 1M tokens (in / out) | Why |
+|---|---|---|---|
+| Campaign builder | `muse-wonder-1.0`, fallback `muse-spark-1.3` | $4.00 / $20.00 | best model, high reasoning |
+| Chat about results | `muse-wonder-1.0`, fallback `muse-spark-1.3` | $4.00 / $20.00 | best model |
+| Post labelling | `muse-spark-1.3`, fallback `muse-spark-1.2` | $1.25 / $4.25 | simple, high-volume job |
+
+If a model fails, the next one in the chain is tried. Change routes with
+`PAYSIGNAL_MODELS='{"chat": ["muse-spark-1.3"]}'`. Every reply reports its model and cost.
+
+**Contributor tier** (`-contributor` models, ~95% cheaper): Meta trains on everything sent to
+it, so PaySignal never uses it for client data. It can be enabled for labelling public captions
+only, with `PAYSIGNAL_ALLOW_CONTRIBUTOR=1`.
+
+**Endpoints**
+- `POST /ask/<id>` with `{"question": "..."}`: answers in plain language, in the question's language.
+- `POST /campaign/<id>` with `{"daily_budget": 300, "goal": "...", "notes": "..."}`: a full draft
+  campaign (ad sets, ads built from your best organic posts, tests, kill rules), checked for
+  budget mistakes. Drafts only: nothing is launched.
+
+The AI only sees aggregated results (totals, per-post numbers, patterns), never customer
+names, emails, phones or single payments. AI features are tested with simulated replies;
+review the first real answers and campaign drafts carefully.
 
 ## How it works
 

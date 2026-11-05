@@ -81,7 +81,7 @@ def test_ai_labels_used_and_request_is_well_formed():
         {"post_id": "b", "format": "reel", "hook": "trend_meme", "offer": "none", "confidence": 0.7}]))
     ai = ClaudeLabeler(api_key="sk-test", session=session)
     summary = label_posts(posts, ai)
-    assert summary["source"] == "ai" and summary["low_confidence"] == []
+    assert summary["source"] == "claude" and summary["low_confidence"] == []
     assert [p.hook for p in posts] == ["before_after", "trend_meme"]
     call = session.calls[0]
     assert call["headers"]["anthropic-version"] == "2026-10-21"

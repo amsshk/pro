@@ -3,13 +3,13 @@
     python label_posts.py posts.csv labelled.csv
 
 Fills in blank format/hook/offer columns from each post's caption.
-With ANTHROPIC_API_KEY set it uses Claude; otherwise the free keyword rules.
+With MODEL_API_KEY set it uses Meta AI (or Claude with ANTHROPIC_API_KEY); otherwise the free keyword rules.
 Posts it isn't sure about are listed so you can check them by hand.
 """
 import csv
 import sys
 
-from paysignal.labeler import ClaudeLabeler, label_posts
+from paysignal.labeler import label_posts, make_labeler
 from paysignal.organic import load_posts_csv
 
 
@@ -19,7 +19,7 @@ def main(src: str, dst: str) -> None:
     posts, errors = load_posts_csv(text)
     for e in errors:
         print("skipped", e)
-    summary = label_posts(posts, ClaudeLabeler())
+    summary = label_posts(posts, make_labeler())
     print(f"labelled {summary['labelled']} posts using {summary['source'] or 'nothing (all already labelled)'}")
     if summary["low_confidence"]:
         print("please check these by hand:", ", ".join(summary["low_confidence"]))
