@@ -106,7 +106,7 @@ class MetaAI:
         if not self.available:
             raise RuntimeError("MODEL_API_KEY is not set")
         models, effort = self.models_for(task)
-        last_error: Exception | None = None
+        errors: list[str] = []
         for model in models:
             body = {"model": model, "messages": messages,
                     # Muse models always reason; the reasoning counts toward this limit
@@ -117,12 +117,16 @@ class MetaAI:
                     "Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"})
             except Exception as e:                 # network problem: try the next model
                 log.warning("model %s unreachable for %s (%s), trying next", model, task, e)
-                last_error = e
+                errors.append(f"{model}: unreachable ({e})")
                 continue
             if r.status_code in (401, 403):        # bad key or no access: other models won't help
-                raise PermissionError(f"Meta Model API refused the key (HTTP {r.status_code})")
+                raise PermissionError(f"Meta Model API refused the key (HTTP {r.status_code}): {_reason(r)}")
+            if r.status_code >= 400:               # model unavailable, bad request, overloaded
+                why = f"{model}: HTTP {r.status_code} {_reason(r)}"
+                log.warning("model failed for %s (%s), trying next", task, why)
+                errors.append(why)
+                continue
             try:
-                r.raise_for_status()
                 data = r.json()
                 text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
                 usage = data.get("usage") or {}
@@ -131,7 +135,19 @@ class MetaAI:
                 cost = (tin * pin + tout * pout) / 1_000_000
                 self.spent_usd += cost
                 return Reply(text, model, tin, tout, round(cost, 6))
-            except Exception as e:                 # model unavailable, overloaded, bad reply
-                log.warning("model %s failed for %s (HTTP %s: %s), trying next", model, task, r.status_code, e)
-                last_error = e
-        raise RuntimeError(f"all models failed for task {task}: {last_error}")
+            except Exception as e:                 # reply was not the expected JSON
+                why = f"{model}: unreadable reply ({e})"
+                log.warning("model failed for %s (%s), trying next", task, why)
+                errors.append(why)
+        raise RuntimeError(f"all models failed for task {task}: " + " | ".join(errors))
+
+
+def _reason(r) -> str:
+    """Meta's own error message, shortened. Never contains our key."""
+    try:
+        body = r.json()
+        err = body.get("error", body) if isinstance(body, dict) else body
+        msg = err.get("message") if isinstance(err, dict) else None
+        return str(msg or err)[:300]
+    except Exception:
+        return (getattr(r, "text", "") or "")[:300]
