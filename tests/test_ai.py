@@ -167,3 +167,10 @@ def test_server_ai_endpoints(tmp_path, context):
     r = client.post("/campaign/c", json={"daily_budget": 300}, headers={"X-API-Key": "K"})
     assert r.status_code == 200 and r.json["status"].startswith("draft")
     assert client.post("/campaign/c", json={}, headers={"X-API-Key": "K"}).status_code == 400
+
+
+def test_billing_problem_stops_immediately():
+    s = Session(lambda m, b: Resp(402, {"error": {"message": "Billing verification failed."}}))
+    with pytest.raises(PermissionError, match="billing"):
+        MetaAI(api_key="k", session=s).chat("chat", [{"role": "user", "content": "x"}])
+    assert len(s.calls) == 1

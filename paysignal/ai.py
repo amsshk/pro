@@ -121,6 +121,8 @@ class MetaAI:
                 continue
             if r.status_code in (401, 403):        # bad key or no access: other models won't help
                 raise PermissionError(f"Meta Model API refused the key (HTTP {r.status_code}): {_reason(r)}")
+            if r.status_code == 402:               # billing problem: same for every model
+                raise PermissionError(f"Meta Model API billing problem: {_reason(r)}")
             if r.status_code >= 400:               # model unavailable, bad request, overloaded
                 why = f"{model}: HTTP {r.status_code} {_reason(r)}"
                 log.warning("model failed for %s (%s), trying next", task, why)
