@@ -1,0 +1,68 @@
+# PaySignal
+
+Detects every payment a business receives, works out which post or ad caused it,
+scores what it is really worth, and sends that real value to Meta so its
+algorithm learns to find people who pay, not people who watch.
+
+## Run it
+
+```bash
+pip install pandas numpy scikit-learn requests pytest   # lightgbm optional, preferred
+python demo.py           # payments -> real value -> Meta events
+python demo_organic.py   # organic engine on 60 simulated posts
+pytest -q                # 23 tests
+```
+
+## Organic engine (`organic.py`)
+
+Judges every post by **real money per 1,000 views**, not likes.
+
+- **Finds hidden sales:** direct (link/code), returning customers a post first brought in,
+  and halo (extra unlinked sales in the days after a post, shown as an estimate).
+- **Tags posts:** PAYER POST, WATCHERS ONLY (lots of likes, no payers), QUIET SELLER
+  (few likes, real buyers), HIGH REFUNDS.
+- **Learns patterns:** which formats, hooks, offers and posting times make money, with
+  a `?` when the evidence isn't strong enough yet. The bar rises when many options are compared.
+- **Post next:** Thompson sampling picks the next post type, mixing proven winners with experiments.
+- **Promote first:** the posts to turn into ads once you start paying.
+
+Input: payments (as above) plus post stats as CSV, see `posts_template.csv`
+(export from Meta Business Suite or TikTok analytics). Label each post's `format`, `hook` and `offer`.
+
+```python
+from paysignal.organic import OrganicEngine, load_posts_csv
+posts, errors = load_posts_csv(open("posts.csv").read())
+print(OrganicEngine(engine, posts).report())
+```
+
+Tested on simulated data with known hidden patterns: across 6 datasets it found the
+paying hooks and formats and never recommended a refund-heavy discount post.
+Simulation is not proof; the real test is your own posts.
+
+## How it works
+
+| Step | File | What it does |
+|---|---|---|
+| 1. Detect | `connectors/` | Stripe, Shopify and CSV (cash, WhatsApp, bank, POS) into one format. Webhook signatures verified. |
+| 2. Store | `store.py` | Deduplicates, links refunds to purchases, keeps each client separate. |
+| 3. Attribute | `attribution.py` | Tagged links and promo codes per post, then revenue per post. |
+| 4. Score | `scoring.py` | real value = margin x (1 - return risk) + expected repeat margin. Trained per client. |
+| 5. Send | `meta_capi.py` | Conversions API events with hashed email/phone, click ids and the real value. Dry run by default. |
+
+## Organic test plan
+
+1. Create a tagged link (`tag_link`) or promo code (`make_promo_code`) for every post, story and reel.
+2. Put the link in the bio/story sticker/caption; give the code for WhatsApp and in-person buyers.
+3. Connect the store (Shopify/Stripe webhooks) and upload offline sales as CSV with the code.
+4. After 4-6 weeks, `Engine.content_report()` shows which posts make real money.
+5. Keep sending purchases to Meta (`push_to_meta`, start with a `test_event_code`).
+   When ads start, Meta already knows what a paying customer looks like.
+
+## Not built yet
+
+- Web server for live webhooks (FastAPI)
+- Pulling post stats automatically (Instagram/TikTok APIs) instead of CSV
+- Auto-labelling post format/hook/offer with AI from the caption and video
+- TikTok Events API sender
+- Client onboarding (Meta login, connect store)
+- Dashboard

@@ -1,0 +1,4 @@
+post_id,platform,posted_at,format,hook,offer,topic,views,likes,comments,shares,saves,link_clicks
+reel_0412,instagram,2026-11-01T20:00:00+04:00,reel,before_after,none,summer glow,12400,820,64,51,90,140
+story_0413,instagram,2026-11-02T13:30:00+04:00,story,testimonial,free_gift,customer review,3100,95,8,4,12,88
+tt_0414,tiktok,2026-11-03T19:00:00+04:00,video,tutorial,discount,how to use,21000,1900,120,210,300,260
