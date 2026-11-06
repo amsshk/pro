@@ -105,6 +105,9 @@ def checkout_session(stripe: Stripe, client_id: str, email: str, customer_id: Op
             "subscription_data[metadata][client_id]": client_id,
             "allow_promotion_codes": "true", "billing_address_collection": "auto",
             "tax_id_collection[enabled]": "true"}
+    if fee_percent() > 0:                    # the customer sees the full price before paying
+        data["custom_text[submit][message]"] = (f"Plus {fee_percent():g}% of the ad spend you run through ProAds, "
+                                                "added to each monthly invoice.")
     if customer_id:
         data.update({"customer": customer_id, "customer_update[name]": "auto", "customer_update[address]": "auto"})
     elif email:
