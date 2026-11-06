@@ -225,3 +225,8 @@ def test_disconnect(tmp_path, env):
     wait_done(c)
     assert c.post("/shopify/disconnect/shop1", headers=H).json["disconnected"]
     assert c.post("/shopify/sync/shop1", headers=H).status_code == 400
+
+
+def test_normalize_shop_new_admin_address():
+    assert shopify_app.normalize_shop("https://admin.shopify.com/store/glow-store/orders") == SHOP
+    assert shopify_app.normalize_shop("www.glow-store.myshopify.com") == SHOP

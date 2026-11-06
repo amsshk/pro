@@ -6,3 +6,4 @@ requests>=2.31
 cryptography>=42
 lightgbm>=4.0
 pytest>=8.0
+openpyxl>=3.1

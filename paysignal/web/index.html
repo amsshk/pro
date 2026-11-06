@@ -48,6 +48,10 @@ h2{margin:0;font-family:var(--head);font-size:20px;font-weight:600}
 .row{display:flex;flex-wrap:wrap;gap:24px}
 .row>.card{flex:1 1 420px}
 .between{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
+.pcard{display:flex;flex-direction:column;align-items:flex-start;gap:10px;text-align:left;background:var(--soft);border:1px solid var(--edge);border-radius:14px;padding:16px;cursor:pointer;min-height:88px}
+.pcard:hover{border-color:var(--violet)}
+.pcard b{font-size:15px}
 .periods{display:flex;gap:6px;flex-wrap:wrap}
 .periods button{background:var(--card);border:1px solid var(--edge);border-radius:10px;min-height:38px;padding:0 14px;font-size:13px;font-weight:600;cursor:pointer}
 .periods button[aria-pressed="true"]{background:var(--violet);border-color:var(--violet);color:var(--ink)}
@@ -329,6 +333,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D2D0DB;
   const NAV = [
     ["#/home", "Home", "M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"],
     ["#/audit", "Audit", "M3 12h4l3 8 4-16 3 8h4"],
+    ["#/platforms", "Where you sell", "M3 9l1.5-5h15L21 9M4 9v11h16V9M3 9h18M9 20v-6h6v6"],
     ["#/upload", "Connect & upload", "M12 16V4M6 10l6-6 6 6M4 20h16"],
     ["#/whatsapp", "WhatsApp", "M12 3a9 9 0 0 0-7.8 13.5L3 21l4.6-1.2A9 9 0 1 0 12 3z"],
     ["#/assistant", "Ask & campaigns", "M4 5h16v11H8l-4 4z"],
@@ -663,6 +668,25 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D2D0DB;
           : h("p", { class: "sub", style: "margin:0" }, "No one has signed up yet. Share pro.ezdevsoft.net or start your first ad.")));
   }
 
+  function clearSalesCard() {
+    let armed = false;
+    const btn = h("button", { class: "btn btn-ghost", type: "button" }, "Remove all sales & posts");
+    const msg = h("span", { class: "sub", style: "font-size:13px" });
+    btn.addEventListener("click", async () => {
+      if (!armed) { armed = true; btn.textContent = "Yes, remove them"; msg.textContent = "This can't be undone. Your account and connections stay."; return; }
+      btn.disabled = true;
+      try {
+        const r = await api("/data/" + cid() + "/clear-sales", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: "DELETE" }) });
+        status = await api("/status/" + cid());
+        msg.textContent = "Removed " + fmt.format(r.sales_deleted) + " sales and " + fmt.format(r.posts_deleted) + " posts.";
+        btn.textContent = "Done";
+      } catch (e) { if (e.message !== "signed out") { msg.textContent = e.message; btn.disabled = false; } }
+    });
+    return h("section", { class: "card" }, h("h2", {}, "Start fresh"),
+      h("p", { class: "sub", style: "margin:0" }, "Uploaded example or test files? Remove every imported sale and post, then bring in your real ones."),
+      h("div", { style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap" }, btn, msg));
+  }
+
   // ---------- delete account ----------
   function deleteCard() {
     const pw = h("input", { id: "delpw", type: "password", autocomplete: "current-password", placeholder: "Your password" });
@@ -798,21 +822,22 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D2D0DB;
 
   async function viewUpload(params) {
     const results = h("div", { style: "display:flex;flex-direction:column;gap:10px" });
-    const input = h("input", { id: "files", type: "file", multiple: true, accept: ".csv,text/csv", class: "sr" });
+    const input = h("input", { id: "files", type: "file", multiple: true, accept: ".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", class: "sr" });
     const drop = h("label", { class: "drop", for: "files" },
       h("svg", { width: 36, height: 36, viewBox: "0 0 24 24", fill: "none", stroke: "#DCD3F5", "stroke-width": 1.8, "aria-hidden": "true" }, h("path", { d: "M12 16V4M6 10l6-6 6 6M4 20h16" })),
       h("b", { style: "font-size:16px" }, "Drop export files here, or choose files"),
-      h("span", { class: "sub", style: "font-size:14px" }, "Shopify orders · Stripe payments · Meta Business Suite posts · any sales list (id, date, amount, currency). Each file is recognised automatically."),
+      h("span", { class: "sub", style: "font-size:14px" }, "CSV or Excel: Shopify, Salla, Zid, WooCommerce, Stripe, Tap, any shop or POS export, or Meta posts. Each file is recognised automatically."),
       input);
-    const KIND = { shopify: "Shopify orders", stripe: "Stripe payments", posts: "Posts", csv: "Sales list" };
+    const KIND = { shopify: "Shopify orders", stripe: "Stripe payments", posts: "Posts", csv: "Sales list", sales: "Sales list" };
     async function handle(files) {
       for (const file of files) {
         const row = h("div", { class: "result" }, h("span", {}, h("b", {}, file.name)), h("span", { class: "ok" }, h("span", { class: "spinner", "aria-hidden": "true" }), " Importing…"));
         results.prepend(row);
         try {
           if (file.size > 9.5 * 1024 * 1024) throw new Error("file is over 10 MB: split it into smaller exports");
-          const text = await file.text();
-          const r = await api("/import/" + cid(), { method: "POST", headers: { "Content-Type": "text/csv; charset=utf-8" }, body: text });
+          const excel = /\.xlsx$/i.test(file.name);
+          const body = excel ? await file.arrayBuffer() : await file.text();
+          const r = await api("/import/" + cid(), { method: "POST", headers: { "Content-Type": excel ? "application/octet-stream" : "text/csv; charset=utf-8" }, body });
           let said = r.kind === "posts" ? (r.posts + " posts, labelled by " + (r.labels.source || "your labels")) :
             (fmt.format(r.new) + " new records" + (r.duplicates ? ", " + fmt.format(r.duplicates) + " already here" : ""));
           if (r.labels && r.labels.low_confidence && r.labels.low_confidence.length) said += " · " + r.labels.low_confidence.length + " to check by hand";
@@ -896,6 +921,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D2D0DB;
         h("section", { class: "card", "aria-labelledby": "s3" },
           h("div", { class: "srow", style: "gap:12px" }, h("span", { class: "num-dot" }, "3"), h("h2", { id: "s3" }, "Track every new post")),
           tForm, tOut, h("h3", { style: "margin:8px 0 0;font-size:15px" }, "Your codes"), tList)),
+      clearSalesCard(),
       status && status.self_serve ? deleteCard() : null,
     ]));
     loadCodes();
@@ -1309,6 +1335,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D2D0DB;
       grid, xl,
       h("path", { d: path(prev), fill: "none", stroke: "#6E6C7A", "stroke-width": 2, "stroke-dasharray": "5 5", "stroke-linejoin": "round" }),
       h("path", { d: path(cur), fill: "none", stroke: "url(#" + gid + ")", "stroke-width": 2.5, "stroke-linejoin": "round", "stroke-linecap": "round" }),
+      n <= 3 ? cur.map((v, i) => h("circle", { cx: x(i), cy: y(v), r: 5, fill: "#DCD3F5" })) : null,
       hair, dotP, dotC, hit);
     const wrap = h("div", { class: "chartwrap" }, svg, tip);
     function show(clientX) {
@@ -1412,8 +1439,104 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D2D0DB;
     strip.addEventListener("click", () => { const t = body.querySelector("section[aria-label=Chart] h2"); if (t) t.textContent = (M[homeMetric] || M.sales).label + " over time"; });
   }
 
+  // ---------- where you sell: platforms by country ----------
+  const P = {
+    shopify: ["Shopify", "live", "One click: approve on Shopify and every order and refund comes in by itself."],
+    stripe: ["Stripe", "webhook", "Live: add ProAds' webhook address in Stripe and every payment and refund comes in by itself."],
+    woo: ["WooCommerce", "export", "WooCommerce → Orders → Export (or Analytics → Orders → Download)."],
+    salla: ["Salla", "export", "Salla dashboard → Orders → Export → Excel."],
+    zid: ["Zid", "export", "Zid dashboard → Orders → Export."],
+    wix: ["Wix", "export", "Wix dashboard → Sales → Orders → Export."],
+    squarespace: ["Squarespace", "export", "Commerce → Orders → Download CSV."],
+    bigcommerce: ["BigCommerce", "export", "Orders → View → Export."],
+    magento: ["Adobe Commerce / Magento", "export", "Sales → Orders → Export → CSV."],
+    ecwid: ["Ecwid / Lightspeed eCom", "export", "My Sales → Orders → Export."],
+    tiendanube: ["Tiendanube / Nuvemshop", "export", "Vendas → Exportar."],
+    mercadopago: ["Mercado Pago", "export", "Atividade / Actividad → Baixar / Descargar relatório."],
+    paypal: ["PayPal", "export", "Activity → Statements / Download → CSV."],
+    square: ["Square", "export", "Transactions → Export → Transactions CSV."],
+    tap: ["Tap Payments", "export", "Tap dashboard → Transactions → Export."],
+    telr: ["Telr", "export", "Telr merchant panel → Transactions → Export."],
+    checkout: ["Checkout.com", "export", "Dashboard → Payments → Export."],
+    paymob: ["Paymob", "export", "Paymob dashboard → Transactions → Export."],
+    fawry: ["Fawry", "export", "Merchant portal → Transactions → Export."],
+    razorpay: ["Razorpay", "export", "Transactions → Payments → Download."],
+    paystack: ["Paystack", "export", "Transactions → Export."],
+    flutterwave: ["Flutterwave", "export", "Transactions → Export."],
+    xendit: ["Xendit", "export", "Transactions → Export."],
+    shopee: ["Shopee", "export", "Seller Centre → My Orders → Export."],
+    lazada: ["Lazada", "export", "Seller Center → Orders → Export."],
+    amazon: ["Amazon Seller Central", "export", "Reports → Fulfillment / Order reports → Download."],
+    noon: ["noon", "export", "noon seller lab → Orders → Export."],
+    foodics: ["Foodics (restaurants)", "export", "Foodics console → Reports → Sales → Export."],
+    fresha: ["Fresha (salons, clinics)", "export", "Fresha → Reports → Sales → Export."],
+    vagaro: ["Vagaro / Booksy (bookings)", "export", "Reports → Sales / Transactions → Export."],
+    whatsapp: ["Instagram DMs, WhatsApp, cash", "manual", "Keep a simple sheet (date, amount, phone). Give each post its own code so ProAds knows which post sold."],
+  };
+  const COUNTRIES = [
+    ["ae", "United Arab Emirates", ["shopify", "whatsapp", "tap", "telr", "checkout", "stripe", "zid", "salla", "woo", "noon", "amazon", "fresha", "foodics"]],
+    ["sa", "Saudi Arabia", ["salla", "zid", "shopify", "whatsapp", "tap", "checkout", "noon", "amazon", "foodics", "woo"]],
+    ["qa", "Qatar, Kuwait, Bahrain, Oman", ["shopify", "whatsapp", "tap", "zid", "salla", "checkout", "woo", "foodics", "fresha"]],
+    ["eg", "Egypt", ["shopify", "whatsapp", "paymob", "fawry", "woo", "amazon", "noon", "foodics"]],
+    ["lv", "Jordan, Lebanon, Iraq", ["whatsapp", "shopify", "woo", "paypal", "checkout", "foodics"]],
+    ["uk", "United Kingdom", ["shopify", "stripe", "woo", "square", "paypal", "wix", "squarespace", "amazon", "fresha"]],
+    ["us", "United States & Canada", ["shopify", "stripe", "woo", "square", "paypal", "wix", "squarespace", "bigcommerce", "amazon", "vagaro"]],
+    ["eu", "Europe", ["shopify", "woo", "stripe", "paypal", "wix", "magento", "ecwid", "amazon", "fresha"]],
+    ["in", "India", ["shopify", "razorpay", "woo", "whatsapp", "amazon", "magento"]],
+    ["pk", "Pakistan & Bangladesh", ["whatsapp", "shopify", "woo", "paypal"]],
+    ["af", "Africa", ["paystack", "flutterwave", "shopify", "whatsapp", "woo"]],
+    ["la", "Latin America", ["tiendanube", "mercadopago", "shopify", "woo", "whatsapp"]],
+    ["sea", "Southeast Asia", ["shopee", "lazada", "shopify", "xendit", "whatsapp", "woo"]],
+    ["au", "Australia & New Zealand", ["shopify", "stripe", "square", "woo", "paypal", "wix"]],
+    ["other", "Somewhere else", ["shopify", "stripe", "woo", "paypal", "wix", "whatsapp"]],
+  ];
+  function templateCsv() {
+    const csv = "date,amount,currency,email,phone,product,promo_code\n2026-11-01,250,AED,customer@example.com,0501234567,Hydra facial,GLOW-7K2F\n";
+    const link = h("a", { href: URL.createObjectURL(new Blob([csv], { type: "text/csv" })), download: "proads-sales-template.csv" });
+    document.body.appendChild(link); link.click(); link.remove();
+  }
+  function viewPlatforms() {
+    const guess = { AED: "ae", SAR: "sa", QAR: "qa", KWD: "qa", BHD: "qa", OMR: "qa", EGP: "eg", JOD: "lv", GBP: "uk", USD: "us", CAD: "us",
+      EUR: "eu", INR: "in", PKR: "pk", NGN: "af", KES: "af", ZAR: "af", BRL: "la", MXN: "la", ARS: "la", IDR: "sea", MYR: "sea", PHP: "sea", THB: "sea", AUD: "au", NZD: "au" };
+    let country = guess[status && status.currency] || "other";
+    try { country = localStorage.getItem("proads.country") || country; } catch (e) {}
+    const sel = h("select", { id: "country" }, COUNTRIES.map(([k, label]) => h("option", { value: k, selected: k === country || null }, label)));
+    const grid = h("div", { class: "pgrid" });
+    const detail = h("div", {});
+    const tag = { live: ["b-measured", "Connects live"], webhook: ["b-measured", "Connects live"], export: ["b-neutral", "Upload an export"], manual: ["b-neutral", "Sheet + codes"] };
+    function open(key) {
+      const [name, kind, how] = P[key];
+      const steps = kind === "live" ? [h("p", { class: "sub", style: "margin:0" }, how), h("a", { class: "btn btn-primary", href: "#/upload", style: "align-self:flex-start" }, "Connect Shopify")]
+        : kind === "webhook" ? [h("p", { class: "sub", style: "margin:0" }, how), h("a", { class: "btn btn-primary", href: "#/upload", style: "align-self:flex-start" }, "Get the webhook address")]
+        : kind === "manual" ? [h("p", { class: "sub", style: "margin:0" }, how),
+            h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, h("button", { class: "btn btn-primary", type: "button", onclick: templateCsv }, "Download sales sheet template"),
+              h("a", { class: "btn btn-ghost", href: "#/upload" }, "Create post codes & upload"), h("a", { class: "btn btn-ghost", href: "#/whatsapp" }, "WhatsApp chats"))]
+        : [h("ol", { class: "list" }, h("li", {}, how), h("li", {}, "Choose all dates you have (the more history, the better your audit)."), h("li", {}, "Upload the file in ProAds. It's recognised automatically.")),
+            h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, h("a", { class: "btn btn-primary", href: "#/upload" }, "Upload my file"),
+              h("button", { class: "btn btn-ghost", type: "button", onclick: templateCsv }, "Download template"))];
+      detail.replaceChildren(h("section", { class: "card", style: "background: var(--violet-card); border-color: var(--violet-edge)" },
+        h("div", { class: "between" }, h("h2", {}, name), h("span", { class: "badge " + tag[kind][0] }, tag[kind][1])), ...steps,
+        kind === "export" ? h("p", { class: "sub", style: "margin:0;font-size:13px" }, "Any file with a date, an amount and a currency works. Customer email or phone, product and discount code make your audit sharper. Automatic connection for " + name + " is on our list.") : null));
+      detail.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+    function draw() {
+      const list = (COUNTRIES.find((c) => c[0] === country) || COUNTRIES[COUNTRIES.length - 1])[2];
+      grid.replaceChildren(...list.map((k) => {
+        const [name, kind] = P[k];
+        return h("button", { type: "button", class: "pcard", onclick: () => open(k) }, h("b", {}, name), h("span", { class: "badge " + tag[kind][0] }, tag[kind][1]));
+      }));
+      detail.replaceChildren();
+    }
+    sel.addEventListener("change", () => { country = sel.value; try { localStorage.setItem("proads.country", country); } catch (e) {} draw(); });
+    root.replaceChildren(layout("#/platforms", [
+      h("header", {}, h("h1", {}, "Where do you sell?"), h("p", { class: "sub" }, "Pick your country, then the platform you use. ProAds shows exactly how to bring your sales in.")),
+      h("section", { class: "card" }, h("label", { class: "f", for: "country", style: "max-width:420px" }, "Your country or region", sel), grid),
+      detail]));
+    draw();
+  }
+
   // ---------- router ----------
-  const VIEWS = { "#/home": viewHome, "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling };
+  const VIEWS = { "#/platforms": viewPlatforms, "#/home": viewHome, "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling };
   function go(hash) { if (location.hash !== hash) location.hash = hash; else route(); }
   async function route() {
     const [path, query] = location.hash.split("?");

@@ -52,7 +52,7 @@ from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, busin
 from . import billing, meta_ads, meta_connect
 from .connectors.stripe import verify_signature as stripe_signature_ok
 from .audit import audit_summary, audit_text, build_audit
-from .importers import import_auto
+from .importers import xlsx_to_csv, import_auto
 from .labeler import label_posts, make_labeler
 from .organic import OrganicEngine, load_posts_csv
 from .store import PaymentStore
@@ -422,8 +422,16 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         """Day one: upload a Shopify/Stripe export, a posts export or a sales CSV. Type is detected."""
         state.require_key(client_id)
         cfg = state.config(client_id)
-        res = import_auto(request.get_data(as_text=True), client_id, cfg.get("costs", {}),
-                          request.args.get("platform", "instagram"))
+        raw = request.get_data()
+        if raw[:2] == b"PK":                              # an Excel file (.xlsx)
+            try:
+                text = xlsx_to_csv(raw)
+            except Exception:
+                abort(400, "This Excel file couldn't be read. Save it as CSV and upload again.")
+        else:
+            text = raw.decode("utf-8-sig", errors="replace")
+        res = import_auto(text, client_id, cfg.get("costs", {}), request.args.get("platform", "instagram"),
+                          cfg.get("currency", "AED"))
         if res["kind"] == "unknown":
             return jsonify({"errors": res["errors"]}), 400
         out = {"kind": res["kind"], "errors": res["errors"]}
@@ -461,6 +469,21 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 out["summary_error"] = "AI is not set up: add MODEL_API_KEY from dev.meta.ai"
         return out
 
+    @flask.post("/data/<client_id>/clear-sales")
+    def clear_sales(client_id):
+        """Remove every imported sale and post (e.g. example files), keeping the account and its connections."""
+        state.require_key(client_id)
+        if (request.get_json(silent=True) or {}).get("confirm") != "DELETE":
+            abort(400, 'send {"confirm": "DELETE"}')
+        with state.lock:
+            n = state.store.db.execute("DELETE FROM payments WHERE client_id=?", (client_id,)).rowcount
+            posts = state.store.db.execute("DELETE FROM posts WHERE client_id=?", (client_id,)).rowcount
+            state.store.db.commit()
+            for cache in (state.engines, state.posts, state.trained_at):
+                cache.pop(client_id, None)
+        log.info("%s cleared %d sales and %d posts", client_id, n, posts)
+        return {"sales_deleted": n, "posts_deleted": posts}
+
     @flask.get("/dashboard/<client_id>")
     def dashboard_endpoint(client_id):
         """Home: a period vs the one before (?period=today|7|30|90|365), plus a setup guide."""
@@ -478,7 +501,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         out["campaigns"] = [{k: l.get(k) for k in ("campaign_id", "name", "status", "daily_budget", "currency",
                                                    "manager_url")} for l in launches[:5]]
         out["setup"] = [
-            {"label": "Bring in your sales", "done": out["has_data"] or bool(shop), "href": "#/upload",
+            {"label": "Bring in your sales", "done": out["has_data"] or bool(shop), "href": "#/platforms",
              "how": "Upload a sales list or connect Shopify"},
             {"label": "Connect Facebook & Instagram", "done": bool(conn.get("ready")) or is_admin(client_id),
              "href": "#/upload", "how": "Pick your ad account, Page and Pixel"},
@@ -1274,7 +1297,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                        "(needs SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET and PROADS_SECRET_KEY)")
         shop = shopify_app.normalize_shop((request.get_json(silent=True) or {}).get("shop", ""))
         if not shop:
-            abort(400, "Enter your store address, like your-store.myshopify.com")
+            abort(400, "Enter your Shopify store address, like your-store.myshopify.com. If you use your own domain, "
+                       "find the .myshopify.com address in Shopify: Settings > Domains.")
         owner = state.store.client_for_shop(shop)
         if owner and owner != client_id:
             abort(400, "This store is already connected to another ProAds account")
@@ -1288,7 +1312,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         args = {k: v for k, v in request.args.items()}
         def back(result, message=""):
             q = urlencode({"shopify": result, **({"message": message} if message else {})})
-            return redirect("/#/upload?" + q)
+            return redirect("/app#/upload?" + q)
         s = shopify_app.settings()
         if not shopify_app.available() or not shopify_app.verify_callback(args, s["client_secret"]):
             log.warning("shopify callback rejected: bad signature")

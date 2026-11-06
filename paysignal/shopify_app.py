@@ -84,7 +84,10 @@ def decrypt(token: str) -> str:
 def normalize_shop(value: str) -> Optional[str]:
     """'my-store', 'https://my-store.myshopify.com/admin' -> 'my-store.myshopify.com'."""
     v = (value or "").strip().lower()
-    v = re.sub(r"^https?://", "", v).split("/")[0]
+    v = re.sub(r"^https?://", "", v)
+    m = re.match(r"^admin\.shopify\.com/store/([a-z0-9][a-z0-9\-]*)", v)   # the new admin address
+    v = m.group(1) if m else v.split("/")[0]
+    v = re.sub(r"^www\.", "", v)
     if v and "." not in v:
         v += ".myshopify.com"
     return v if SHOP_RE.match(v) else None

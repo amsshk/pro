@@ -12,6 +12,7 @@ of known names, and unmatched required columns are reported clearly.
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import re
 from datetime import datetime, timedelta, timezone
@@ -227,10 +228,108 @@ def detect(text: str) -> str:
         return "posts"
     if {"id", "date", "amount", "currency"} <= low:
         return "csv"
+    if looks_like_sales(header):
+        return "sales"
     return "unknown"
 
 
-def import_auto(text: str, client_id: str, costs: dict | None = None, platform: str = "instagram") -> dict:
+# ---------------- any other platform's sales export ----------------
+
+SALES_COLUMNS = {
+    "id": ("order id", "order number", "order no", "order #", "order", "id", "transaction id", "reference",
+           "reference number", "invoice", "invoice number", "receipt", "receipt number", "payment id", "charge id", "#",
+           "رقم الطلب"),
+    "date": ("date", "order date", "created at", "created", "created date", "paid at", "payment date", "transaction date",
+             "date created", "purchase date", "sale date", "time", "datetime", "تاريخ الطلب", "التاريخ"),
+    "amount": ("total", "amount", "grand total", "order total", "total amount", "total price", "paid amount", "amount paid",
+               "net amount", "gross amount", "gross sales", "sales", "price", "sum", "value", "الإجمالي", "المبلغ"),
+    "currency": ("currency", "currency code", "order currency", "العملة"),
+    "email": ("email", "customer email", "e-mail", "billing email", "buyer email", "البريد الإلكتروني"),
+    "phone": ("phone", "mobile", "customer phone", "phone number", "billing phone", "whatsapp", "رقم الجوال", "الجوال"),
+    "status": ("status", "order status", "payment status", "financial status", "state", "حالة الطلب"),
+    "product": ("product", "product name", "item", "item name", "items", "lineitem name", "service", "المنتج"),
+    "promo": ("promo code", "discount code", "coupon", "coupon code", "voucher", "code", "promo_code", "كود الخصم"),
+    "refunded": ("refunded", "refunded amount", "refund amount", "amount refunded"),
+}
+_BAD = ("cancel", "fail", "void", "declin", "pending", "unpaid", "abandon", "expired", "ملغ")
+
+
+def _col(header: list[str], key: str) -> Optional[str]:
+    low = {h.strip().lower(): h for h in header}
+    for name in SALES_COLUMNS[key]:
+        if name in low:
+            return low[name]
+    for name in SALES_COLUMNS[key]:                 # "Order Total (AED)" style headers
+        for h_low, h in low.items():
+            if len(name) > 3 and name in h_low:
+                return h
+    return None
+
+
+def looks_like_sales(header: list[str]) -> bool:
+    return bool(_col(header, "date") and _col(header, "amount"))
+
+
+def import_generic_sales(text: str, client_id: str, default_currency: str = "AED",
+                         tz=timezone.utc) -> tuple[list[Payment], list[str]]:
+    """Orders or payments exported from any platform (Salla, Zid, WooCommerce, Tap, a POS…).
+    Needs a date and an amount column; everything else is optional."""
+    reader = csv.DictReader(io.StringIO(text.lstrip("\ufeff")))
+    header = [h for h in (reader.fieldnames or []) if h]
+    cols = {k: _col(header, k) for k in SALES_COLUMNS}
+    if not (cols["date"] and cols["amount"]):
+        return [], ["this file needs a date column and an amount (or total) column"]
+    payments, errors, skipped = [], [], 0
+    for n, raw in enumerate(reader, start=2):
+        get = lambda k: (raw.get(cols[k]) or "").strip() if cols[k] else ""
+        status = get("status").lower()
+        if status and any(b in status for b in _BAD):
+            skipped += 1
+            continue
+        when = _date(get("date"), tz)
+        if when is None:
+            errors.append(f"row {n}: date not understood ({get('date')[:20]})")
+            continue
+        try:
+            amount = _money(get("amount"))
+        except ValueError:
+            errors.append(f"row {n}: amount not understood")
+            continue
+        if amount <= 0:
+            continue
+        currency = (get("currency") or default_currency).upper()[:3]
+        oid = get("id") or hashlib.sha1(f"{when.isoformat()}|{amount}|{get('email')}|{get('phone')}|{n}".encode()).hexdigest()[:16]
+        product = get("product")
+        payments.append(Payment(
+            client_id=client_id, source="upload", external_id=oid, kind="purchase", amount=amount, currency=currency,
+            occurred_at=when, email=get("email") or None, phone=get("phone") or None,
+            promo_code=get("promo") or None,
+            items=[LineItem(product, product, 1, amount, None)] if product else []))
+        refunded = _money(get("refunded")) if cols["refunded"] else (amount if "refund" in status else 0.0)
+        if refunded > 0:
+            payments.append(Payment(
+                client_id=client_id, source="upload", external_id=f"refund:{oid}", kind="refund",
+                amount=min(refunded, amount), currency=currency, occurred_at=when + timedelta(days=7), refund_of=oid))
+    if skipped:
+        errors.append(f"skipped {skipped} cancelled, failed or unpaid orders")
+    return payments, errors
+
+
+def xlsx_to_csv(data: bytes) -> str:
+    """First sheet of an Excel file as CSV text."""
+    from openpyxl import load_workbook
+    ws = load_workbook(io.BytesIO(data), read_only=True, data_only=True).worksheets[0]
+    out = io.StringIO()
+    w = csv.writer(out)
+    for row in ws.iter_rows(values_only=True):
+        if row is None or all(v is None or str(v).strip() == "" for v in row):
+            continue
+        w.writerow(["" if v is None else (v.isoformat(sep=" ") if hasattr(v, "isoformat") else v) for v in row])
+    return out.getvalue()
+
+
+def import_auto(text: str, client_id: str, costs: dict | None = None, platform: str = "instagram",
+                default_currency: str = "AED") -> dict:
     """Returns {"kind", "payments", "posts", "errors"}."""
     from .connectors import parse_csv
     kind = detect(text)
@@ -246,6 +345,8 @@ def import_auto(text: str, client_id: str, costs: dict | None = None, platform: 
     if kind == "csv":
         payments, errors = parse_csv(text, client_id)
         return {"kind": kind, "payments": payments, "posts": [], "errors": errors}
+    if kind == "sales":
+        payments, errors = import_generic_sales(text, client_id, default_currency)
+        return {"kind": kind, "payments": payments, "posts": [], "errors": errors}
     return {"kind": "unknown", "payments": [], "posts": [],
-            "errors": ["file not recognised: expected a Shopify or Stripe export, a posts export, "
-                       "or a sales CSV with id,date,amount,currency"]}
+            "errors": ["file not recognised: it needs at least a date column and an amount (or total) column"]}
