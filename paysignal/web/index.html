@@ -649,6 +649,91 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
   }
 
   // ---------- upload & connect ----------
+  // ---------- each client's own Facebook & Instagram ----------
+  function metaCard(params) {
+    const m = status && status.connections.meta_login;
+    if (!m || (!m.available && !m.connected)) return status && status.admin
+      ? h("div", { class: "result err" }, h("span", {}, "Clients can't connect Facebook yet: finish ", h("b", {}, "Clients can connect Facebook & Instagram"), " in Admin → Setup.")) : null;
+    const card = h("section", { class: "card", "aria-labelledby": "fb-h", style: "background: var(--violet-card); border-color: var(--violet-edge)" });
+    const fbIcon = h("svg", { width: 28, height: 28, viewBox: "0 0 24 24", fill: "none", stroke: "#A78BFA", "stroke-width": 1.8, "aria-hidden": "true" }, h("path", { d: "M14 8h3V4h-3a4 4 0 0 0-4 4v3H7v4h3v6h4v-6h3l1-4h-4V8z" }));
+    if (params && params.get("meta") === "connected") toast("Facebook connected");
+    const notice = params && params.get("meta") === "error" ? errorCard(params.get("message") || "Facebook connection failed.") : null;
+    const head = (title, badge, on) => h("div", { class: "between" }, h("div", { class: "srow", style: "gap:12px" }, fbIcon, h("h2", { id: "fb-h" }, title)),
+      h("span", { class: "badge " + (on ? "b-measured" : "b-neutral") }, badge));
+    async function startConnect(btn) {
+      btn.disabled = true;
+      try { location.href = (await api("/meta/connect/" + cid(), { method: "POST" })).url; }
+      catch (e) { if (e.message !== "signed out") toast(e.message); btn.disabled = false; }
+    }
+    function drawConnect(expired) {
+      const btn = h("button", { class: "btn btn-primary", type: "button", style: "align-self:flex-start" }, expired ? "Reconnect Facebook" : "Connect with Facebook");
+      btn.addEventListener("click", () => startConnect(btn));
+      card.replaceChildren(head(expired ? "Reconnect Facebook & Instagram" : "Connect Facebook & Instagram", expired ? "Access expired" : "Needed for ads", false),
+        h("p", { class: "sub", style: "margin:0" }, "Approve on Facebook's own page and pick your ad account and Page. Then ProAds can publish campaigns in your ad account (paused until you press Go live) and send your real sale values to your Pixel, so Meta finds people who pay."),
+        h("ul", { class: "list" }, h("li", {}, "Nothing spends money until you press Go live"), h("li", {}, "ProAds never sees your Facebook password"), h("li", {}, "Disconnect any time")),
+        btn, ...(notice ? [notice] : []));
+    }
+    async function drawPicker(v) {
+      const opt = (xs, sel, label) => [h("option", { value: "" }, "Choose…"), xs.map((x) => h("option", { value: x.id, selected: x.id === sel || null }, label(x)))];
+      const acct = h("select", { id: "fb-acct" }, opt(v.ad_accounts, v.ad_account, (a) => a.name + " · " + a.currency + (a.active ? "" : " (not active)")));
+      const page = h("select", { id: "fb-page" }, opt(v.pages, v.page_id, (p) => p.name + (p.instagram ? " · @" + p.instagram : "")));
+      const pixel = h("select", { id: "fb-pixel" }, h("option", { value: "" }, "Choose an ad account first"));
+      const send = h("input", { type: "checkbox", id: "fb-send", checked: v.send_sales || null, style: "width:20px;min-height:20px" });
+      const err = h("p", { class: "sub", role: "alert", style: "margin:0;color: var(--amber-txt)" });
+      async function loadPixels() {
+        pixel.replaceChildren(h("option", { value: "" }, acct.value ? "Loading…" : "Choose an ad account first"));
+        if (!acct.value) return;
+        try {
+          const r = await api("/meta/" + cid() + "/pixels?ad_account=" + encodeURIComponent(acct.value));
+          pixel.replaceChildren(...(r.pixels.length ? opt(r.pixels, v.pixel_id || (r.pixels.length === 1 ? r.pixels[0].id : ""), (x) => x.name + " · " + x.id).flat()
+            : [h("option", { value: "" }, "No Pixel: create one in Meta Events Manager")]));
+        } catch (e) { if (e.message !== "signed out") { pixel.replaceChildren(h("option", { value: "" }, "Couldn't load Pixels")); err.textContent = e.message; } }
+      }
+      acct.addEventListener("change", loadPixels);
+      const save = h("button", { class: "btn btn-primary", type: "submit" }, "Save");
+      const form = h("form", { style: "display:flex;flex-direction:column;gap:12px", onsubmit: async (e) => {
+        e.preventDefault(); save.disabled = true; err.textContent = "";
+        try {
+          const r = await api("/meta/" + cid() + "/select", { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ad_account: acct.value, page_id: page.value, pixel_id: pixel.value, send_sales: send.checked }) });
+          status = await api("/status/" + cid());
+          if (r.ready) { toast("Saved"); drawReady(r); } else err.textContent = "Pick an ad account, a Page and a Pixel to publish ads.";
+        } catch (e2) { if (e2.message !== "signed out") err.textContent = e2.message; }
+        save.disabled = false;
+      } },
+        h("div", { class: "grid2" }, h("label", { class: "f", for: "fb-acct" }, "Ad account", acct), h("label", { class: "f", for: "fb-page" }, "Facebook Page (and its Instagram)", page)),
+        h("label", { class: "f", for: "fb-pixel" }, "Pixel (where your sales are sent)", pixel),
+        h("label", { for: "fb-send", style: "display:flex;gap:10px;align-items:center;font-size:14px" }, send, "Send my sales to Meta so ads find people who pay"),
+        save, err);
+      card.replaceChildren(head("Facebook & Instagram", "Connected as " + v.user, true),
+        h("p", { class: "sub", style: "margin:0" }, "Pick what ProAds should use."), form, ...(notice ? [notice] : []));
+      loadPixels();
+    }
+    function drawReady(v) {
+      let armed = false;
+      const change = h("button", { class: "btn btn-ghost", type: "button" }, "Change");
+      change.addEventListener("click", async () => drawPicker(await api("/meta/" + cid())));
+      const disc = h("button", { class: "btn btn-ghost", type: "button" }, "Disconnect");
+      disc.addEventListener("click", async () => {
+        if (!armed) { armed = true; disc.textContent = "Click again to disconnect"; return; }
+        try { await api("/meta/" + cid() + "/disconnect", { method: "POST" }); status = await api("/status/" + cid()); drawConnect(false); }
+        catch (e) { if (e.message !== "signed out") toast(e.message); }
+      });
+      const left = v.expires_at ? Math.round((v.expires_at * 1000 - Date.now()) / 86400000) : null;
+      card.replaceChildren(head("Facebook & Instagram", "Ready", true),
+        h("ul", { class: "list" },
+          h("li", {}, "Ads publish to ", h("b", {}, v.ad_account_name || v.ad_account), " from the Page ", h("b", {}, v.page_name || v.page_id)),
+          h("li", {}, v.send_sales ? "Your sales are sent to your Pixel with their real value" : "Sales are not sent to Meta (switched off)"),
+          left !== null && left < 15 ? h("li", { style: "color: var(--amber-txt)" }, "Access ends in " + Math.max(left, 0) + " days: reconnect before then") : null),
+        h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, h("a", { class: "btn btn-primary", href: "#/assistant" }, "Build a campaign"), change, disc), ...(notice ? [notice] : []));
+    }
+    if (!m.connected) drawConnect(false);
+    else if (m.expired) drawConnect(true);
+    else if (m.ready) drawReady(m);
+    else { card.replaceChildren(head("Facebook & Instagram", "Connected", true), loading()); api("/meta/" + cid()).then(drawPicker).catch((e) => { if (e.message !== "signed out") card.replaceChildren(errorCard(e.message)); }); }
+    return card;
+  }
+
   async function viewUpload(params) {
     const results = h("div", { style: "display:flex;flex-direction:column;gap:10px" });
     const input = h("input", { id: "files", type: "file", multiple: true, accept: ".csv,text/csv", class: "sr" });
@@ -729,6 +814,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
 
     root.replaceChildren(layout("#/upload", [
       h("header", {}, h("h1", {}, "Connect & upload"), h("p", { class: "sub" }, "Connect your store, or upload your sales history. Your audit is ready right after.")),
+      metaCard(params),
       status && status.connections.shopify_app.available ? shopifyCard(params) : null,
       h("section", { class: "card", "aria-labelledby": "s1" },
         h("div", { class: "srow", style: "gap:12px" }, h("span", { class: "num-dot" }, "1"), h("h2", { id: "s1" }, status && status.connections.shopify_app.available ? "Or upload your history" : "Upload your history")),
@@ -742,7 +828,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
               ? connRow("Shopify", "Connected through the Shopify app above · " + when(c.shopify), true, null)
               : connRow("Shopify", c.shopify.configured ? when(c.shopify) : (c.shopify_app.available ? "Advanced: add this address as a webhook in Shopify instead of the button above" : "Add this address as a webhook for orders/paid and refunds/create"), c.shopify.configured, status.webhooks.shopify),
             connRow("Stripe", c.stripe.configured ? when(c.stripe) : "Add this address as a webhook for charge.succeeded and charge.refunded", c.stripe.configured, status.webhooks.stripe),
-            connRow("Meta Conversions API", c.meta_capi.live ? "Sending real profit, not checkout totals" : c.meta_capi.configured ? "Practice mode: nothing is sent yet" : "Add your dataset ID and token in the server settings", c.meta_capi.live, null),
+            connRow("Meta Conversions API", c.meta_capi.live ? "Sending real profit, not checkout totals" : c.meta_capi.configured ? "Practice mode: nothing is sent yet" : "Connect Facebook & Instagram above and pick your Pixel", c.meta_capi.live, null),
           ] : loading(),
           h("p", { class: "sub", style: "margin:0;font-size:13px" }, "Webhook signing secrets are added in the server settings, never in this page.")),
         h("section", { class: "card", "aria-labelledby": "s3" },
@@ -789,7 +875,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
     const budget = h("input", { id: "budget", type: "number", min: 10, step: 5, value: status && status.admin ? 40 : 300, required: true });
     const goals = (status && status.admin ? [["Sign-ups for ProAds", "signup"]] : []).concat([["Paying customers who stay", "purchase"], ["More bookings", "purchase"], ["Bring past customers back", "purchase"], ["Sign-ups or leads", "signup"]]);
     const goal = h("select", { id: "goal" }, goals.map(([label, conv], i) => h("option", { value: String(i) }, label)));
-    const notes = h("textarea", { id: "notes", placeholder: "Optional: product to push, offer, audience to avoid…", dir: "auto" });
+    const notes = h("textarea", { id: "notes", placeholder: "What you sell, your offer, who to reach, what to avoid…", dir: "auto" });
     const out = h("div", { style: "display:flex;flex-direction:column;gap:12px" });
     const build = h("button", { class: "btn btn-primary", type: "submit" }, "Build campaign");
     const campForm = h("form", { style: "display:flex;flex-direction:column;gap:12px", onsubmit: async (e) => {
@@ -897,7 +983,8 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
     x.beginPath(); x.moveTo(560, 900); x.lineTo(720, 760); x.lineTo(840, 830); x.lineTo(1010, 620); x.stroke();
     // logo
     x.fillStyle = "#A78BFA"; x.beginPath(); x.roundRect(80, 80, 96, 96, 26); x.fill();
-    x.strokeStyle = "#0D0C12"; x.lineWidth = 8; x.beginPath(); x.moveTo(101, 138); x.lineTo(115, 124); x.lineTo(129, 134); x.lineTo(154, 106); x.stroke();
+    if (brand === "ProAds") { x.strokeStyle = "#0D0C12"; x.lineWidth = 8; x.beginPath(); x.moveTo(101, 138); x.lineTo(115, 124); x.lineTo(129, 134); x.lineTo(154, 106); x.stroke(); }
+    else { x.fillStyle = "#0D0C12"; x.font = "700 56px 'Space Grotesk', Inter, sans-serif"; x.textAlign = "center"; x.textBaseline = "middle"; x.fillText((brand || "?").trim().charAt(0).toUpperCase(), 128, 131); x.textAlign = "left"; }
     x.fillStyle = "#F2EFE8"; x.font = "700 52px 'Space Grotesk', Inter, sans-serif"; x.textBaseline = "middle"; x.fillText(brand, 200, 130);
     // headline, as big as fits
     let size = 112, lines;
@@ -913,7 +1000,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
     x.font = "600 40px Inter, sans-serif"; const bw = x.measureText(label).width + 96;
     x.fillStyle = "#A78BFA"; x.beginPath(); x.roundRect(80, 880, bw, 96, 48); x.fill();
     x.fillStyle = "#0D0C12"; x.textBaseline = "middle"; x.fillText(label, 128, 929);
-    x.fillStyle = "#A9A4B8"; x.font = "500 32px Inter, sans-serif"; x.fillText(host, 80 + bw + 32, 929);
+    x.fillStyle = "#A9A4B8"; x.font = "500 32px Inter, sans-serif"; if (host) x.fillText(host, 80 + bw + 32, 929);
     return c.toDataURL("image/jpeg", 0.9);
   }
   function fileToAdImage(file) {
@@ -933,12 +1020,13 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
 
   // ---------- publish to Meta ----------
   function publishSection(r, sets) {
-    if (!status || !status.admin) return null;
-    if (!r.can_publish) return h("div", { class: "result err" }, h("span", {}, "To publish this straight to Meta, finish ", h("b", {}, "Publish campaigns to Meta"), " in Admin → Setup."));
+    if (!r.can_publish) return h("div", { class: "result err" }, h("span", {}, "To publish this straight to your ad account, ",
+      h("a", { href: "#/upload" }, "connect Facebook & Instagram"), " and pick your ad account, Page and Pixel."));
     const images = {}, cards = [];
-    const brand = "ProAds";
-    let host = location.host;
+    const brand = status.admin ? "ProAds" : (status.name || "");
+    let host = "";
     try { host = new URL(r.landing_url).host; } catch (e) {}
+    const landing = h("input", { id: "pub-url", value: r.landing_url || "", placeholder: "https://your-website.com", required: true });
     sets.forEach((s, i) => (Array.isArray(s.ads) ? s.ads : []).forEach((ad, j) => {
       const key = i + "-" + j;
       images[key] = makeAdImage(ad, brand, host);
@@ -957,12 +1045,13 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
       btn.disabled = true; box.replaceChildren(loading("Creating the campaign, ad set and ads in Meta…"));
       try {
         const launch = await api("/campaign/" + cid() + "/publish", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ plan: r.plan, images, landing_url: r.landing_url }) });
+          body: JSON.stringify({ plan: r.plan, images, landing_url: landing.value.trim() }) });
         btn.remove(); box.replaceChildren(launchCard(launch));
       } catch (e) { if (e.message !== "signed out") box.replaceChildren(errorCard(e.message)); btn.disabled = false; }
     });
     return h("div", { class: "adset", style: "gap:12px" },
-      h("div", { class: "between" }, h("b", {}, "Publish to Meta"), h("span", { class: "sub", style: "font-size:13px" }, "Ads open " + (r.landing_url || "your website"))),
+      h("b", {}, "Publish to Meta"),
+      h("label", { class: "f", for: "pub-url" }, "Page the ads open", landing),
       h("p", { class: "sub", style: "margin:0;font-size:13px" }, "These images were made for each ad. Swap any of them for your own photo or design."),
       h("div", { style: "display:flex;gap:14px;flex-wrap:wrap" }, cards), btn, box);
   }

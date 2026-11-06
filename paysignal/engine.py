@@ -1,7 +1,7 @@
 """Ties it together: ingest payments -> score -> attribute -> send to Meta -> report."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from . import attribution, meta_capi
 from .models import Payment
@@ -38,6 +38,13 @@ class Engine:
     def push_to_meta(self, dataset_id: str, access_token: str, dry_run: bool = True,
                      test_event_code: str | None = None) -> list[dict]:
         pending = self.store.unsent(self.client_id)
+        # Meta refuses events older than 7 days (and the whole batch with them): skip those for good
+        cutoff = datetime.now(timezone.utc) - timedelta(days=6, hours=20)
+        too_old = [p for p in pending if p.occurred_at < cutoff]
+        pending = [p for p in pending if p.occurred_at >= cutoff]
+        if not dry_run:
+            for p in too_old:
+                self.store.mark_sent(p.client_id, p.source, p.external_id)
         events = [meta_capi.build_purchase_event(p, self.scorer.score(p)) for p in pending]
         results = meta_capi.send(events, dataset_id, access_token,
                                  test_event_code=test_event_code, dry_run=dry_run)

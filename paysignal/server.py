@@ -48,7 +48,7 @@ from .accounts import AccountStore, Limiter, check_password, hash_password, vali
 from .ai import MetaAI
 from .attribution import make_promo_code, tag_link
 from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, business_context
-from . import meta_ads
+from . import meta_ads, meta_connect
 from .audit import audit_summary, audit_text, build_audit
 from .importers import import_auto
 from .labeler import label_posts, make_labeler
@@ -109,19 +109,46 @@ class App:
         self.wa_sync = False                   # tests: send WhatsApp events inline
         self.launches = meta_ads.LaunchStore(self.store.db)
         self.ads_http = None                   # set in tests
+        self.meta_conns = meta_connect.ConnectionStore(self.store.db)
+        self.meta_http = None                  # set in tests
 
     def known(self, client_id: str) -> bool:
         return client_id in self.clients or self.accounts.get(client_id) is not None
 
     def config(self, client_id: str) -> dict:
         cfg = self.clients.get(client_id)
-        if cfg is not None:
-            return cfg
-        acct = self.accounts.get(client_id)
-        if acct is None:
-            abort(404, "unknown client")
-        return {"name": acct["name"], "currency": acct["currency"], "website": acct["website"] or "",
-                "self_serve": True}
+        if cfg is None:
+            acct = self.accounts.get(client_id)
+            if acct is None:
+                abort(404, "unknown client")
+            cfg = {"name": acct["name"], "currency": acct["currency"], "website": acct["website"] or "",
+                   "self_serve": True}
+        if not (cfg.get("meta") or {}).get("access_token"):
+            meta = self.connected_meta(client_id)
+            if meta:
+                cfg = {**cfg, "meta": meta}
+        return cfg
+
+    def connected_meta(self, client_id: str) -> Optional[dict]:
+        """Conversions API settings from the client's own Facebook connection, if they chose a Pixel."""
+        c = self.meta_conns.get(client_id)
+        if not c or not c["pixel_id"] or not c["send_sales"] or (c["expires_at"] and c["expires_at"] < time.time()):
+            return None
+        try:
+            return {"dataset_id": c["pixel_id"], "access_token": meta_connect.decrypt(c["token"]), "live": True}
+        except Exception:
+            log.warning("could not read the Meta connection of %s", client_id)
+            return None
+
+    def ads_settings(self, client_id: str, is_admin: bool) -> Optional[dict]:
+        """Where campaigns get published: the client's own connected ad account, or (for the
+        ProAds admin without one) the ad account in the server settings."""
+        c = self.meta_conns.get(client_id)
+        if c and meta_connect.public_view(c)["ready"]:
+            return meta_connect.ads_settings(c, meta_connect.decrypt(c["token"]))
+        if is_admin and not meta_ads.missing():
+            return meta_ads.settings()
+        return None
 
     def maybe_activate(self, client_id: str) -> None:
         """First data in from a self-serve account: tell Meta a real user started (once)."""
@@ -512,26 +539,32 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             abort(503, str(e))
         except (RuntimeError, CampaignError) as e:
             abort(502, str(e))
-        out["can_publish"] = own and not meta_ads.missing()
+        out["can_publish"] = state.ads_settings(client_id, own) is not None
         return out
 
-    def publisher():
-        return meta_ads.Publisher(state.ads_http)
+    def publisher(client_id):
+        s = state.ads_settings(client_id, is_admin(client_id))
+        if s is None:
+            abort(409, "Connect your Facebook & Instagram first (Connect & upload), and pick an ad account, Page and Pixel.")
+        return meta_ads.Publisher(state.ads_http, s)
 
     @flask.post("/campaign/<client_id>/publish")
     def campaign_publish(client_id):
-        """Create the campaign in Meta Ads Manager, everything paused. Your own ad account only."""
-        require_admin(client_id)
-        if meta_ads.missing():
-            abort(503, "Publishing to Meta isn't set up: add " + ", ".join(meta_ads.missing()) + " in Render.")
+        """Create the campaign in the client's Meta ad account, everything paused."""
+        state.require_key(client_id)
+        pub = publisher(client_id)
         body = request.get_json(silent=True) or {}
         plan, images = body.get("plan"), body.get("images")
         if not isinstance(plan, dict) or not isinstance(images, dict):
             abort(400, "send JSON with the 'plan' and its 'images'")
-        landing = (body.get("landing_url") or public_base() + "/").strip()
+        landing = (body.get("landing_url") or (public_base() + "/" if is_admin(client_id)
+                                                else state.config(client_id).get("website", ""))).strip()
+        if landing and not re.match(r"^https?://", landing):
+            landing = "https://" + landing
+        landing = landing.replace("http://", "https://", 1) if landing.startswith("http://") else landing
         currency = state.config(client_id).get("currency", "AED")
         try:
-            launch = publisher().publish(plan, images, landing, currency)
+            launch = pub.publish(plan, images, landing, currency)
         except meta_ads.PublishError as e:
             abort(502, str(e))
         with state.lock:
@@ -542,7 +575,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     @flask.post("/campaign/<client_id>/launch/<campaign_id>")
     def campaign_launch(client_id, campaign_id):
         """Go live or pause. Going live needs {"confirm": true}: from then on Meta spends the budget."""
-        require_admin(client_id)
+        state.require_key(client_id)
         body = request.get_json(silent=True) or {}
         action = body.get("action")
         if action not in ("live", "pause"):
@@ -555,7 +588,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             abort(404, "unknown campaign")
         status = "ACTIVE" if action == "live" else "PAUSED"
         try:
-            publisher().set_status(launch, status)
+            publisher(client_id).set_status(launch, status)
         except meta_ads.PublishError as e:
             abort(502, str(e))
         with state.lock:
@@ -565,7 +598,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
 
     @flask.get("/campaign/<client_id>/launches")
     def campaign_launches(client_id):
-        require_admin(client_id)
+        state.require_key(client_id)
         with state.lock:
             return {"launches": state.launches.list(client_id), "missing": meta_ads.missing()}
 
@@ -781,6 +814,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
              "Set META_APP_SECRET and PROADS_WHATSAPP_VERIFY_TOKEN, then the webhook in Meta."),
             ("Publish campaigns to Meta", not meta_ads.missing(),
              "Set PROADS_AD_ACCOUNT_ID, PROADS_PAGE_ID and PROADS_ADS_TOKEN (system user token with ads_management)."),
+            ("Clients can connect Facebook & Instagram", meta_connect.available(),
+             "Set META_APP_ID, META_APP_SECRET, META_LOGIN_CONFIG_ID and PROADS_SECRET_KEY (Facebook Login for Business)."),
             ("Connect Shopify button", shopify_app.available(),
              "Optional: SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET, PROADS_SECRET_KEY."),
         ]
@@ -856,11 +891,106 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 "meta_capi": {"configured": bool(meta.get("dataset_id") and meta.get("access_token")),
                               "live": bool(meta.get("live"))},
                 "ai": {"configured": ai.available},
-                "ads_publish": {"configured": is_admin(client_id) and not meta_ads.missing()},
+                "ads_publish": {"configured": state.ads_settings(client_id, is_admin(client_id)) is not None},
+                "meta_login": {k: v for k, v in meta_connect.public_view(state.meta_conns.get(client_id)).items()
+                               if k not in ("ad_accounts", "pages")},
             },
             "totals": totals, "posts": posts, "tracking_codes": codes,
             "webhooks": {"stripe": f"/webhooks/stripe/{client_id}", "shopify": f"/webhooks/shopify/{client_id}"},
         }
+
+    # ---------------- Facebook & Instagram connection (each client's own) ----------------
+    def meta_back(result, message=""):
+        q = urlencode({"meta": result, **({"message": message} if message else {})})
+        return redirect("/app#/upload?" + q)
+
+    @flask.post("/meta/connect/<client_id>")
+    def meta_connect_start(client_id):
+        """Returns Facebook's approval page. The browser goes there next."""
+        state.require_key(client_id)
+        if not meta_connect.available():
+            abort(503, "Connecting Facebook isn't switched on yet.")
+        nonce = secrets.token_urlsafe(24)
+        with state.lock:
+            state.store.put_oauth_state(nonce, client_id, "meta", time.time())
+        return {"url": meta_connect.authorize_url(nonce, public_url() + "/meta/callback")}
+
+    @flask.get("/meta/callback")
+    def meta_callback():
+        if request.args.get("error"):
+            return meta_back("error", "Facebook connection was cancelled.")
+        with state.lock:
+            found = state.store.pop_oauth_state(request.args.get("state", ""))
+        if not found or found[1] != "meta" or time.time() - found[2] > meta_connect.STATE_TTL:
+            return meta_back("error", "This connect link expired. Please start again.")
+        client_id = found[0]
+        if not state.known(client_id) or not meta_connect.available():
+            return meta_back("error", "Unknown ProAds account.")
+        try:
+            token = meta_connect.exchange_code(state.meta_http, request.args.get("code", ""), public_url() + "/meta/callback")
+            assets = meta_connect.discover(state.meta_http, token["access_token"])
+        except Exception as e:
+            log.warning("meta connect failed for %s: %s", client_id, e)
+            return meta_back("error", "Facebook did not finish the connection. Please try again.")
+        if not assets["ad_accounts"]:
+            return meta_back("error", "No ad account was shared. Connect again and tick your ad account.")
+        with state.lock:
+            state.meta_conns.save(client_id, token, assets)
+        log.info("%s connected Facebook (%d ad accounts, %d pages)", client_id,
+                 len(assets["ad_accounts"]), len(assets["pages"]))
+        return meta_back("connected")
+
+    @flask.get("/meta/<client_id>")
+    def meta_connection(client_id):
+        state.require_key(client_id)
+        with state.lock:
+            return meta_connect.public_view(state.meta_conns.get(client_id))
+
+    @flask.get("/meta/<client_id>/pixels")
+    def meta_pixels(client_id):
+        state.require_key(client_id)
+        acct = request.args.get("ad_account", "")
+        with state.lock:
+            c = state.meta_conns.get(client_id)
+        if not c or acct not in {a["id"] for a in c["assets"]["ad_accounts"]}:
+            abort(400, "pick one of your connected ad accounts")
+        try:
+            return {"pixels": meta_connect.pixels(state.meta_http, meta_connect.decrypt(c["token"]), acct)}
+        except meta_connect.ConnectError as e:
+            abort(502, f"Meta: {e}")
+
+    @flask.post("/meta/<client_id>/select")
+    def meta_select(client_id):
+        state.require_key(client_id)
+        b = request.get_json(silent=True) or {}
+        try:
+            with state.lock:
+                state.meta_conns.select(client_id, b.get("ad_account") or "", b.get("page_id") or "",
+                                        b.get("pixel_id") or "", b.get("send_sales", True) is not False)
+        except meta_connect.ConnectError as e:
+            abort(400, str(e))
+        with state.lock:
+            return meta_connect.public_view(state.meta_conns.get(client_id))
+
+    @flask.post("/meta/<client_id>/disconnect")
+    def meta_disconnect(client_id):
+        """Forget the access and ask Facebook to remove ProAds' permission."""
+        state.require_key(client_id)
+        with state.lock:
+            token = state.meta_conns.token(client_id)
+            state.meta_conns.delete(client_id)
+        if token:
+            def revoke():
+                try:
+                    http = state.meta_http
+                    if http is None:
+                        import requests as http
+                    http.delete(f"https://graph.facebook.com/{meta_connect.settings()['version']}/me/permissions",
+                                params={"access_token": token}, timeout=20)
+                except Exception as e:
+                    log.warning("could not revoke Facebook permission for %s: %s", client_id, e)
+            threading.Thread(target=revoke, daemon=True).start()
+        return {"connected": False}
 
     # ---------------- Shopify app connection ----------------
     def public_url() -> str:
@@ -1114,8 +1244,10 @@ def _start_worker(state: App, every: int) -> None:
     def loop():
         while True:
             time.sleep(every)
-            for cid in list(state.clients):
+            for cid in sorted(set(state.clients) | set(state.meta_conns.all_clients())):
                 try:
+                    if not state.known(cid):
+                        continue
                     res = state.sync_meta(cid)
                     if res["events"] or res["errors"]:
                         log.info("meta sync %s: %s", cid, res)

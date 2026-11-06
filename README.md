@@ -263,3 +263,14 @@ and creates everything in Meta Ads Manager **paused**. Nothing spends until you 
 - `PROADS_ADS_TOKEN` – system user token with `ads_management`, `pages_manage_ads`,
   `pages_read_engagement`, `business_management` (falls back to `PROADS_META_TOKEN`)
 - `PROADS_META_DATASET_ID` – the Pixel the ads optimise for (already set for tracking)
+
+## Clients connect their own Facebook & Instagram
+
+On **Connect & upload**, a client presses **Connect with Facebook**, approves on Facebook,
+and picks an ad account, Page (with its Instagram) and Pixel. ProAds then publishes
+campaigns into *their* ad account and sends *their* sales to *their* Pixel.
+Settings: `META_APP_ID`, `META_APP_SECRET`, `META_LOGIN_CONFIG_ID` (Facebook Login for
+Business configuration), `PROADS_SECRET_KEY`. Redirect URI: `https://<domain>/meta/callback`.
+Until Meta grants Advanced Access (App Review + Business Verification) for ads_management,
+ads_read, business_management, pages_show_list, pages_read_engagement and pages_manage_ads,
+only people with a role on the Meta app can connect.

@@ -99,14 +99,15 @@ def test_refuses_before_spending_anything():
     assert g.posts == []
 
 
-def test_endpoints_admin_only_and_go_live_needs_confirmation(tmp_path):
+def test_endpoints_need_a_connection_and_go_live_needs_confirmation(tmp_path):
     app = create_app({"pro": {"api_key": "admin-key-0123456789abc"}, "other": {"api_key": "other-key-0123456789abc"}},
                      str(tmp_path / "x.db"), start_worker=False)
     state = app.extensions["paysignal"]
     state.ads_http = g = FakeGraph()
     c = app.test_client()
     body = {"plan": plan(), "images": {"0-0": PNG, "0-1": PNG}}
-    assert c.post("/campaign/other/publish", json=body, headers={"X-API-Key": "other-key-0123456789abc"}).status_code == 403
+    r = c.post("/campaign/other/publish", json=body, headers={"X-API-Key": "other-key-0123456789abc"})
+    assert r.status_code == 409 and "Connect your Facebook" in r.json["error"]          # not connected yet
     r = c.post("/campaign/pro/publish", json=body, headers=ADMIN)
     assert r.status_code == 200 and r.json["status"] == "PAUSED"
     cid = r.json["campaign_id"]
