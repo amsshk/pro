@@ -142,3 +142,23 @@ def test_own_campaign_is_planned_for_signups(tmp_path):
     assert '"conversion": "signup"' in brief and "ProAds (pro.ezdevsoft.net)" in brief
     assert r.json["plan"]["objective"] == "OUTCOME_LEADS" and r.json["can_publish"]
     assert r.json["landing_url"] == "https://pro.example.net/"
+
+
+def test_campaign_history_keeps_every_build_and_its_status(tmp_path):
+    from test_ai import Session, ok
+    app = create_app({"pro": {"api_key": "admin-key-0123456789abc"}}, str(tmp_path / "x.db"), start_worker=False)
+    st = app.extensions["paysignal"]
+    st.ai = MetaAI(api_key="k", session=Session(lambda m, b: ok(json.dumps({k: v for k, v in plan().items() if k != "conversion"}))))
+    st.ads_http = FakeGraph()
+    c = app.test_client()
+    first = c.post("/campaign/pro", json={"daily_budget": 40}, headers=ADMIN).json
+    second = c.post("/campaign/pro", json={"daily_budget": 40}, headers=ADMIN).json
+    h = c.get("/campaign/pro/history", headers=ADMIN).json["history"]
+    assert [x["draft_id"] for x in h] == [second["draft_id"], first["draft_id"]] and h[0]["status"] == "draft"
+    launch = c.post("/campaign/pro/publish", json={"plan": first["plan"], "images": {"0-0": PNG, "0-1": PNG},
+                                                  "draft_id": first["draft_id"]}, headers=ADMIN).json
+    item = c.get(f"/campaign/pro/history/{first['draft_id']}", headers=ADMIN).json
+    assert item["launch"]["campaign_id"] == launch["campaign_id"] and item["plan"]["name"]
+    assert {x["draft_id"]: x["status"] for x in c.get("/campaign/pro/history", headers=ADMIN).json["history"]}[first["draft_id"]] == "PAUSED"
+    assert c.post(f"/campaign/pro/history/{second['draft_id']}/delete", headers=ADMIN).json["deleted"]
+    assert len(c.get("/campaign/pro/history", headers=ADMIN).json["history"]) == 1

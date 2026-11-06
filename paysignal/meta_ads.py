@@ -256,3 +256,52 @@ class LaunchStore:
         rows = self.db.execute("SELECT data, status FROM ad_launches WHERE client_id=? ORDER BY created_at DESC, rowid DESC",
                                (client_id,)).fetchall()
         return [{**json.loads(d), "status": st} for d, st in rows]
+
+
+class DraftStore:
+    """Every campaign the builder made, so it can be reopened, published or compared later."""
+    SCHEMA = """CREATE TABLE IF NOT EXISTS campaign_drafts (
+        id TEXT PRIMARY KEY, client_id TEXT NOT NULL, data TEXT NOT NULL, campaign_id TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')))"""
+
+    def __init__(self, db):
+        self.db = db
+        self.db.execute(self.SCHEMA)
+        self.db.commit()
+
+    def add(self, client_id: str, result: dict) -> str:
+        import secrets
+        did = secrets.token_hex(6)
+        self.db.execute("INSERT INTO campaign_drafts (id, client_id, data) VALUES (?,?,?)",
+                        (did, client_id, json.dumps(result)))
+        self.db.execute("DELETE FROM campaign_drafts WHERE client_id=? AND id NOT IN (SELECT id FROM campaign_drafts"
+                        " WHERE client_id=? ORDER BY created_at DESC, rowid DESC LIMIT 100)", (client_id, client_id))
+        self.db.commit()
+        return did
+
+    def get(self, client_id: str, did: str) -> Optional[dict]:
+        row = self.db.execute("SELECT data, campaign_id, created_at FROM campaign_drafts WHERE client_id=? AND id=?",
+                              (client_id, did)).fetchone()
+        return {**json.loads(row[0]), "draft_id": did, "campaign_id": row[1], "created_at": row[2]} if row else None
+
+    def link(self, client_id: str, did: str, campaign_id: str) -> None:
+        self.db.execute("UPDATE campaign_drafts SET campaign_id=? WHERE client_id=? AND id=?", (campaign_id, client_id, did))
+        self.db.commit()
+
+    def delete(self, client_id: str, did: str) -> bool:
+        cur = self.db.execute("DELETE FROM campaign_drafts WHERE client_id=? AND id=?", (client_id, did))
+        self.db.commit()
+        return cur.rowcount == 1
+
+    def list(self, client_id: str) -> list[dict]:
+        rows = self.db.execute("SELECT id, data, campaign_id, created_at FROM campaign_drafts WHERE client_id=?"
+                               " ORDER BY created_at DESC, rowid DESC", (client_id,)).fetchall()
+        out = []
+        for did, data, camp, created in rows:
+            r = json.loads(data)
+            p = r.get("plan") or {}
+            out.append({"draft_id": did, "created_at": created, "campaign_id": camp, "name": p.get("name"),
+                        "daily_budget": p.get("daily_budget"), "currency": p.get("currency"),
+                        "optimization": p.get("optimization"), "ads": sum(len(s.get("ads") or []) for s in p.get("ad_sets") or []),
+                        "problems": bool(r.get("problems"))})
+        return out

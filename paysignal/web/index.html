@@ -952,6 +952,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D2D0DB;
         const r = await api("/campaign/" + cid(), { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ daily_budget: Number(budget.value), goal: goals[Number(goal.value)][0], conversion: goals[Number(goal.value)][1], notes: notes.value }) });
         out.replaceChildren(renderPlan(r));
+        loadHistory();
       } catch (err) {
         if (err.message !== "signed out") out.replaceChildren(errorCard(/billing/i.test(err.message) ? "Meta AI is blocked by a billing problem on your Meta Model API account. Fix it at dev.meta.ai, then try again." : err.message));
       }
@@ -959,6 +960,44 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D2D0DB;
     } },
       h("div", { class: "grid2" }, h("label", { class: "f", for: "budget" }, "Daily budget (" + adsCurrency() + ")", budget), h("label", { class: "f", for: "goal" }, "Goal", goal)),
       h("label", { class: "f", for: "notes" }, "Notes", notes), build);
+
+    const hist = h("div", { class: "scroll" }, loading());
+    const when = (x) => x ? new Date(x.replace(" ", "T") + "Z").toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+    const badge = (st) => ({ ACTIVE: ["b-measured", "Live"], PAUSED: ["b-neutral", "Paused"], PAUSED_BILLING: ["b-est", "Paused: add card"],
+      published: ["b-neutral", "Published"], draft: ["b-neutral", "Draft"] })[st] || ["b-neutral", st];
+    async function openDraft(id) {
+      out.replaceChildren(loading());
+      out.scrollIntoView({ behavior: "smooth", block: "start" });
+      try { out.replaceChildren(renderPlan(await api("/campaign/" + cid() + "/history/" + encodeURIComponent(id)))); }
+      catch (e) { if (e.message !== "signed out") out.replaceChildren(errorCard(e.message)); }
+    }
+    async function loadHistory() {
+      try {
+        const r = await api("/campaign/" + cid() + "/history");
+        hist.replaceChildren(r.history.length ? h("table", {},
+          h("thead", {}, h("tr", {}, ["Built", "Campaign", "Budget", "Ads", "Status", ""].map((t) => h("th", { scope: "col" }, t)))),
+          h("tbody", {}, r.history.map((x) => {
+            const [cls, label] = badge(x.status);
+            let armed = false;
+            const del = h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px" }, "Delete");
+            del.addEventListener("click", async () => {
+              if (!armed) { armed = true; del.textContent = "Sure?"; return; }
+              try { await api("/campaign/" + cid() + "/history/" + encodeURIComponent(x.draft_id) + "/delete", { method: "POST" }); loadHistory(); }
+              catch (e) { if (e.message !== "signed out") toast(e.message); }
+            });
+            return h("tr", {},
+              h("td", { style: "white-space:nowrap" }, when(x.created_at)),
+              h("td", {}, h("b", {}, x.name || "Campaign"), x.problems ? h("span", { class: "sub", style: "font-size:12px" }, " · needs checking") : null),
+              h("td", { style: "white-space:nowrap" }, x.daily_budget ? fmt.format(x.daily_budget) + " " + (x.currency || "") + "/day" : "–"),
+              h("td", {}, x.ads),
+              h("td", {}, h("span", { class: "badge " + cls }, label)),
+              h("td", {}, h("div", { style: "display:flex;gap:6px;justify-content:flex-end" },
+                h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => openDraft(x.draft_id) }, "Open"),
+                x.campaign_id ? null : del)));
+          })))
+          : h("p", { class: "sub", style: "margin:0;font-size:14px" }, "Campaigns you build will be saved here."));
+      } catch (e) { if (e.message !== "signed out") hist.replaceChildren(errorCard(e.message)); }
+    }
 
     root.replaceChildren(layout("#/assistant", [
       h("header", { class: "between", style: "align-items:flex-end" },
@@ -969,8 +1008,12 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D2D0DB;
         h("section", { class: "card", "aria-labelledby": "camp" },
           h("div", { class: "between" }, h("h2", { id: "camp" }, "Campaign builder"), h("span", { class: "badge b-neutral" }, "Nothing spends until you press Go live")),
           campForm, out)),
+      h("section", { class: "card", "aria-labelledby": "hist-h" },
+        h("div", { class: "between" }, h("h2", { id: "hist-h" }, "Campaign history"), h("span", { class: "sub", style: "font-size:13px" }, "Every campaign you build is saved")),
+        hist),
     ]));
     chat.scrollTop = chat.scrollHeight;
+    loadHistory();
   }
 
   function renderPlan(r) {
@@ -1086,6 +1129,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D2D0DB;
 
   // ---------- publish to Meta ----------
   function publishSection(r, sets) {
+    if (r.launch) return h("div", { class: "adset", style: "gap:12px" }, h("b", {}, "Published to Meta"), launchCard(r.launch));
     if (!r.can_publish) return h("div", { class: "result err" }, h("span", {}, "To publish this straight to your ad account, ",
       h("a", { href: "#/upload" }, "connect Facebook & Instagram"), " and pick your ad account, Page and Pixel."));
     const images = {}, cards = [];
@@ -1111,7 +1155,8 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D2D0DB;
       btn.disabled = true; box.replaceChildren(loading("Creating the campaign, ad set and ads in Meta…"));
       try {
         const launch = await api("/campaign/" + cid() + "/publish", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ plan: r.plan, images, landing_url: landing.value.trim() }) });
+          body: JSON.stringify({ plan: r.plan, images, landing_url: landing.value.trim(), draft_id: r.draft_id }) });
+        if (typeof loadHistory === "function") loadHistory();
         btn.remove(); box.replaceChildren(launchCard(launch));
       } catch (e) {
         if (e.message !== "signed out") box.replaceChildren(e.status === 402

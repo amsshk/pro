@@ -110,6 +110,7 @@ class App:
         self.wa_http = None                    # set in tests
         self.wa_sync = False                   # tests: send WhatsApp events inline
         self.launches = meta_ads.LaunchStore(self.store.db)
+        self.drafts = meta_ads.DraftStore(self.store.db)
         self.ads_http = None                   # set in tests
         self.meta_conns = meta_connect.ConnectionStore(self.store.db)
         self.meta_http = None                  # set in tests
@@ -578,7 +579,41 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         except (RuntimeError, CampaignError) as e:
             abort(502, str(e))
         out["can_publish"] = state.ads_settings(client_id, own) is not None
+        with state.lock:
+            out["draft_id"] = state.drafts.add(client_id, {k: v for k, v in out.items() if k != "can_publish"})
         return out
+
+    @flask.get("/campaign/<client_id>/history")
+    def campaign_history(client_id):
+        """Every campaign the builder made, newest first, with its status in Meta if it was published."""
+        state.require_key(client_id)
+        with state.lock:
+            rows = state.drafts.list(client_id)
+            launches = {l["campaign_id"]: l for l in state.launches.list(client_id)}
+        for r in rows:
+            l = launches.get(r["campaign_id"]) if r["campaign_id"] else None
+            r["status"] = l["status"] if l else ("published" if r["campaign_id"] else "draft")
+        return {"history": rows}
+
+    @flask.get("/campaign/<client_id>/history/<draft_id>")
+    def campaign_history_item(client_id, draft_id):
+        state.require_key(client_id)
+        with state.lock:
+            d = state.drafts.get(client_id, draft_id)
+            launch = state.launches.get(client_id, d["campaign_id"]) if d and d.get("campaign_id") else None
+        if not d:
+            abort(404, "unknown campaign")
+        d["can_publish"] = state.ads_settings(client_id, is_admin(client_id)) is not None
+        d["launch"] = launch
+        return d
+
+    @flask.post("/campaign/<client_id>/history/<draft_id>/delete")
+    def campaign_history_delete(client_id, draft_id):
+        state.require_key(client_id)
+        with state.lock:
+            if not state.drafts.delete(client_id, draft_id):
+                abort(404, "unknown campaign")
+        return {"deleted": True}
 
     def ads_currency(client_id) -> str:
         """Budgets are in the currency the client's ad account bills in."""
@@ -626,6 +661,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             abort(502, str(e))
         with state.lock:
             state.launches.add(client_id, launch)
+            if body.get("draft_id"):
+                state.drafts.link(client_id, str(body["draft_id"]), launch["campaign_id"])
         log.info("%s published campaign %s (paused)", client_id, launch["campaign_id"])
         return launch
 
