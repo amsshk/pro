@@ -185,6 +185,18 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D0D0D0;
 #bgnet{position:fixed;inset:0;width:100vw;height:100vh;z-index:-1;pointer-events:none;opacity:.9}
 .card,.mstrip{background:rgba(18,18,18,.8)!important;backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
 main{background:transparent}
+
+.river{display:block;width:100%;height:auto;overflow:visible}
+.river .flow{stroke-dasharray:6 10;animation:flow 1.4s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-32}}
+@media (prefers-reduced-motion:reduce){.river .flow{animation:none}}
+.adkpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.adkpis div{background:var(--soft);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:4px}
+.adkpis span{font-size:12px;color:var(--muted)}.adkpis b{font-family:var(--head);font-size:20px}
+.truth{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;background:var(--soft);border-radius:14px;padding:16px}
+.truth .side{display:flex;flex-direction:column;gap:4px}.truth .big{font-family:var(--head);font-size:30px;font-weight:700}
+.truth .vs{font-size:12px;color:var(--muted);text-align:center}
+@media (max-width:560px){.truth{grid-template-columns:1fr}.truth .vs{text-align:left}}
 </style>
 </head>
 <body>
@@ -1453,6 +1465,97 @@ main{background:transparent}
     return wrap;
   }
 
+  // ---------- ads performance (live from Meta) ----------
+  const flag = (cc) => /^[A-Z]{2}$/.test(cc) ? String.fromCodePoint(...[...cc].map((c) => 127397 + c.charCodeAt(0))) : "🌐";
+  let regionNames = null;
+  try { regionNames = new Intl.DisplayNames(["en"], { type: "region" }); } catch (e) {}
+  const countryName = (cc) => { try { return (regionNames && regionNames.of(cc)) || cc; } catch (e) { return cc; } };
+  function river(stages) {
+    // stages: [{label, value, fmt, tone}] — a flowing line from money spent to real results
+    const W = 900, H = 150, n = stages.length, gap = W / n, max = Math.max(...stages.map((x) => x.value || 0), 1);
+    const width = (v) => 3 + 16 * Math.log10(1 + 9 * (v || 0) / max);
+    const g = [];
+    for (let i = 0; i < n - 1; i++) {
+      const x1 = gap * i + gap / 2 + 46, x2 = gap * (i + 1) + gap / 2 - 46, y = 52;
+      const leak = stages[i + 1].tone === "loss";
+      g.push(h("path", { d: `M${x1} ${y} C${(x1 + x2) / 2} ${y - 18}, ${(x1 + x2) / 2} ${y + 18}, ${x2} ${y}`, fill: "none",
+        stroke: leak ? "rgba(248,113,113,.25)" : "rgba(94,148,0,.25)", "stroke-width": width(stages[i + 1].value) + 6, "stroke-linecap": "round" }));
+      g.push(h("path", { class: "flow", d: `M${x1} ${y} C${(x1 + x2) / 2} ${y - 18}, ${(x1 + x2) / 2} ${y + 18}, ${x2} ${y}`, fill: "none",
+        stroke: leak ? "#F87171" : i === n - 2 ? "#8CB85A" : "#F2F2F2", "stroke-width": Math.max(2, width(stages[i + 1].value) / 3), "stroke-linecap": "round" }));
+    }
+    stages.forEach((st, i) => {
+      const cx = gap * i + gap / 2, c = st.tone === "win" ? "#5E9400" : st.tone === "loss" ? "#F87171" : "#EDEDED";
+      g.push(h("circle", { cx, cy: 52, r: 40, fill: "#121212", stroke: c, "stroke-width": st.tone ? 2.5 : 1.5 }));
+      g.push(h("text", { x: cx, y: 58, "text-anchor": "middle", fill: c, "font-size": 17, "font-weight": 700, "font-family": "Space Grotesk, Inter, sans-serif" }, st.fmt));
+      g.push(h("text", { x: cx, y: 118, "text-anchor": "middle", fill: "#A3A3A3", "font-size": 13 }, st.label));
+      if (st.sub) g.push(h("text", { x: cx, y: 136, "text-anchor": "middle", fill: "#8A8A8A", "font-size": 11 }, st.sub));
+    });
+    return h("div", { class: "scroll" }, h("svg", { class: "river", viewBox: "0 0 " + W + " " + H, style: "min-width:620px", role: "img",
+      "aria-label": stages.map((x) => x.label + ": " + x.fmt).join(", ") }, g));
+  }
+  function barsByDay(dates, results, spend, cur) {
+    const W = 900, H = 90, n = dates.length, max = Math.max(...results, 1), bw = Math.max(2, W / n - 3);
+    return h("svg", { viewBox: "0 0 " + W + " " + H, class: "river", role: "img", "aria-label": "Results per day" },
+      results.map((v, i) => h("rect", { x: i * (W / n), y: H - 4 - (H - 10) * v / max, width: bw, height: Math.max(2, (H - 10) * v / max), rx: 2,
+        fill: v ? "#5E9400" : "#2F2F2F" }, h("title", {}, dates[i] + ": " + fmt.format(v) + " results · " + fmt.format(spend[i]) + " " + cur + " spent"))));
+  }
+  async function adsSection(period) {
+    const box = h("section", { class: "card", "aria-labelledby": "ads-h" },
+      h("div", { class: "between" }, h("h2", { id: "ads-h" }, "Ads performance"), h("span", { class: "badge b-neutral" }, "Live from Meta")), loading("Reading your ads from Meta…"));
+    (async () => {
+      let r;
+      try { r = await api("/ads/" + cid() + "?period=" + encodeURIComponent(period)); }
+      catch (e) { if (e.message !== "signed out") box.replaceChildren(h("h2", { id: "ads-h" }, "Ads performance"), errorCard(e.message)); return; }
+      const head = h("div", { class: "between" }, h("h2", { id: "ads-h" }, "Ads performance"),
+        h("span", { class: "badge b-measured" }, r.live ? r.live + " live · from Meta" : "From Meta"));
+      if (!r.has_campaigns) {
+        box.replaceChildren(head, h("p", { class: "sub", style: "margin:0" }, "No ads published yet. Build your first campaign and you'll see spend, results, where they come from, and what was really true."),
+          h("a", { class: "btn btn-primary", href: "#/assistant", style: "align-self:flex-start" }, "Build a campaign"));
+        return;
+      }
+      if (r.error) { box.replaceChildren(head, errorCard(r.error)); return; }
+      const t = r.totals, cur = r.currency, tr = r.truth || {}, signup = r.kind === "signup";
+      const what = signup ? "sign-ups" : "purchases";
+      const kpis = h("div", { class: "adkpis" },
+        [["Spent", fmt.format(t.spend) + " " + cur], ["People reached", fmt.format(t.reach)], ["Clicks", fmt.format(t.clicks) + " · " + (t.ctr * 100).toFixed(1) + "%"],
+         ["Meta says " + what, fmt.format(t.results)], ["Cost per result", t.cost_per_result ? fmt.format(t.cost_per_result) + " " + cur : "–"]]
+          .map(([a, b]) => h("div", {}, h("span", {}, a), h("b", {}, b))));
+      const real = tr.real || 0, gap = t.results - real;
+      const stages = [
+        { label: "Spent", value: t.spend, fmt: fmt.format(Math.round(t.spend)), sub: cur },
+        { label: "Reached", value: t.reach, fmt: fmt.format(t.reach) },
+        { label: "Clicked", value: t.clicks, fmt: fmt.format(t.clicks) },
+        { label: "Meta says", value: t.results, fmt: fmt.format(t.results), sub: what },
+        { label: "Really happened", value: real, fmt: fmt.format(real), sub: signup ? "real sign-ups" : "paying orders", tone: real ? "win" : gap > 0 ? "loss" : null },
+      ];
+      if (signup) stages.push({ label: "Became active", value: tr.active || 0, fmt: fmt.format(tr.active || 0), tone: tr.active ? "win" : null });
+      else stages.push({ label: "Real profit", value: tr.real_profit || 0, fmt: fmt.format(Math.round(tr.real_profit || 0)), sub: tr.currency, tone: (tr.real_profit || 0) > 0 ? "win" : null });
+      const truth = h("div", { class: "truth" },
+        h("div", { class: "side" }, h("span", { class: "sub", style: "font-size:13px" }, "Meta says"), h("span", { class: "big" }, fmt.format(t.results)), h("span", { class: "sub", style: "font-size:13px" }, what)),
+        h("div", { class: "vs" }, "vs"),
+        h("div", { class: "side" }, h("span", { class: "sub", style: "font-size:13px" }, "ProAds confirmed"),
+          h("span", { class: "big", style: "color:" + (gap > 0 ? "#FCA5A5" : "#8FD3A4") }, fmt.format(real)),
+          h("span", { class: "sub", style: "font-size:13px" }, signup ? (tr.active || 0) + " became active · " + (tr.paying || 0) + " paying"
+            : (tr.buyers || 0) + " buyers · " + fmt.format(tr.refunds || 0) + " " + (tr.currency || "") + " refunded")));
+      const verdict = h("p", { style: "margin:0;font-size:14px" }, t.results === 0 && real === 0 ? "No results yet. Give new campaigns 3–4 days before judging."
+        : gap > 0 ? "Meta counts " + fmt.format(gap) + " more " + what + " than ProAds can confirm. Judge your ads on the confirmed number."
+        : "Every result Meta reports is confirmed by ProAds" + (gap < 0 ? ", plus " + fmt.format(-gap) + " Meta missed." : "."));
+      const list = (title, rows, label) => h("div", { style: "flex:1 1 300px;display:flex;flex-direction:column;gap:12px;min-width:0" }, h("b", {}, title),
+        rows.length ? rows.map((x) => {
+          const val = x.results || x.clicks, max = Math.max(...rows.map((y) => y.results || y.clicks), 1);
+          return h("div", { class: "hbar" }, h("span", {}, label(x)), h("b", {}, x.results ? fmt.format(x.results) + " " + what : fmt.format(x.clicks) + " clicks"),
+            h("div", { class: "track" }, h("div", { style: "width:" + Math.max(3, Math.round(100 * val / max)) + "%" })));
+        }) : h("span", { class: "sub", style: "font-size:13px" }, "Nothing yet."));
+      box.replaceChildren(head, kpis, river(stages), truth, verdict,
+        h("div", { style: "display:flex;flex-direction:column;gap:6px" }, h("b", { style: "font-size:14px" }, signup ? "Sign-ups per day" : "Purchases per day"), barsByDay(r.dates, r.series.results, r.series.spend, cur)),
+        h("div", { class: "row", style: "gap:24px" },
+          list("Where they're coming from", r.countries, (x) => flag(x.name) + "  " + countryName(x.name)),
+          list("Where they saw your ad", r.placements, (x) => x.name)),
+        h("span", { class: "sub", style: "font-size:12px" }, "Updated " + new Date(r.updated_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + " · refreshes every 10 minutes"));
+    })();
+    return box;
+  }
+
   async function viewHome() {
     const body = h("div", { style: "display:contents" }, loading());
     const periods = h("div", { class: "periods", role: "group", "aria-label": "Time period" }, PERIOD_LABELS.map(([v, label]) =>
@@ -1475,7 +1578,7 @@ main{background:transparent}
         h("span", { style: "display:flex;flex-direction:column;gap:2px" }, h("b", { style: "font-size:14px" }, x.label), x.done ? null : h("span", { class: "sub", style: "font-size:13px" }, x.how)),
         h("span", { class: "sr" }, x.done ? "done" : "to do")))));
     if (d.mode !== "proads" && !d.has_data) {
-      body.replaceChildren(...[adsBanner(d.ads_access), guide].filter(Boolean), h("section", { class: "card empty" }, h("h2", {}, "Your sales will show here"),
+      body.replaceChildren(...[adsBanner(d.ads_access), guide, await adsSection(homePeriod)].filter(Boolean), h("section", { class: "card empty" }, h("h2", {}, "Your sales will show here"),
         h("p", { class: "sub" }, "Bring in your sales and this page fills with sales, real profit and orders, day by day."),
         h("a", { class: "btn btn-primary", href: "#/upload" }, "Bring in your sales")));
       return;
@@ -1524,7 +1627,7 @@ main{background:transparent}
         d.campaigns.length ? d.campaigns.map((x) => h("div", { class: "between", style: "font-size:14px;gap:8px" }, h("span", {}, x.name || x.campaign_id),
           h("span", { class: "badge " + (x.status === "ACTIVE" ? "b-measured" : "b-neutral") }, x.status === "ACTIVE" ? "Live" : "Paused"))) :
           h("p", { class: "sub", style: "margin:0;font-size:14px" }, "None yet."));
-      body.replaceChildren(strip,
+      body.replaceChildren(strip, await adsSection(homePeriod),
         h("section", { class: "card", "aria-label": "Chart" }, h("div", { class: "between" }, h("h2", {}, label + " over time"),
           h("div", { style: "display:flex;gap:14px" }, h("span", { class: "key" }, h("i"), "This period"), h("span", { class: "key" }, h("i", { class: "prev" }), "Previous period"))), chartHost),
         h("div", { class: "row", style: "align-items:flex-start" }, h("div", { style: "flex:1 1 380px;display:flex;flex-direction:column;gap:24px;min-width:0" }, newest),
@@ -1533,9 +1636,10 @@ main{background:transparent}
       draw();
       return;
     }
+    const adsBox = await adsSection(homePeriod);
     body.replaceChildren(
       ...[adsBanner(d.ads_access)].filter(Boolean),
-      strip,
+      strip, adsBox,
       h("section", { class: "card", "aria-label": "Chart" },
         h("div", { class: "between" }, h("h2", {}, label + " over time"),
           h("div", { style: "display:flex;gap:14px" }, h("span", { class: "key" }, h("i"), "This period"), h("span", { class: "key" }, h("i", { class: "prev" }), "Previous period"))),

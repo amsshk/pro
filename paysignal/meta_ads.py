@@ -213,7 +213,7 @@ class Publisher:
         except Exception:
             self._delete(campaign_id)                       # no half-built campaigns left behind
             raise
-        created.update(status="PAUSED", manager_url=manager_url(self.s["ad_account"], campaign_id),
+        created.update(status="PAUSED", conversion=conversion, manager_url=manager_url(self.s["ad_account"], campaign_id),
                        ad_account=self.s["ad_account"], currency=currency, daily_budget=budget, name=name,
                        created_at=int(time.time()))
         return created
@@ -231,6 +231,22 @@ class Publisher:
                 total += float(row.get("spend") or 0)
                 currency = row.get("account_currency") or currency
         return round(total, 2), currency
+
+    def insights(self, campaign_ids: list[str], since: str, until: str, breakdowns: str = "",
+                 daily: bool = False) -> list[dict]:
+        """Raw insight rows for these campaigns (dates are YYYY-MM-DD, ad account time zone)."""
+        rows = []
+        for cid in campaign_ids:
+            params = {"fields": "spend,impressions,reach,clicks,actions,account_currency",
+                      "time_range": json.dumps({"since": since, "until": until}), "limit": 500,
+                      "access_token": self.s["token"]}
+            if breakdowns:
+                params["breakdowns"] = breakdowns
+            if daily:
+                params["time_increment"] = 1
+            r = self.http.get(self._url(f"{cid}/insights"), params=params, timeout=30)
+            rows += self._check(r, f"reading results of campaign {cid}").get("data") or []
+        return rows
 
     def set_status(self, launch: dict, status: str) -> None:
         """ACTIVE or PAUSED for the campaign and everything in it."""

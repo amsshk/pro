@@ -31,7 +31,7 @@ import re
 import secrets
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from typing import Optional
 from urllib.parse import urlencode
@@ -47,7 +47,8 @@ from .identity import hash_phone
 from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
 from .attribution import make_promo_code, tag_link
-from .dashboard import build_dashboard
+from .dashboard import build_dashboard, _realized
+from .ads_report import build_report
 from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, business_context
 from . import billing, learning, meta_ads, meta_connect
 from .connectors.stripe import verify_signature as stripe_signature_ok
@@ -118,6 +119,7 @@ class App:
         self.billing = billing.BillingStore(self.store.db)
         self.stripe_http = None                # set in tests
         self.billing_sync = False              # tests: add invoice fees inline
+        self.ads_cache: dict = {}              # (client, period) -> (time, report)
 
     def known(self, client_id: str) -> bool:
         return client_id in self.clients or self.accounts.get(client_id) is not None
@@ -554,6 +556,60 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 "accounts_total": db.execute("SELECT COUNT(*) FROM accounts").fetchone()[0],
                 "newest": newest, "campaigns": [{k: l.get(k) for k in ("campaign_id", "name", "status")}
                                                 for l in state.launches.list(next(iter(_admins(state)), "pro"))[:5]]}
+
+    @flask.get("/ads/<client_id>")
+    def ads_performance(client_id):
+        """Live results of the campaigns ProAds published, where they come from, and the truth check."""
+        state.require_key(client_id)
+        period = request.args.get("period", "30")
+        days = {"today": 1, "7": 7, "30": 30, "90": 90, "365": 365}.get(period, 30)
+        admin = is_admin(client_id)
+        with state.lock:
+            launches = state.launches.list(client_id)
+        if not launches:
+            return {"has_campaigns": False}
+        hit = state.ads_cache.get((client_id, period))
+        if hit and time.time() - hit[0] < 600 and not request.args.get("fresh"):
+            return hit[1]
+        s = state.ads_settings(client_id, admin)
+        if s is None:
+            return {"has_campaigns": True, "error": "Connect Facebook & Instagram again to see live results."}
+        kinds = [l.get("conversion") for l in launches if l.get("conversion")]
+        kind = "signup" if admin else (max(set(kinds), key=kinds.count) if kinds else "purchase")
+
+        def truth(start, end):
+            lo, hi = start.isoformat(), (end + timedelta(days=1)).isoformat()
+            with state.lock:
+                if kind == "signup" and admin:
+                    rows = state.store.db.execute("SELECT ads_ctx, activated_at, client_id FROM accounts WHERE created_at >= ?"
+                                                  " AND created_at < ?", (lo, hi)).fetchall()
+                    paid = [r for r in rows if "utm_medium=paid" in (r[0] or "")]
+                    paying = sum(1 for r in paid if state.billing.active(r[2]))
+                    return {"label": "real sign-ups from your ads", "real": len(paid),
+                            "active": sum(1 for r in paid if r[1]), "paying": paying, "all_signups": len(rows)}
+                eng = state.engine(client_id)
+                orders = revenue = refunds = profit = 0.0
+                buyers = set()
+                for p in eng.store.purchases(client_id):
+                    d = p.occurred_at.date()
+                    if not (start <= d <= end) or (p.utm_medium or "").lower() != "paid" or \
+                            (p.utm_source or "").lower() not in ("meta", "facebook", "instagram", "fb", "ig"):
+                        continue
+                    ref = eng.store.refunded_amount(client_id, p.external_id)
+                    orders += 1; revenue += p.amount; refunds += ref; profit += _realized(eng, p, ref)
+                    buyers.add(p.email or p.phone or p.external_id)
+                return {"label": "real paying orders from your ads", "real": int(orders), "buyers": len(buyers),
+                        "revenue": round(revenue, 2), "refunds": round(refunds, 2), "real_profit": round(profit, 2),
+                        "currency": state.config(client_id).get("currency", "AED")}
+        try:
+            rep = build_report(meta_ads.Publisher(state.ads_http, s), [l["campaign_id"] for l in launches], kind, days,
+                               datetime.now(timezone.utc).date(), truth)
+        except meta_ads.PublishError as e:
+            return {"has_campaigns": True, "error": str(e)}
+        rep.update(has_campaigns=True, live=sum(1 for l in launches if l["status"] == "ACTIVE"), campaigns=len(launches),
+                   updated_at=int(time.time()))
+        state.ads_cache[(client_id, period)] = (time.time(), rep)
+        return rep
 
     @flask.get("/dashboard/<client_id>")
     def dashboard_endpoint(client_id):
