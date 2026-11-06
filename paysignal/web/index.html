@@ -29,7 +29,7 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
 :focus-visible{outline:2px solid var(--violet);outline-offset:2px}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .shell{display:flex;flex-wrap:wrap;min-height:100vh}
-nav.side{flex:1 1 232px;max-width:260px;min-width:220px;background:var(--nav);border-right:1px solid var(--soft);padding:28px 20px;display:flex;flex-direction:column;gap:28px}
+nav.side{flex:1 1 232px;max-width:260px;min-width:220px;background:rgba(7,7,7,.45);backdrop-filter:blur(1.5px);-webkit-backdrop-filter:blur(1.5px);border-right:1px solid rgba(118,185,0,.18);padding:28px 20px;display:flex;flex-direction:column;gap:28px}
 .brand{display:flex;align-items:center;gap:10px;font-family:var(--head);font-weight:700;font-size:20px}
 .navlinks{display:flex;flex-direction:column;gap:4px}
 .navlinks a{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;color:#C4C4C4;text-decoration:none;font-size:14px;min-height:44px}
@@ -215,6 +215,21 @@ main{background:transparent}
       const C = col(path[0].x); x.strokeStyle = `rgba(${C},.45)`; x.shadowColor = `rgb(${C})`;
       x.beginPath(); path.forEach((q, i) => i ? x.lineTo(q.x, q.y) : x.moveTo(q.x, q.y)); x.stroke();
       for (const q of path) { x.fillStyle = `rgba(${C},.8)`; x.beginPath(); x.arc(q.x, q.y, 2.6, 0, 7); x.fill(); }
+    }
+    // a layered network down the left menu
+    if (W > 720) {
+      const L = [40, 125, 210].map((lx, i) => Array.from({ length: 9 - i % 2 }, (_, j, a) => ({ x: lx, y: 140 + j * ((H - 260) / ((9 - i % 2) - 1)) })));
+      x.shadowBlur = 0; x.lineWidth = 1;
+      for (let k = 0; k < 2; k++) for (const a of L[k]) for (const b of L[k + 1]) { x.strokeStyle = "rgba(217,178,106,.07)"; x.beginPath(); x.moveTo(a.x, a.y); x.lineTo(b.x, b.y); x.stroke(); }
+      x.lineWidth = 1.6; x.shadowBlur = 12;
+      for (const path of [[1, 3, 2], [4, 5, 6], [7, 6, 7]]) {
+        const C = path[0] < 4 ? "217,178,106" : "118,185,0";
+        x.strokeStyle = `rgba(${C},.5)`; x.shadowColor = `rgb(${C})`; x.beginPath();
+        path.forEach((j, k) => { const q = L[k][Math.min(j, L[k].length - 1)]; k ? x.lineTo(q.x, q.y) : x.moveTo(q.x, q.y); }); x.stroke();
+        path.forEach((j, k) => { const q = L[k][Math.min(j, L[k].length - 1)]; x.fillStyle = `rgba(${C},.85)`; x.beginPath(); x.arc(q.x, q.y, 3, 0, 7); x.fill(); });
+      }
+      x.shadowBlur = 0;
+      for (const col of L) for (const q of col) { x.strokeStyle = "rgba(217,178,106,.28)"; x.lineWidth = 1.2; x.beginPath(); x.arc(q.x, q.y, 4, 0, 7); x.stroke(); }
     }
     x.shadowBlur = 0; x.font = "12px 'DejaVu Sans Mono', ui-monospace, monospace"; x.fillStyle = "rgba(118,185,0,.1)";
     const f = ["value = margin × (1 − refund_risk)", "P(buy | ad, post, hook)", "θ ~ Beta(α + sales, β + views)", "lift > 1.96σ → boost",
