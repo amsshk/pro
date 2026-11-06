@@ -168,6 +168,12 @@ class AccountStore:
                 return self.db.execute(sql, (cid,)).fetchone()[0]
             except Exception:
                 return 0
+        def text(sql, cid):
+            try:
+                row = self.db.execute(sql, (cid,)).fetchone()
+                return row[0] if row else None
+            except Exception:
+                return None
         out = []
         for row in self.db.execute("SELECT client_id, email, name, phone, website, currency, created_at,"
                                    " activated_at FROM accounts ORDER BY created_at DESC").fetchall():
@@ -182,6 +188,11 @@ class AccountStore:
                 "shopify": bool(count("SELECT COUNT(*) FROM shopify_shops WHERE client_id=?", cid)),
                 "wa_chats": count("SELECT COUNT(*) FROM wa_chats WHERE client_id=?", cid),
                 "signed_in": bool(count("SELECT COUNT(*) FROM sessions WHERE client_id=? AND expires > strftime('%s','now')", cid)),
+                "facebook": bool(count("SELECT COUNT(*) FROM meta_connections WHERE client_id=? AND pixel_id IS NOT NULL", cid)),
+                "campaigns": count("SELECT COUNT(*) FROM ad_launches WHERE client_id=?", cid),
+                "live_campaigns": count("SELECT COUNT(*) FROM ad_launches WHERE client_id=? AND status='ACTIVE'", cid),
+                "plan": text("SELECT status FROM billing WHERE client_id=?", cid),
+                "fees": count("SELECT COALESCE(SUM(fee),0) FROM billing_fees WHERE client_id=?", cid),
             })
         return out
 

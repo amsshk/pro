@@ -824,7 +824,10 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         return {"accounts": rows, "email_on": mailer.available(), "totals": {
             "accounts": len(rows), "activated": sum(1 for r in rows if r["activated_at"]),
             "new_this_week": sum(1 for r in rows if r["created_at"] >= week_ago),
-            "with_shopify": sum(1 for r in rows if r["shopify"]), "with_whatsapp": sum(1 for r in rows if r["wa_chats"])}}
+            "with_shopify": sum(1 for r in rows if r["shopify"]), "with_whatsapp": sum(1 for r in rows if r["wa_chats"]),
+            "with_facebook": sum(1 for r in rows if r["facebook"]),
+            "paying": sum(1 for r in rows if r["plan"] in billing.ACTIVE),
+            "live_campaigns": sum(r["live_campaigns"] for r in rows)}}
 
     @flask.get("/admin/<admin_id>/setup")
     def admin_setup(admin_id):
