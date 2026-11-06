@@ -99,3 +99,16 @@ def test_admins_from_setting(app, monkeypatch):
     c = app.test_client()
     assert c.get("/admin/other/accounts", headers={"X-API-Key": "other-key-0123456789abc"}).status_code == 200
     assert c.get("/admin/pro/accounts", headers=ADMIN).status_code == 403
+
+
+def test_setup_checklist_shows_state_without_secrets(app, monkeypatch):
+    monkeypatch.setenv("PROADS_META_DATASET_ID", "123")
+    monkeypatch.setenv("PROADS_META_TOKEN", "very-secret-token")
+    monkeypatch.setenv("PROADS_META_TEST_CODE", "TEST1")
+    c = app.test_client()
+    r = c.get("/admin/pro/setup", headers=ADMIN)
+    items = {x["label"]: x["done"] for x in r.json["items"]}
+    assert items["Tracking for your own ads"] and not items["Ad tracking out of test mode"]
+    assert not items["Password reset emails"] and items["Website address set"]
+    assert "very-secret-token" not in r.get_data(as_text=True)
+    assert c.get("/admin/other/setup", headers={"X-API-Key": "other-key-0123456789abc"}).status_code == 403

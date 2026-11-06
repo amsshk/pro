@@ -559,10 +559,21 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
     const body = h("div", { style: "display:contents" }, loading("Loading accounts…"));
     root.replaceChildren(layout("#/admin", [
       h("header", {}, h("h1", {}, "Admin"), h("p", { class: "sub" }, "Everyone who signed up, and how far they got.")), body]));
-    let d;
-    try { d = await api("/admin/" + cid() + "/accounts"); }
+    let d, setup;
+    try { [d, setup] = await Promise.all([api("/admin/" + cid() + "/accounts"), api("/admin/" + cid() + "/setup")]); }
     catch (e) { if (e.message !== "signed out") body.replaceChildren(errorCard(e.message)); return; }
     const t = d.totals;
+    const doneCount = setup.items.filter((x) => x.done).length;
+    const checklist = h("section", { class: "card", "aria-labelledby": "setup-h" },
+      h("div", { class: "between" }, h("h2", { id: "setup-h" }, "Setup checklist"),
+        h("span", { class: "badge " + (doneCount === setup.items.length ? "b-measured" : "b-est") }, doneCount + " of " + setup.items.length + " done")),
+      h("ul", { style: "list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px" },
+        setup.items.slice().sort((a, b) => a.done - b.done).map((x) => h("li", { style: "display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-radius:10px;background:" + (x.done ? "var(--soft)" : "var(--amber-bg)") },
+          h("span", { "aria-hidden": "true", style: "flex:0 0 22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;background:" + (x.done ? "var(--violet)" : "var(--amber)") + ";color: var(--ink)" }, x.done ? "✓" : "!"),
+          h("div", { style: "display:flex;flex-direction:column;gap:2px" },
+            h("b", { style: "font-size:14px" }, h("span", { class: "sr" }, x.done ? "Done: " : "To do: "), x.label),
+            x.done ? null : h("span", { class: "sub", style: "font-size:13px" }, x.how))))),
+      h("p", { class: "sub", style: "margin:0;font-size:13px" }, "Settings are added in Render → paysignal → Environment. Saving restarts the server in a minute or two."));
     const when = (x) => x ? new Date(x.replace(" ", "T") + (x.length <= 19 ? "Z" : "")).toLocaleDateString() : "–";
     const linkBox = h("div", { style: "display:contents" });
     async function makeLink(a) {
@@ -586,6 +597,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
       } }, "Delete");
     }
     body.replaceChildren(
+      checklist,
       h("section", { class: "kpis", "aria-label": "Sign-ups" },
         h("div", { class: "kpi" }, h("span", { class: "label" }, "Accounts"), h("span", { class: "num" }, fmt.format(t.accounts)), h("span", { class: "note" }, fmt.format(t.new_this_week) + " new this week")),
         h("div", { class: "kpi hi" }, h("span", { class: "label" }, "Active (brought in data)"), h("span", { class: "num" }, fmt.format(t.activated)), h("span", { class: "note" }, t.accounts ? pct(t.activated / t.accounts) + " of sign-ups" : "No sign-ups yet")),

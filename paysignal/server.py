@@ -681,6 +681,40 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             "new_this_week": sum(1 for r in rows if r["created_at"] >= week_ago),
             "with_shopify": sum(1 for r in rows if r["shopify"]), "with_whatsapp": sum(1 for r in rows if r["wa_chats"])}}
 
+    @flask.get("/admin/<admin_id>/setup")
+    def admin_setup(admin_id):
+        """What's switched on, read from the server settings. Never returns secret values."""
+        require_admin(admin_id)
+        env = os.environ.get
+        g = growth.settings()
+        wa = whatsapp.settings()
+        key = str(state.clients.get(admin_id, {}).get("api_key", ""))
+        db = env("PAYSIGNAL_DB", "paysignal.db")
+        items = [
+            ("Your password is strong", len(key) >= 16 and not key.isalpha(),
+             "Use 16+ characters with numbers: edit api_key in PAYSIGNAL_CLIENTS."),
+            ("Data saved on the permanent disk", db.startswith("/var/data/"),
+             "Set PAYSIGNAL_DB to /var/data/paysignal.db, or data is lost on every deploy."),
+            ("Website address set", bool(env("PROADS_PUBLIC_URL")),
+             "Set PROADS_PUBLIC_URL to https://pro.ezdevsoft.net."),
+            ("Contact email on privacy pages", bool(env("PROADS_CONTACT_EMAIL")),
+             "Set PROADS_CONTACT_EMAIL, e.g. admin@ezdevsoft.net."),
+            ("Password reset emails", mailer.available(),
+             "Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM (Zoho)."),
+            ("Tracking for your own ads", bool(g["dataset_id"] and g["token"]),
+             "Set PROADS_META_DATASET_ID and PROADS_META_TOKEN from Meta Events Manager."),
+            ("Meta AI (assistant, campaigns, summaries)", (state.ai or MetaAI()).available,
+             "Set MODEL_API_KEY from dev.meta.ai (billing must be active)."),
+            ("WhatsApp chats from ads", bool(wa["app_secret"] and wa["verify_token"]),
+             "Set META_APP_SECRET and PROADS_WHATSAPP_VERIFY_TOKEN, then the webhook in Meta."),
+            ("Connect Shopify button", shopify_app.available(),
+             "Optional: SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET, PROADS_SECRET_KEY."),
+        ]
+        if g["dataset_id"] and g["token"]:
+            items.insert(6, ("Ad tracking out of test mode", not g["test_code"],
+                             "Remove PROADS_META_TEST_CODE once events show in Test events."))
+        return {"items": [{"label": l, "done": bool(d), "how": h} for l, d, h in items]}
+
     @flask.post("/admin/<admin_id>/reset-link/<client_id>")
     def admin_reset_link(admin_id, client_id):
         """A one-hour reset link the admin can send by WhatsApp when email isn't set up."""
