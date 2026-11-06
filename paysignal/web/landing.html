@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ProAds: find the posts and ads that bring people who pay</title>
+<meta name="description" content="ProAds reads your real sales, shows where you lose money, and teaches Meta to find buyers, not just viewers. Free audit in your first week.">
+<meta property="og:title" content="ProAds: ads that find people who pay">
+<meta property="og:description" content="Upload your sales, get a free audit in your first week: money-losing discount codes, refund hot spots, and the posts that actually sell.">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&family=Noto+Sans+Arabic:wght@500;600&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Crect width='28' height='28' rx='8' fill='%23A78BFA'/%3E%3Cpath d='M6 17l4-4 4 3 7-8' stroke='%230D0C12' stroke-width='2.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+:root{color-scheme:dark;--ink:#0D0C12;--card:#15131D;--line:#26232F;--soft:#1C1A25;--field:#110F17;--edge:#34303F;
+  --text:#F2EFE8;--muted:#A9A4B8;--violet:#A78BFA;--violet-hi:#DDD6FE;--violet-txt:#C4B5FD;--violet-card:#1C1530;--violet-edge:#3B2C66;
+  --amber:#F5B544;--amber-txt:#F5C66B;--amber-bg:#2A1D0E;--head:'Space Grotesk',Inter,sans-serif}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--ink);color:var(--text);font-family:Inter,system-ui,sans-serif;font-size:16px;line-height:1.55}
+a{color:var(--violet)}a:hover{color:var(--violet-hi)}
+:focus-visible{outline:2px solid var(--violet);outline-offset:2px}
+.wrap{max-width:1120px;margin:0 auto;padding:0 clamp(16px,4vw,40px)}
+header.top{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:20px 0}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--head);font-weight:700;font-size:20px;color:var(--text);text-decoration:none}
+.brand:hover{color:var(--text)}
+nav.links{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;justify-content:center;border-radius:10px;padding:0 20px;min-height:46px;font:inherit;font-size:15px;font-weight:600;cursor:pointer;border:0;text-decoration:none}
+.btn-primary{background:var(--violet);color:var(--ink)}.btn-primary:hover{background:var(--violet-hi);color:var(--ink)}
+.btn-ghost{background:transparent;color:var(--text);border:1px solid var(--edge)}.btn-ghost:hover{border-color:var(--violet);color:var(--text)}
+.btn[disabled]{opacity:.6;cursor:wait}
+.hero{padding:56px 0 40px;display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:48px;align-items:center}
+.eyebrow{display:inline-block;font-size:13px;font-weight:600;color:var(--violet-txt);background:var(--violet-card);border:1px solid var(--violet-edge);border-radius:999px;padding:6px 12px}
+h1{font-family:var(--head);font-size:clamp(36px,5.2vw,58px);line-height:1.05;letter-spacing:-.02em;margin:18px 0 18px}
+h1 em{font-style:normal;color:var(--violet)}
+.lead{font-size:18px;color:var(--muted);max-width:560px;margin:0 0 28px}
+.ar{font-family:'Noto Sans Arabic',Inter,sans-serif;color:var(--muted);font-size:17px;margin:-12px 0 28px}
+.cta{display:flex;gap:12px;flex-wrap:wrap}
+.note{font-size:14px;color:var(--muted);margin-top:14px}
+.preview{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:20px;display:flex;flex-direction:column;gap:12px}
+.preview .row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;border-radius:12px;background:var(--soft);font-size:14px}
+.tag{font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.t-loss{color:#FDBA74;background:#3B2412}.t-gain{color:var(--violet-txt);background:#241B3D}.t-est{color:var(--amber-txt);background:#3A2A0C}
+.preview small{color:var(--muted);font-size:12px}
+section.block{padding:56px 0;border-top:1px solid var(--soft)}
+h2{font-family:var(--head);font-size:clamp(26px,3.4vw,36px);margin:0 0 10px;letter-spacing:-.01em}
+.sub{color:var(--muted);margin:0 0 28px;max-width:640px}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px;display:flex;flex-direction:column;gap:10px}
+.card h3{margin:0;font-family:var(--head);font-size:19px}
+.card p{margin:0;color:var(--muted);font-size:15px}
+.step{width:34px;height:34px;border-radius:50%;background:var(--violet);color:var(--ink);display:flex;align-items:center;justify-content:center;font-weight:700}
+ul.checks{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+ul.checks li{display:flex;gap:10px;align-items:flex-start;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:15px}
+ul.checks svg{flex:0 0 20px;margin-top:2px}
+.signup{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:40px;align-items:start}
+form.card{gap:14px}
+label.f{display:flex;flex-direction:column;gap:6px;font-size:14px;color:#CFCADB;font-weight:500}
+input,select{font:inherit;color:var(--text);background:var(--field);border:1px solid var(--edge);border-radius:10px;padding:0 12px;min-height:46px;width:100%}
+input::placeholder{color:#8E8A9C}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+.check{display:flex;gap:10px;align-items:flex-start;font-size:14px;color:#CFCADB}
+.check input{width:20px;min-height:20px;height:20px;margin-top:2px;accent-color:#A78BFA}
+.err{color:var(--amber-txt);font-size:14px;margin:0}
+.err:empty{display:none}
+footer{border-top:1px solid var(--soft);padding:28px 0 40px;color:var(--muted);font-size:14px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.cookie{position:fixed;left:16px;right:16px;bottom:16px;max-width:620px;margin:0 auto;background:var(--card);border:1px solid var(--edge);border-radius:14px;padding:16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;z-index:10;box-shadow:0 10px 40px rgba(0,0,0,.5)}
+.cookie p{margin:0;font-size:14px;color:#CFCADB;flex:1 1 280px}
+.cookie[hidden]{display:none}
+@media (max-width:560px){nav.links .btn-primary{display:none}.hero{padding-top:28px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="/" aria-label="ProAds home">
+      <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#A78BFA"/><path d="M6 17l4-4 4 3 7-8" stroke="#0D0C12" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>ProAds</a>
+    <nav class="links" aria-label="Main">
+      <a class="btn btn-ghost" href="/app">Sign in</a>
+      <a class="btn btn-primary" href="#signup">Get your free audit</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <span class="eyebrow">Free during early access</span>
+        <h1>Find the posts and ads that bring people who <em>pay</em>.</h1>
+        <p class="lead">ProAds reads your real sales, shows where you lose money, and teaches Meta to find buyers, not just viewers.</p>
+        <p class="ar" dir="rtl" lang="ar">اعرف أي منشور وأي إعلان يجيب لك زبائن يدفعون فعلاً.</p>
+        <div class="cta">
+          <a class="btn btn-primary" href="#signup">Get your free audit</a>
+          <a class="btn btn-ghost" href="#how">How it works</a>
+        </div>
+        <p class="note">No card needed. Your first audit is ready the day you upload your sales.</p>
+      </div>
+      <div class="preview" aria-label="Example of what an audit shows">
+        <small>Example audit findings</small>
+        <div class="row"><span>Discount code FLASH30</span><span class="tag t-loss">−48% profit per order</span></div>
+        <div class="row"><span>Product refunded most</span><span class="tag t-loss">87% returned</span></div>
+        <div class="row"><span>Customer-review stories</span><span class="tag t-gain">Best money per view</span></div>
+        <div class="row"><span>Trend reels</span><span class="tag t-est">Views, no buyers</span></div>
+        <small>Illustration only. Your audit uses your own numbers.</small>
+      </div>
+    </section>
+
+    <section class="block" aria-labelledby="week">
+      <h2 id="week">What you learn in your first week</h2>
+      <p class="sub">From the sales history you already have. No waiting months for new data.</p>
+      <div class="grid3">
+        <div class="card"><h3>Discounts that lose money</h3><p>See which promo codes bring orders that get refunded or barely make a profit.</p></div>
+        <div class="card"><h3>Refund hot spots</h3><p>Find the products people send back, before you spend more advertising them.</p></div>
+        <div class="card"><h3>Posts that sell</h3><p>Separate posts that bring buyers from posts that only collect likes.</p></div>
+        <div class="card"><h3>Real profit, not just sales</h3><p>Sales minus refunds, per month, so you know what your ads actually earned.</p></div>
+        <div class="card"><h3>Customers who come back</h3><p>How many buy again, and how much of your profit they bring.</p></div>
+        <div class="card"><h3>A to-do list</h3><p>Specific actions for this week, written from your own numbers.</p></div>
+      </div>
+    </section>
+
+    <section class="block" id="how" aria-labelledby="how-h">
+      <h2 id="how-h">How it works</h2>
+      <p class="sub">Three steps. Most businesses finish the first one in a few minutes.</p>
+      <div class="grid3">
+        <div class="card"><span class="step">1</span><h3>Bring your sales</h3><p>Upload a sales list (Excel or CSV from your booking system, card machine or shop), or connect a Shopify store.</p></div>
+        <div class="card"><span class="step">2</span><h3>Get your audit</h3><p>See where money leaks and what sells. Ask questions in English or Arabic and get answers from your numbers.</p></div>
+        <div class="card"><span class="step">3</span><h3>Teach Meta what a buyer looks like</h3><p>Track every post with its own link or code. ProAds sends Meta the real value of each sale, so ads find more people like your best customers.</p></div>
+      </div>
+    </section>
+
+    <section class="block" aria-labelledby="uae">
+      <h2 id="uae">Made for how businesses sell in the UAE</h2>
+      <ul class="checks">
+        <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>WhatsApp, cash and walk-in sales count too, through promo codes</li>
+        <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>Reads captions and answers in English and Arabic</li>
+        <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>Works in AED, or any currency you sell in</li>
+        <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>Your data stays yours: the AI sees totals, never customer names, emails or phones</li>
+      </ul>
+    </section>
+
+    <section class="block signup" id="signup" aria-labelledby="signup-h">
+      <div>
+        <h2 id="signup-h">Get your free audit</h2>
+        <p class="sub">Create your account, upload your sales, and see your audit right away.</p>
+        <ul class="checks" style="grid-template-columns:1fr">
+          <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>Free during early access, no card</li>
+          <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>Delete your data any time</li>
+        </ul>
+      </div>
+      <form class="card" id="signup-form" novalidate>
+        <label class="f" for="business">Business name<input id="business" name="business" autocomplete="organization" required maxlength="80"></label>
+        <label class="f" for="email">Work email<input id="email" name="email" type="email" autocomplete="email" required maxlength="120"></label>
+        <label class="f" for="password">Password (at least 10 characters)<input id="password" name="password" type="password" autocomplete="new-password" required minlength="10"></label>
+        <div class="two">
+          <label class="f" for="phone">Phone (optional)<input id="phone" name="phone" type="tel" autocomplete="tel" placeholder="050 123 4567"></label>
+          <label class="f" for="currency">Currency<select id="currency" name="currency"><option>AED</option><option>SAR</option><option>USD</option><option>EUR</option><option>GBP</option><option>KWD</option><option>QAR</option><option>BHD</option><option>OMR</option></select></label>
+        </div>
+        <label class="f" for="website">Website or Instagram (optional)<input id="website" name="website" placeholder="instagram.com/yourbusiness"></label>
+        <label class="check" for="terms"><input id="terms" type="checkbox" required> <span>I agree to the <a href="/privacy" target="_blank" rel="noopener">privacy policy</a>.</span></label>
+        <p class="err" id="signup-err" role="alert"></p>
+        <button class="btn btn-primary" type="submit" id="signup-btn">Create free account</button>
+        <p class="note" style="margin:0">Already have an account? <a href="/app">Sign in</a></p>
+      </form>
+    </section>
+  </main>
+
+  <footer>
+    <span>© <span id="year"></span> ProAds</span>
+    <span><a href="/privacy">Privacy</a> · <a href="/app">Sign in</a> · <button class="linkish" id="cookie-settings" type="button" style="background:none;border:0;color:var(--violet);font:inherit;cursor:pointer;padding:0">Cookie settings</button></span>
+  </footer>
+</div>
+
+<div class="cookie" id="cookie" role="dialog" aria-label="Cookie choice" hidden>
+  <p>We'd like to measure which of our ads bring sign-ups, using Meta's ad tools. This sets cookies and shares a scrambled version of your email with Meta. You can say no and everything still works.</p>
+  <button class="btn btn-ghost" type="button" id="cookie-no">No thanks</button>
+  <button class="btn btn-primary" type="button" id="cookie-yes">Allow</button>
+</div>
+
+<script>
+"use strict";
+(function () {
+  document.getElementById("year").textContent = new Date().getFullYear();
+  const CKEY = "proads.ads_consent";
+  const get = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  const set = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+  const banner = document.getElementById("cookie");
+  let pixelId = "";
+  let consent = get(CKEY);
+
+  // Remember an ad click id for 90 days, so a sign-up later can be credited to the ad.
+  const params = new URLSearchParams(location.search);
+  if (params.get("fbclid")) {
+    set("proads.fbclid", JSON.stringify({ v: params.get("fbclid"), t: Date.now() }));
+  }
+  function fbclid() {
+    try { const x = JSON.parse(get("proads.fbclid") || "null"); return x && Date.now() - x.t < 90 * 864e5 ? x.v : ""; } catch (e) { return ""; }
+  }
+  const cookie = (name) => (document.cookie.split("; ").find((c) => c.startsWith(name + "=")) || "").split("=")[1] || "";
+
+  function loadPixel() {
+    if (!pixelId || window.fbq) return;
+    /* Meta Pixel base code */
+    !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+    if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
+    t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
+    window.fbq("init", pixelId);
+    window.fbq("track", "PageView");
+  }
+  function choose(yes) {
+    consent = yes ? "yes" : "no";
+    set(CKEY, consent);
+    banner.hidden = true;
+    if (yes) loadPixel();
+  }
+  document.getElementById("cookie-yes").addEventListener("click", () => choose(true));
+  document.getElementById("cookie-no").addEventListener("click", () => choose(false));
+  document.getElementById("cookie-settings").addEventListener("click", () => { banner.hidden = false; });
+
+  fetch("/public-config").then((r) => r.json()).then((cfg) => {
+    pixelId = cfg.pixel_id || "";
+    if (!pixelId) return;                       // nothing to measure: never ask
+    if (consent === "yes") loadPixel();
+    else if (consent !== "no") banner.hidden = false;
+  }).catch(() => {});
+
+  // Sign-up
+  const form = document.getElementById("signup-form");
+  const err = document.getElementById("signup-err");
+  const btn = document.getElementById("signup-btn");
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    err.textContent = "";
+    const v = (id) => document.getElementById(id).value;
+    if (v("password").length < 10) { err.textContent = "Use a password of at least 10 characters."; return; }
+    if (!document.getElementById("terms").checked) { err.textContent = "Please accept the privacy policy."; return; }
+    btn.disabled = true; btn.textContent = "Creating your account…";
+    const ads = consent === "yes" && !!pixelId;
+    try {
+      const res = await fetch("/auth/signup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+        business: v("business"), email: v("email"), password: v("password"), phone: v("phone"), currency: v("currency"),
+        website: v("website"), terms: true, ads_consent: ads,
+        fbp: ads ? cookie("_fbp") : "", fbc: ads ? cookie("_fbc") : "", fbclid: ads ? fbclid() : "", source_url: location.href,
+      }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data.errors && data.errors.join(" ")) || data.error || "Something went wrong. Please try again.");
+      if (ads && window.fbq) window.fbq("track", "CompleteRegistration", {}, { eventID: data.event_id });
+      try { sessionStorage.setItem("proads.session", JSON.stringify({ client: data.client_id, key: data.token })); } catch (e2) {}
+      setTimeout(() => { location.href = "/app#/upload"; }, ads ? 400 : 0);   // give the Pixel a moment to send
+    } catch (e2) {
+      err.textContent = e2.message;
+      btn.disabled = false; btn.textContent = "Create free account";
+    }
+  });
+})();
+</script>
+</body>
+</html>

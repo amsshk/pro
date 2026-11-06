@@ -198,6 +198,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
   const cid = () => encodeURIComponent(session.client);
 
   function signOut(message) {
+    if (session && !message) fetch("/auth/logout", { method: "POST", headers: { "X-API-Key": session.key } }).catch(() => {});
     session = null; status = null;
     try { sessionStorage.removeItem(SKEY); } catch (e) {}
     renderLogin(message);
@@ -205,28 +206,33 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
 
   // ---------- sign in ----------
   function renderLogin(message) {
-    const client = h("input", { id: "client", autocomplete: "username", required: true, placeholder: "e.g. first-client" });
+    const client = h("input", { id: "client", autocomplete: "username", required: true, placeholder: "you@business.com" });
     const key = h("input", { id: "key", type: "password", autocomplete: "current-password", required: true });
     const err = h("p", { class: "sub", role: "alert", style: "color: var(--amber-txt)" }, message || "");
     const btn = h("button", { class: "btn btn-primary", type: "submit" }, "Sign in");
     const form = h("form", { class: "card", onsubmit: async (e) => {
       e.preventDefault();
       btn.disabled = true; err.textContent = "";
-      session = { client: client.value.trim(), key: key.value.trim() };
       try {
+        const res = await fetch("/auth/login", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ login: client.value.trim(), password: key.value }) });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "Sign-in failed. Please try again.");
+        session = { client: data.client_id, key: data.token };
         status = await api("/status/" + cid());
         try { sessionStorage.setItem(SKEY, JSON.stringify(session)); } catch (e2) {}
-        go(location.hash || "#/audit");
+        go(location.hash && location.hash !== "#" ? location.hash : "#/audit");
       } catch (e2) {
-        if (e2.message !== "signed out") err.textContent = e2.status === 404 ? "No business with that ID." : e2.message;
+        if (e2.message !== "signed out") err.textContent = /fetch/i.test(e2.message) ? "Cannot reach the server. Check your internet connection." : e2.message;
         session = null; btn.disabled = false;
       }
     } },
-      h("div", { class: "brand" }, logo(), "ProAds"),
-      h("div", {}, h("h1", { style: "font-size:26px" }, "Sign in"), h("p", { class: "sub" }, "Use your business ID and access key.")),
-      h("label", { class: "f", for: "client" }, "Business ID", client),
-      h("label", { class: "f", for: "key" }, "Access key", key),
-      err, btn);
+      h("a", { class: "brand", href: "/", style: "text-decoration:none;color:inherit" }, logo(), "ProAds"),
+      h("div", {}, h("h1", { style: "font-size:26px" }, "Sign in"), h("p", { class: "sub" }, "Use your email and password.")),
+      h("label", { class: "f", for: "client" }, "Email (or business ID)", client),
+      h("label", { class: "f", for: "key" }, "Password (or access key)", key),
+      err, btn,
+      h("p", { class: "sub", style: "margin:0;font-size:14px" }, "New here? ", h("a", { href: "/#signup" }, "Create a free account")));
     root.replaceChildren(h("div", { class: "login" }, form));
     client.focus();
   }

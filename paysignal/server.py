@@ -39,7 +39,8 @@ from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
-from . import shopify_app
+from . import growth, shopify_app
+from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
 from .attribution import make_promo_code, tag_link
 from .assistant import CampaignError, ask, build_campaign, business_context
@@ -52,6 +53,7 @@ from .store import PaymentStore
 log = logging.getLogger("paysignal")
 RETRAIN_SECONDS = 24 * 3600
 WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
+_DUMMY_HASH = hash_password("not-a-real-password")
 
 
 def load_clients(path: str | None) -> dict:
@@ -93,12 +95,36 @@ class App:
         self.ai: MetaAI | None = None          # set in tests; otherwise built from MODEL_API_KEY
         self._shopify_http = None              # set in tests; otherwise a requests session
         self._imports: dict[str, threading.Thread] = {}
+        self.accounts = AccountStore(self.store.db)
+        self.login_limiter = Limiter()                       # 5 wrong tries -> 15 min lock
+        self.signup_limiter = Limiter(max_failures=10, window=3600)
+        self.growth_http = None                # set in tests
+        self.growth_sent: list | None = None   # set in tests to capture sent events
+
+    def known(self, client_id: str) -> bool:
+        return client_id in self.clients or self.accounts.get(client_id) is not None
 
     def config(self, client_id: str) -> dict:
         cfg = self.clients.get(client_id)
-        if cfg is None:
+        if cfg is not None:
+            return cfg
+        acct = self.accounts.get(client_id)
+        if acct is None:
             abort(404, "unknown client")
-        return cfg
+        return {"name": acct["name"], "currency": acct["currency"], "website": acct["website"] or "",
+                "self_serve": True}
+
+    def maybe_activate(self, client_id: str) -> None:
+        """First data in from a self-serve account: tell Meta a real user started (once)."""
+        acct = self.accounts.get(client_id)
+        if not acct or acct["activated_at"]:
+            return
+        with self.lock:
+            first = self.accounts.mark_activated(client_id)
+        ctx = growth.load_ctx(acct["ads_ctx"])
+        if first and ctx:
+            growth.send_later(growth.build_event("StartTrial", acct, ctx, f"activate:{client_id}"),
+                              self.growth_http, self.growth_sent)
 
     def engine(self, client_id: str) -> Engine:
         if client_id not in self.engines:
@@ -127,10 +153,20 @@ class App:
             self.trained_at[client_id] = time.time()
 
     def require_key(self, client_id: str) -> None:
-        expected = self.config(client_id).get("api_key", "")
+        """Accepts the business's access key (server settings) or a sign-in session token."""
+        cfg = self.config(client_id)
+        lock_key = f"key:{client_id}"
+        wait = self.login_limiter.locked_for(lock_key)
+        if wait:
+            abort(429, f"Too many wrong attempts. Try again in {wait // 60 + 1} minutes.")
         given = request.headers.get("X-API-Key", "")
-        if not expected or not hmac.compare_digest(expected, given):
-            abort(401, "bad or missing X-API-Key")
+        expected = cfg.get("api_key", "")
+        if expected and hmac.compare_digest(expected, given):
+            return
+        if given and self.accounts.session_client(given) == client_id:
+            return
+        self.login_limiter.fail(lock_key)
+        abort(401, "bad or missing X-API-Key")
 
     def ingest(self, client_id: str, payments) -> dict:
         with self.lock:
@@ -175,7 +211,7 @@ class App:
         try:
             client = self.shopify_client(client_id)
             problems = client.register_webhooks(register_webhooks) if register_webhooks else []
-            costs = self.config(client_id).get("costs", {}) if client_id in self.clients else {}
+            costs = self.config(client_id).get("costs", {}) if self.known(client_id) else {}
             orders, batch = 0, []
             for node in client.orders():
                 pays = shopify_app.order_to_payments(node, client_id, costs)
@@ -200,6 +236,8 @@ class App:
             with self.lock:
                 self.store.set_sync(client_id, "done", " · ".join(notes), imported=orders)
                 self.trained_at.pop(client_id, None)
+            if orders:
+                self.maybe_activate(client_id)
         except Exception as e:
             log.exception("shopify import failed for %s", client_id)
             with self.lock:
@@ -266,7 +304,10 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         payments, errors = parse_csv(request.get_data(as_text=True), client_id)
         if errors and not payments:
             return jsonify({"errors": errors}), 400
-        return {**state.ingest(client_id, payments), "errors": errors}
+        out = {**state.ingest(client_id, payments), "errors": errors}
+        if out["new"]:
+            state.maybe_activate(client_id)
+        return out
 
     @flask.post("/upload/posts/<client_id>")
     def upload_posts(client_id):
@@ -277,6 +318,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         labels = label_posts(posts, make_labeler())     # Meta AI, Claude, or rules: whichever is set up
         with state.lock:
             state.save_posts(client_id, posts)
+        state.maybe_activate(client_id)
         return {"posts": len(posts), "errors": errors, "labels": labels}
 
     @flask.post("/import/<client_id>")
@@ -297,6 +339,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             with state.lock:
                 state.save_posts(client_id, res["posts"])
             out.update(posts=len(res["posts"]), labels=labels)
+        if out.get("new") or res["posts"]:
+            state.maybe_activate(client_id)
         return out
 
     @flask.get("/audit/<client_id>")
@@ -395,15 +439,95 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         except (RuntimeError, CampaignError) as e:
             abort(502, str(e))
 
+    def page(name: str, referrer: str = "no-referrer"):
+        resp = send_from_directory(WEB_DIR, name)
+        resp.headers["Cache-Control"] = "no-cache"
+        resp.headers["X-Frame-Options"] = "DENY"
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        resp.headers["Referrer-Policy"] = referrer
+        return resp
+
     @flask.get("/")
+    def landing():
+        """Public page: what ProAds does, and free sign-up."""
+        return page("landing.html", referrer="strict-origin-when-cross-origin")
+
     @flask.get("/app")
     def web_app():
         """The ProAds web app: sign-in, audit, upload, tracking links, AI assistant."""
-        resp = send_from_directory(WEB_DIR, "index.html")
-        resp.headers["Cache-Control"] = "no-cache"
-        resp.headers["X-Frame-Options"] = "DENY"
-        resp.headers["Referrer-Policy"] = "no-referrer"
-        return resp
+        return page("index.html")
+
+    @flask.get("/privacy")
+    def privacy():
+        return page("privacy.html", referrer="strict-origin-when-cross-origin")
+
+    @flask.get("/public-config")
+    def public_config():
+        """Values the public pages need: the Pixel ID (public by nature) and contact email."""
+        return {"pixel_id": growth.pixel_id(), "contact": os.environ.get("PROADS_CONTACT_EMAIL", "")}
+
+    def client_ip() -> str:
+        return (request.headers.get("X-Forwarded-For") or request.remote_addr or "").split(",")[-1].strip()
+
+    @flask.post("/auth/signup")
+    def signup():
+        body = request.get_json(silent=True) or {}
+        ip_key = f"signup:{client_ip()}"
+        if state.signup_limiter.locked_for(ip_key):
+            abort(429, "Too many sign-ups from this connection. Please try again later.")
+        clean, errors = validate_signup(body)
+        if errors:
+            return jsonify({"errors": errors}), 400
+        if state.accounts.by_email(clean["email"]):
+            return jsonify({"errors": ["An account with this email already exists. Sign in instead."]}), 409
+        ctx = growth.capture_context(body, request.headers, request.remote_addr)
+        with state.lock:
+            cid = state.accounts.create(clean, set(state.clients), json.dumps(ctx) if ctx else "")
+            token = state.accounts.new_session(cid)
+        state.signup_limiter.fail(ip_key)              # counts sign-ups per connection
+        event_id = f"signup:{cid}"
+        if ctx:
+            growth.send_later(growth.build_event("CompleteRegistration", state.accounts.get(cid), ctx, event_id),
+                              state.growth_http, state.growth_sent)
+        log.info("new account %s", cid)
+        return {"client_id": cid, "token": token, "event_id": event_id, "name": clean["name"]}
+
+    @flask.post("/auth/login")
+    def login():
+        """Email + password (self-serve accounts) or business ID + access key (server settings)."""
+        body = request.get_json(silent=True) or {}
+        who = (body.get("login") or "").strip()
+        secret = body.get("password") or ""
+        lock_key = f"login:{who.lower()}"
+        wait = state.login_limiter.locked_for(lock_key)
+        if wait:
+            abort(429, f"Too many wrong attempts. Try again in {wait // 60 + 1} minutes.")
+        cid = None
+        if "@" in who:
+            acct = state.accounts.by_email(who)
+            if acct and check_password(secret, acct["pw_hash"]):
+                cid = acct["client_id"]
+            elif not acct:
+                check_password(secret, _DUMMY_HASH)     # same timing whether or not the email exists
+        else:
+            cfg = state.clients.get(who)
+            if cfg and cfg.get("api_key") and hmac.compare_digest(cfg["api_key"], secret):
+                cid = who
+        if not cid:
+            state.login_limiter.fail(lock_key)
+            abort(401, "Wrong email/ID or password")
+        state.login_limiter.clear(lock_key)
+        with state.lock:
+            token = state.accounts.new_session(cid)
+        return {"client_id": cid, "token": token}
+
+    @flask.post("/auth/logout")
+    def logout():
+        token = request.headers.get("X-API-Key", "")
+        if token:
+            with state.lock:
+                state.accounts.end_session(token)
+        return {"ok": True}
 
     @flask.get("/status/<client_id>")
     def status(client_id):
@@ -484,7 +608,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if not found or time.time() - found[2] > shopify_app.STATE_TTL or shop != found[1]:
             return back("error", "This connect link expired or doesn't match. Please start again.")
         client_id = found[0]
-        if client_id not in state.clients:
+        if not state.known(client_id):
             return back("error", "Unknown ProAds account.")
         try:
             tokens = shopify_app.exchange_code(state.shopify_http(), shop, args.get("code", ""))
@@ -524,7 +648,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             abort(401, "bad signature")
         shop = shopify_app.normalize_shop(request.headers.get("X-Shopify-Shop-Domain", ""))
         client_id = state.store.client_for_shop(shop) if shop else None
-        if not client_id or client_id not in state.clients:
+        if not client_id or not state.known(client_id):
             return {"ignored": "store not connected"}
         topic = request.headers.get("X-Shopify-Topic", "")
         if topic == "app/uninstalled":
@@ -603,6 +727,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         with state.lock:
             return {"codes": state.store.promos(client_id)}
 
+    @flask.errorhandler(429)
+    @flask.errorhandler(409)
     @flask.errorhandler(401)
     @flask.errorhandler(400)
     @flask.errorhandler(404)

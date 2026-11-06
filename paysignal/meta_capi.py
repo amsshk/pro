@@ -72,7 +72,7 @@ def has_match_key(event: dict) -> bool:
     return any(k in event["user_data"] for k in ("em", "ph", "external_id", "fbc"))
 
 
-def send(events: Iterable[dict], dataset_id: str, access_token: str, version: str = "v23.0",
+def send(events: Iterable[dict], dataset_id: str, access_token: str, version: str = "v25.0",
          test_event_code: Optional[str] = None, dry_run: bool = True) -> list[dict]:
     """Batches events. With dry_run=True returns the payloads instead of posting them.
     Use test_event_code (from Events Manager > Test events) for a safe live test."""

@@ -21,7 +21,7 @@ def make(tmp_path):
 
 
 def test_web_app_is_served(make):
-    r = make().get("/")
+    r = make().get("/app")
     assert r.status_code == 200 and b"ProAds" in r.data and b"innerHTML" not in r.data
     assert r.headers["X-Frame-Options"] == "DENY"
 

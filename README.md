@@ -4,10 +4,25 @@ Detects every payment a business receives, works out which post or ad caused it,
 scores what it is really worth, and sends that real value to Meta so its
 algorithm learns to find people who pay, not people who watch.
 
+## Website and accounts
+
+- `/` public landing page with free sign-up (email + password). New accounts land in the app.
+- `/app` the app. Sign in with email + password, or business ID + access key for businesses
+  set in `PAYSIGNAL_CLIENTS`.
+- `/privacy` privacy policy (set `PROADS_CONTACT_EMAIL` to show a contact email).
+- 5 wrong passwords or access keys lock that login for 15 minutes.
+
+**Tracking ProAds' own ads** (optional): set `PROADS_META_DATASET_ID` (your Pixel ID) and
+`PROADS_META_TOKEN` (Conversions API token, from Events Manager). Then, only for visitors who
+click "Allow" in the cookie notice:
+- `CompleteRegistration` when they sign up (Pixel + server, counted once)
+- `StartTrial` the first time they upload or connect data: optimise campaigns for this one,
+  so Meta finds people who actually use ProAds.
+Use `PROADS_META_TEST_CODE` to check events in Events Manager > Test events first.
+
 ## Web app
 
-Open **https://pro.ezdevsoft.net** and sign in with a business ID and its access key
-(the `api_key` in the client settings). Three screens:
+Three screens:
 
 - **Audit**: sales, refunds, real profit, money-losing discount codes, refund hot spots, posts,
   and a "do this week" list. AI summary in English or Arabic, report download.

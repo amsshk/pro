@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy policy · ProAds</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+<style>
+:root{color-scheme:dark}
+body{margin:0;background:#0D0C12;color:#F2EFE8;font-family:Inter,system-ui,sans-serif;line-height:1.65;font-size:16px}
+a{color:#A78BFA}a:hover{color:#DDD6FE}
+main{max-width:760px;margin:0 auto;padding:32px clamp(16px,4vw,40px) 64px}
+.brand{display:inline-flex;align-items:center;gap:10px;font-family:'Space Grotesk',Inter,sans-serif;font-weight:700;font-size:20px;color:#F2EFE8;text-decoration:none}
+h1{font-family:'Space Grotesk',Inter,sans-serif;font-size:36px;margin:28px 0 4px}
+h2{font-family:'Space Grotesk',Inter,sans-serif;font-size:21px;margin:32px 0 8px}
+p,li{color:#CFCADB}
+.muted{color:#A9A4B8;font-size:14px}
+ul{padding-left:20px}
+</style>
+</head>
+<body>
+<main>
+  <a class="brand" href="/"><svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#A78BFA"/><path d="M6 17l4-4 4 3 7-8" stroke="#0D0C12" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>ProAds</a>
+  <h1>Privacy policy</h1>
+  <p class="muted">Last updated 6 November 2026</p>
+
+  <p>ProAds helps businesses see which posts and ads bring paying customers. This page explains what data we handle, why, and the choices you have.</p>
+
+  <h2>What we collect</h2>
+  <ul>
+    <li><b>Your account:</b> business name, email, a scrambled (hashed) version of your password, and optionally your phone, website and currency.</li>
+    <li><b>Data you bring:</b> sales and refund records you upload or connect (for example from Shopify, Stripe or a spreadsheet), and statistics about your social media posts. Sales records can include your customers' email or phone if you include them.</li>
+    <li><b>Technical data:</b> basic server logs needed to run and protect the service.</li>
+  </ul>
+
+  <h2>How we use it</h2>
+  <ul>
+    <li>To produce your reports: real profit, refunds, discount codes, which posts bring buyers, and recommendations.</li>
+    <li>If you connect Meta's Conversions API, to send Meta the value of each sale so your ads learn which customers are valuable. Customer emails and phones are hashed (scrambled) on our server before anything is sent.</li>
+    <li>To keep the service secure, for example by blocking repeated wrong passwords.</li>
+  </ul>
+  <p>We do not sell your data, and we don't use one business's data to serve another business.</p>
+
+  <h2>AI features</h2>
+  <p>The assistant, summaries and campaign drafts use Meta's AI models (Meta Model API). They receive totals and per-post results only: never customer names, emails, phones or individual payments. Post labelling sends post captions only.</p>
+
+  <h2>Our own advertising</h2>
+  <p>If you choose "Allow" in the cookie notice on our website, we use Meta's Pixel and Conversions API to measure which of our ads bring sign-ups and active users. This shares a hashed version of your email and phone, and an ad click identifier, with Meta. If you choose "No thanks", none of this is sent. You can change your choice any time with "Cookie settings" at the bottom of our home page.</p>
+
+  <h2>Who processes data for us</h2>
+  <ul>
+    <li>Render, which hosts our servers and database.</li>
+    <li>Meta Platforms, for the AI features and, with your consent or your connection, ads measurement.</li>
+    <li>Shopify or Stripe, only if you connect them, to read your orders.</li>
+  </ul>
+
+  <h2>Security</h2>
+  <p>Data travels encrypted (HTTPS). Passwords are stored only as secure hashes, and connected-store access tokens are encrypted. Each business's data is kept separate.</p>
+
+  <h2>Keeping and deleting data</h2>
+  <p>We keep your data while your account is active. You can ask us to delete your account and all its data at any time, and we will do so. When a Shopify store disconnects ProAds, its imported data is deleted on Shopify's request.</p>
+
+  <h2>Your rights</h2>
+  <p>You can ask to see, correct, export or delete your data, or to stop any processing you consented to.</p>
+
+  <h2>Contact</h2>
+  <p id="contact">For any privacy request, contact us through your ProAds account.</p>
+</main>
+<script>
+"use strict";
+fetch("/public-config").then((r) => r.json()).then((c) => {
+  if (!c.contact) return;
+  const p = document.getElementById("contact");
+  const a = document.createElement("a");
+  a.href = "mailto:" + c.contact; a.textContent = c.contact;
+  p.replaceChildren("For any privacy request, email ", a, ".");
+}).catch(() => {});
+</script>
+</body>
+</html>
