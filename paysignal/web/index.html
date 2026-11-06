@@ -379,8 +379,68 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
     body.replaceChildren(...blocks);
   }
 
+  // ---------- Shopify connection ----------
+  function shopifyCard(params) {
+    const card = h("section", { class: "card", "aria-labelledby": "shop-h", style: "background: var(--violet-card); border-color: var(--violet-edge)" });
+    const notice = h("div", { style: "display:contents" });
+    if (params && params.get("shopify") === "connected") toast("Shopify connected. Importing your orders…");
+    if (params && params.get("shopify") === "error") notice.appendChild(errorCard(params.get("message") || "Shopify connection failed."));
+    let disconnectArmed = false;
+    function draw() {
+      const s = status.connections.shopify_app;
+      const head = h("div", { class: "between" },
+        h("div", { class: "srow", style: "gap:12px" },
+          h("svg", { width: 28, height: 28, viewBox: "0 0 24 24", fill: "none", stroke: "#A78BFA", "stroke-width": 1.8, "aria-hidden": "true" }, h("path", { d: "M6 7h12l-1 13H7L6 7zM9 7a3 3 0 0 1 6 0" })),
+          h("h2", { id: "shop-h" }, s.connected ? "Shopify store" : "Connect your Shopify store")),
+        h("span", { class: "badge " + (s.connected ? "b-measured" : "b-neutral") }, s.connected ? "Connected" : "Easiest way"));
+      if (!s.connected) {
+        const shop = h("input", { id: "shopdomain", placeholder: "your-store.myshopify.com", autocomplete: "off", required: true });
+        const btn = h("button", { class: "btn btn-primary", type: "submit" }, "Connect Shopify");
+        const err = h("p", { class: "sub", role: "alert", style: "margin:0;color: var(--amber-txt)" });
+        const form = h("form", { style: "display:flex;gap:8px;flex-wrap:wrap", onsubmit: async (e) => {
+          e.preventDefault(); btn.disabled = true; err.textContent = "";
+          try {
+            const r = await api("/shopify/connect/" + cid(), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ shop: shop.value }) });
+            location.href = r.url;
+          } catch (e2) { if (e2.message !== "signed out") { err.textContent = e2.message; btn.disabled = false; } }
+        } }, h("label", { for: "shopdomain", class: "sr" }, "Store address"), h("div", { style: "flex:1 1 260px" }, shop), btn);
+        card.replaceChildren(head,
+          h("p", { class: "sub", style: "margin:0" }, "No files needed. You approve on Shopify's own page, then ProAds imports your orders and gets new ones and refunds automatically. Read-only: ProAds can't change anything in your store."),
+          form, err, notice);
+        return;
+      }
+      const running = s.sync_status === "running";
+      const line = running ? h("span", { class: "srow" }, h("span", { class: "spinner", "aria-hidden": "true" }), s.sync_message || "Importing…")
+        : h("span", { style: s.sync_status === "error" ? "color: var(--amber-txt)" : "" }, s.sync_status === "error" ? "Import problem: " + s.sync_message : (s.sync_message || "Connected"));
+      const again = h("button", { class: "btn btn-ghost", type: "button", disabled: running || null, onclick: async () => {
+        try { await api("/shopify/sync/" + cid(), { method: "POST" }); status = await api("/status/" + cid()); draw(); poll(); }
+        catch (e) { if (e.message !== "signed out") toast(e.message); }
+      } }, "Import again");
+      const disc = h("button", { class: "btn btn-ghost", type: "button", onclick: async (ev) => {
+        if (!disconnectArmed) { disconnectArmed = true; ev.currentTarget.textContent = "Click again to disconnect"; return; }
+        try { await api("/shopify/disconnect/" + cid(), { method: "POST" }); status = await api("/status/" + cid()); draw(); }
+        catch (e) { if (e.message !== "signed out") toast(e.message); }
+      } }, "Disconnect");
+      card.replaceChildren(head,
+        h("div", { style: "display:flex;flex-direction:column;gap:6px" }, h("b", {}, s.shop), line,
+          s.last_sync ? h("span", { class: "sub", style: "font-size:13px" }, "Last import " + new Date(s.last_sync + "Z").toLocaleString()) : null,
+          h("span", { class: "sub", style: "font-size:13px" }, "New orders and refunds arrive automatically.")),
+        h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, s.sync_status === "done" ? h("a", { class: "btn btn-primary", href: "#/audit" }, "See my audit") : null, again, disc),
+        notice);
+    }
+    async function poll() {
+      while (card.isConnected && status.connections.shopify_app.sync_status === "running") {
+        await new Promise((r) => setTimeout(r, 3000));
+        if (!card.isConnected) return;
+        try { status = await api("/status/" + cid()); draw(); } catch (e) { return; }
+      }
+    }
+    draw(); setTimeout(poll, 0);
+    return card;
+  }
+
   // ---------- upload & connect ----------
-  async function viewUpload() {
+  async function viewUpload(params) {
     const results = h("div", { style: "display:flex;flex-direction:column;gap:10px" });
     const input = h("input", { id: "files", type: "file", multiple: true, accept: ".csv,text/csv", class: "sr" });
     const drop = h("label", { class: "drop", for: "files" },
@@ -459,16 +519,19 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
       h("label", { class: "f", for: "turl" }, "Page the link opens", tUrl), tBtn);
 
     root.replaceChildren(layout("#/upload", [
-      h("header", {}, h("h1", {}, "Connect & upload"), h("p", { class: "sub" }, "Your audit is ready as soon as step 1 is done.")),
+      h("header", {}, h("h1", {}, "Connect & upload"), h("p", { class: "sub" }, "Connect your store, or upload your sales history. Your audit is ready right after.")),
+      status && status.connections.shopify_app.available ? shopifyCard(params) : null,
       h("section", { class: "card", "aria-labelledby": "s1" },
-        h("div", { class: "srow", style: "gap:12px" }, h("span", { class: "num-dot" }, "1"), h("h2", { id: "s1" }, "Upload your history")),
+        h("div", { class: "srow", style: "gap:12px" }, h("span", { class: "num-dot" }, "1"), h("h2", { id: "s1" }, status && status.connections.shopify_app.available ? "Or upload your history" : "Upload your history")),
         drop, results,
         h("a", { class: "btn btn-primary", href: "#/audit", style: "align-self:flex-start" }, "See my audit")),
       h("div", { class: "row" },
         h("section", { class: "card", "aria-labelledby": "s2" },
           h("div", { class: "srow", style: "gap:12px" }, h("span", { class: "num-dot" }, "2"), h("h2", { id: "s2" }, "Connect live payments")),
           c ? [
-            connRow("Shopify", c.shopify.configured ? when(c.shopify) : "Add this address as a webhook for orders/paid and refunds/create", c.shopify.configured, status.webhooks.shopify),
+            c.shopify_app.connected
+              ? connRow("Shopify", "Connected through the Shopify app above · " + when(c.shopify), true, null)
+              : connRow("Shopify", c.shopify.configured ? when(c.shopify) : (c.shopify_app.available ? "Advanced: add this address as a webhook in Shopify instead of the button above" : "Add this address as a webhook for orders/paid and refunds/create"), c.shopify.configured, status.webhooks.shopify),
             connRow("Stripe", c.stripe.configured ? when(c.stripe) : "Add this address as a webhook for charge.succeeded and charge.refunded", c.stripe.configured, status.webhooks.stripe),
             connRow("Meta Conversions API", c.meta_capi.live ? "Sending real profit, not checkout totals" : c.meta_capi.configured ? "Practice mode: nothing is sent yet" : "Add your dataset ID and token in the server settings", c.meta_capi.live, null),
           ] : loading(),
@@ -576,10 +639,12 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
   function go(hash) { if (location.hash !== hash) location.hash = hash; else route(); }
   async function route() {
     if (!session) return renderLogin();
-    if (!status) {
+    const [path, query] = location.hash.split("?");
+    const params = new URLSearchParams(query || "");
+    if (!status || params.has("shopify")) {
       try { status = await api("/status/" + cid()); } catch (e) { if (e.message !== "signed out") root.replaceChildren(h("div", { class: "login" }, errorCard(e.message))); return; }
     }
-    (VIEWS[location.hash] || viewAudit)();
+    (VIEWS[path] || viewAudit)(params);
     window.scrollTo(0, 0);
   }
   window.addEventListener("hashchange", route);

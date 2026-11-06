@@ -26,16 +26,20 @@ import json
 import logging
 import os
 import re
+import secrets
 import threading
 import time
 from datetime import datetime, timezone
 
-from flask import Flask, abort, jsonify, request, send_from_directory
+from urllib.parse import urlencode
+
+from flask import Flask, abort, jsonify, redirect, request, send_from_directory
 
 from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
+from . import shopify_app
 from .ai import MetaAI
 from .attribution import make_promo_code, tag_link
 from .assistant import CampaignError, ask, build_campaign, business_context
@@ -87,6 +91,8 @@ class App:
         self.posts: dict[str, list] = {}
         self.trained_at: dict[str, float] = {}
         self.ai: MetaAI | None = None          # set in tests; otherwise built from MODEL_API_KEY
+        self._shopify_http = None              # set in tests; otherwise a requests session
+        self._imports: dict[str, threading.Thread] = {}
 
     def config(self, client_id: str) -> dict:
         cfg = self.clients.get(client_id)
@@ -130,6 +136,74 @@ class App:
         with self.lock:
             new = self.engine(client_id).ingest(payments)
         return {"received": len(payments), "new": new, "duplicates": len(payments) - new}
+
+    # ----- Shopify app -----
+    def shopify_http(self):
+        if self._shopify_http is None:
+            import requests
+            self._shopify_http = requests.Session()
+        return self._shopify_http
+
+    def shopify_client(self, client_id: str) -> shopify_app.ShopifyClient:
+        """A client with a fresh access token (Shopify access tokens last one hour)."""
+        with self.lock:
+            shop = self.store.shop_for(client_id)
+        if not shop:
+            raise shopify_app.ShopifyError("No Shopify store is connected")
+        tokens = json.loads(shopify_app.decrypt(shop["tokens"]))
+        now = time.time()
+        if tokens.get("access_expires") and now >= tokens["access_expires"]:
+            if not tokens.get("refresh_token") or (tokens.get("refresh_expires") or 0) <= now:
+                raise shopify_app.ShopifyError("Shopify access expired: please connect the store again")
+            tokens = shopify_app.refresh_tokens(self.shopify_http(), shop["shop"], tokens["refresh_token"])
+            with self.lock:
+                self.store.update_shop_tokens(client_id, shopify_app.encrypt(json.dumps(tokens)))
+        return shopify_app.ShopifyClient(shop["shop"], tokens["access_token"], self.shopify_http())
+
+    def start_shopify_import(self, client_id: str, register_webhooks: str | None = None) -> None:
+        with self.lock:
+            running = self._imports.get(client_id)
+            if running and running.is_alive():
+                return
+            self.store.set_sync(client_id, "running", "Importing orders…")
+            t = threading.Thread(target=self._shopify_import, args=(client_id, register_webhooks),
+                                 daemon=True, name=f"shopify-import-{client_id}")
+            self._imports[client_id] = t
+        t.start()
+
+    def _shopify_import(self, client_id: str, register_webhooks: str | None) -> None:
+        try:
+            client = self.shopify_client(client_id)
+            problems = client.register_webhooks(register_webhooks) if register_webhooks else []
+            costs = self.config(client_id).get("costs", {}) if client_id in self.clients else {}
+            orders, batch = 0, []
+            for node in client.orders():
+                pays = shopify_app.order_to_payments(node, client_id, costs)
+                orders += sum(p.kind == "purchase" for p in pays)
+                batch += pays
+                if len(batch) >= 200:
+                    self.ingest(client_id, batch)
+                    batch = []
+                    with self.lock:
+                        self.store.set_sync(client_id, "running", f"Importing orders… {orders} so far")
+            if batch:
+                self.ingest(client_id, batch)
+            with self.lock:
+                scope = (self.store.shop_for(client_id) or {}).get("scope") or ""
+            notes = [f"{orders} paid orders imported"]
+            if "read_all_orders" not in scope:
+                notes.append("Shopify allows the last 60 days only")
+            if not client.protected:
+                notes.append("without customer emails and phones (needs Shopify's approval)")
+            if problems:
+                notes.append("live updates not fully set up: " + "; ".join(problems)[:200])
+            with self.lock:
+                self.store.set_sync(client_id, "done", " · ".join(notes), imported=orders)
+                self.trained_at.pop(client_id, None)
+        except Exception as e:
+            log.exception("shopify import failed for %s", client_id)
+            with self.lock:
+                self.store.set_sync(client_id, "error", str(e)[:300])
 
     def sync_meta(self, client_id: str) -> dict:
         cfg = self.config(client_id)
@@ -343,13 +417,21 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             totals = state.store.totals(client_id)
             posts = len(state.posts_for(client_id))
             codes = len(state.store.promos(client_id))
+            shop = state.store.shop_for(client_id)
+        shop_info = {"available": shopify_app.available(), "connected": bool(shop)}
+        if shop:
+            shop_info.update({k: shop[k] for k in ("shop", "connected_at", "sync_status", "sync_message",
+                                                   "last_sync", "imported")})
+            shop_info["all_orders"] = "read_all_orders" in (shop["scope"] or "")
         return {
             "client_id": client_id,
             "name": cfg.get("name", client_id),
             "currency": cfg.get("currency", "AED"),
             "website": cfg.get("website", ""),
             "connections": {
-                "shopify": {"configured": bool(cfg.get("shopify_webhook_secret")), **payments.get("shopify", {})},
+                "shopify": {"configured": bool(cfg.get("shopify_webhook_secret") or shop),
+                            **payments.get("shopify", {})},
+                "shopify_app": shop_info,
                 "stripe": {"configured": bool(cfg.get("stripe_webhook_secret")), **payments.get("stripe", {})},
                 "uploads": payments.get("csv", {}),
                 "meta_capi": {"configured": bool(meta.get("dataset_id") and meta.get("access_token")),
@@ -359,6 +441,135 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             "totals": totals, "posts": posts, "tracking_codes": codes,
             "webhooks": {"stripe": f"/webhooks/stripe/{client_id}", "shopify": f"/webhooks/shopify/{client_id}"},
         }
+
+    # ---------------- Shopify app connection ----------------
+    def public_url() -> str:
+        configured = shopify_app.settings()["public_url"]
+        if configured:
+            return configured
+        proto = request.headers.get("X-Forwarded-Proto", request.scheme)
+        return f"{proto}://{request.host}"
+
+    @flask.post("/shopify/connect/<client_id>")
+    def shopify_connect(client_id):
+        """Returns Shopify's approval page for this store. The browser goes there next."""
+        state.require_key(client_id)
+        if not shopify_app.available():
+            abort(503, "Shopify connection is not set up on this server yet "
+                       "(needs SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET and PROADS_SECRET_KEY)")
+        shop = shopify_app.normalize_shop((request.get_json(silent=True) or {}).get("shop", ""))
+        if not shop:
+            abort(400, "Enter your store address, like your-store.myshopify.com")
+        owner = state.store.client_for_shop(shop)
+        if owner and owner != client_id:
+            abort(400, "This store is already connected to another ProAds account")
+        nonce = secrets.token_urlsafe(24)
+        with state.lock:
+            state.store.put_oauth_state(nonce, client_id, shop, time.time())
+        return {"url": shopify_app.authorize_url(shop, nonce, public_url() + "/shopify/callback")}
+
+    @flask.get("/shopify/callback")
+    def shopify_callback():
+        args = {k: v for k, v in request.args.items()}
+        def back(result, message=""):
+            q = urlencode({"shopify": result, **({"message": message} if message else {})})
+            return redirect("/#/upload?" + q)
+        s = shopify_app.settings()
+        if not shopify_app.available() or not shopify_app.verify_callback(args, s["client_secret"]):
+            log.warning("shopify callback rejected: bad signature")
+            return back("error", "Shopify's reply could not be verified. Please try again.")
+        with state.lock:
+            found = state.store.pop_oauth_state(args.get("state", ""))
+        shop = shopify_app.normalize_shop(args.get("shop", ""))
+        if not found or time.time() - found[2] > shopify_app.STATE_TTL or shop != found[1]:
+            return back("error", "This connect link expired or doesn't match. Please start again.")
+        client_id = found[0]
+        if client_id not in state.clients:
+            return back("error", "Unknown ProAds account.")
+        try:
+            tokens = shopify_app.exchange_code(state.shopify_http(), shop, args.get("code", ""))
+        except Exception as e:
+            log.warning("shopify token exchange failed for %s: %s", shop, e)
+            return back("error", "Shopify did not finish the connection. Please try again.")
+        if "orders" not in tokens["scope"]:
+            return back("error", "Order access was not granted, so ProAds can't see sales.")
+        with state.lock:
+            state.store.save_shop(client_id, shop, shopify_app.encrypt(json.dumps(tokens)), tokens["scope"])
+        state.start_shopify_import(client_id, register_webhooks=public_url() + "/webhooks/shopify-app")
+        return back("connected")
+
+    @flask.post("/shopify/sync/<client_id>")
+    def shopify_sync(client_id):
+        state.require_key(client_id)
+        if not state.store.shop_for(client_id):
+            abort(400, "No Shopify store is connected")
+        state.start_shopify_import(client_id)
+        return {"started": True}
+
+    @flask.post("/shopify/disconnect/<client_id>")
+    def shopify_disconnect(client_id):
+        """Forget the store's access. Orders already imported stay (delete is a separate request)."""
+        state.require_key(client_id)
+        with state.lock:
+            state.store.delete_shop(client_id)
+        return {"disconnected": True}
+
+    @flask.post("/webhooks/shopify-app")
+    def shopify_app_webhook():
+        """Webhooks for stores connected through the app, signed with the app's secret."""
+        body = request.get_data()
+        s = shopify_app.settings()
+        if not s["client_secret"] or not shopify_app.verify_webhook(
+                body, request.headers.get("X-Shopify-Hmac-Sha256", ""), s["client_secret"]):
+            abort(401, "bad signature")
+        shop = shopify_app.normalize_shop(request.headers.get("X-Shopify-Shop-Domain", ""))
+        client_id = state.store.client_for_shop(shop) if shop else None
+        if not client_id or client_id not in state.clients:
+            return {"ignored": "store not connected"}
+        topic = request.headers.get("X-Shopify-Topic", "")
+        if topic == "app/uninstalled":
+            with state.lock:
+                state.store.delete_shop(client_id)
+            return {"disconnected": True}
+        try:
+            payload = json.loads(body)
+        except ValueError:
+            abort(400, "invalid json")
+        cfg = state.config(client_id)
+        return state.ingest(client_id, parse_shopify_webhook(topic, payload, client_id, cfg.get("costs", {})))
+
+    @flask.post("/webhooks/shopify-compliance")
+    def shopify_compliance():
+        """Shopify's mandatory privacy webhooks."""
+        body = request.get_data()
+        s = shopify_app.settings()
+        if not s["client_secret"] or not shopify_app.verify_webhook(
+                body, request.headers.get("X-Shopify-Hmac-Sha256", ""), s["client_secret"]):
+            abort(401, "bad signature")
+        topic = request.headers.get("X-Shopify-Topic", "")
+        try:
+            payload = json.loads(body)
+        except ValueError:
+            abort(400, "invalid json")
+        shop = shopify_app.normalize_shop(payload.get("shop_domain", "") or request.headers.get("X-Shopify-Shop-Domain", ""))
+        client_id = state.store.client_for_shop(shop) if shop else None
+        if topic == "customers/data_request":
+            log.warning("PRIVACY: customer data request from %s (order ids %s). Reply to the merchant "
+                        "with that customer's stored orders within 30 days.", shop, payload.get("orders_requested"))
+            return {"received": True}
+        if not client_id:
+            return {"received": True, "note": "no data stored for this store"}
+        with state.lock:
+            if topic == "customers/redact":
+                n = state.store.delete_payments(client_id, "shopify", shopify_app.compliance_customer_keys(payload))
+            elif topic == "shop/redact":
+                n = state.store.delete_payments(client_id, "shopify")
+                state.store.delete_shop(client_id)
+            else:
+                return {"received": True}
+            state.trained_at.pop(client_id, None)
+        log.info("privacy %s for %s: %d records deleted", topic, shop, n)
+        return {"received": True, "deleted": n}
 
     @flask.post("/tracking/<client_id>")
     def new_tracking(client_id):

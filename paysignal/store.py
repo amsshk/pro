@@ -10,6 +10,7 @@ import json
 import sqlite3
 from dataclasses import asdict
 from datetime import datetime
+from typing import Optional
 
 from .identity import customer_key
 from .models import LineItem, Payment
@@ -36,6 +37,23 @@ CREATE TABLE IF NOT EXISTS posts (
     post_id   TEXT NOT NULL,
     data      TEXT NOT NULL,
     PRIMARY KEY (client_id, post_id)
+);
+CREATE TABLE IF NOT EXISTS shopify_shops (
+    client_id TEXT PRIMARY KEY,
+    shop      TEXT NOT NULL UNIQUE,
+    tokens    TEXT NOT NULL,          -- encrypted JSON
+    scope     TEXT,
+    connected_at TEXT NOT NULL,
+    sync_status TEXT DEFAULT 'idle',
+    sync_message TEXT,
+    last_sync TEXT,
+    imported  INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS oauth_states (
+    state   TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    shop    TEXT NOT NULL,
+    created REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS promo_codes (
     client_id TEXT NOT NULL,
@@ -136,6 +154,73 @@ class PaymentStore:
         rows = self.db.execute("SELECT code, platform, post_id, link, created_at FROM promo_codes"
                                " WHERE client_id=? ORDER BY created_at DESC", (client_id,))
         return [dict(zip(("code", "platform", "post_id", "link", "created_at"), r)) for r in rows]
+
+    # ----- Shopify connections -----
+    def put_oauth_state(self, state: str, client_id: str, shop: str, now: float) -> None:
+        self.db.execute("DELETE FROM oauth_states WHERE created < ?", (now - 3600,))
+        self.db.execute("INSERT INTO oauth_states VALUES (?,?,?,?)", (state, client_id, shop, now))
+        self.db.commit()
+
+    def pop_oauth_state(self, state: str) -> Optional[tuple[str, str, float]]:
+        row = self.db.execute("SELECT client_id, shop, created FROM oauth_states WHERE state=?", (state,)).fetchone()
+        self.db.execute("DELETE FROM oauth_states WHERE state=?", (state,))
+        self.db.commit()
+        return row
+
+    def save_shop(self, client_id: str, shop: str, tokens_enc: str, scope: str) -> None:
+        self.db.execute("DELETE FROM shopify_shops WHERE client_id=? OR shop=?", (client_id, shop))
+        self.db.execute("INSERT INTO shopify_shops (client_id, shop, tokens, scope, connected_at)"
+                        " VALUES (?,?,?,?,datetime('now'))", (client_id, shop, tokens_enc, scope))
+        self.db.commit()
+
+    def update_shop_tokens(self, client_id: str, tokens_enc: str) -> None:
+        self.db.execute("UPDATE shopify_shops SET tokens=? WHERE client_id=?", (tokens_enc, client_id))
+        self.db.commit()
+
+    def shop_for(self, client_id: str) -> Optional[dict]:
+        row = self.db.execute("SELECT client_id, shop, tokens, scope, connected_at, sync_status, sync_message,"
+                              " last_sync, imported FROM shopify_shops WHERE client_id=?", (client_id,)).fetchone()
+        keys = ("client_id", "shop", "tokens", "scope", "connected_at", "sync_status", "sync_message",
+                "last_sync", "imported")
+        return dict(zip(keys, row)) if row else None
+
+    def client_for_shop(self, shop: str) -> Optional[str]:
+        row = self.db.execute("SELECT client_id FROM shopify_shops WHERE shop=?", (shop,)).fetchone()
+        return row[0] if row else None
+
+    def set_sync(self, client_id: str, status: str, message: str = "", imported: Optional[int] = None) -> None:
+        if imported is None:
+            self.db.execute("UPDATE shopify_shops SET sync_status=?, sync_message=? WHERE client_id=?",
+                            (status, message, client_id))
+        else:
+            self.db.execute("UPDATE shopify_shops SET sync_status=?, sync_message=?, imported=?,"
+                            " last_sync=datetime('now') WHERE client_id=?", (status, message, imported, client_id))
+        self.db.commit()
+
+    def delete_shop(self, client_id: str) -> None:
+        self.db.execute("DELETE FROM shopify_shops WHERE client_id=?", (client_id,))
+        self.db.commit()
+
+    def delete_payments(self, client_id: str, source: str, customer_keys: Optional[list[str]] = None) -> int:
+        """Erase stored payments (privacy requests). With customer_keys: only those customers,
+        plus refunds of their orders."""
+        if customer_keys is None:
+            cur = self.db.execute("DELETE FROM payments WHERE client_id=? AND source=?", (client_id, source))
+        else:
+            marks = ",".join("?" * len(customer_keys))
+            ids = [r[0] for r in self.db.execute(
+                f"SELECT external_id FROM payments WHERE client_id=? AND source=? AND customer_key IN ({marks})",
+                (client_id, source, *customer_keys))]
+            cur = self.db.execute(f"DELETE FROM payments WHERE client_id=? AND source=? AND customer_key IN ({marks})",
+                                  (client_id, source, *customer_keys))
+            n = cur.rowcount
+            for oid in ids:
+                n += self.db.execute("DELETE FROM payments WHERE client_id=? AND source=? AND refund_of=?",
+                                     (client_id, source, oid)).rowcount
+            self.db.commit()
+            return n
+        self.db.commit()
+        return cur.rowcount
 
     def last_payment_by_source(self, client_id: str) -> dict[str, str]:
         rows = self.db.execute("SELECT source, MAX(occurred_at), COUNT(*) FROM payments WHERE client_id=?"

@@ -18,6 +18,28 @@ Open **https://pro.ezdevsoft.net** and sign in with a business ID and its access
 Everything uploaded is shown as plain text, never run as code. The access key stays in the
 browser tab only and is cleared when the tab closes.
 
+## Connect Shopify (button in the app)
+
+Store owners click **Connect Shopify**, approve on Shopify's page, and their orders import
+automatically; new orders and refunds then arrive by themselves. Read-only.
+
+One-time setup by the ProAds owner:
+1. Create an app at **dev.shopify.com** (Shopify Dev Dashboard).
+   - App URL: `https://pro.ezdevsoft.net`
+   - Redirect URL: `https://pro.ezdevsoft.net/shopify/callback`
+   - Scopes: `read_orders`
+   - Compliance webhooks (customer data request, customer redact, shop redact):
+     `https://pro.ezdevsoft.net/webhooks/shopify-compliance`
+2. Server settings (Render > Environment):
+   `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET` (from the app),
+   `PROADS_SECRET_KEY` (a long random value; encrypts store tokens; never change it once set),
+   `PROADS_PUBLIC_URL=https://pro.ezdevsoft.net`.
+
+Shopify's limits: apps see the **last 60 days** of orders unless Shopify approves
+`read_all_orders` (then set `SHOPIFY_SCOPES=read_orders,read_all_orders`). Customer emails
+and phones need Shopify's protected-data approval for public apps; until then orders import
+without them and the app says so.
+
 ## Start
 
 ```bash
