@@ -26,6 +26,8 @@ class FakeGraph:
         self.fail_on, self.currency = fail_on, currency
 
     def get(self, url, params, timeout):
+        if url.endswith("/adspixels"):
+            return R(200, {"data": [{"id": p} for p in getattr(self, "pixels", ["777", "px1"])]})
         if url.endswith("/insights"):
             self.insights = getattr(self, "insights", []) + [(url, params)]
             return R(200, {"data": [{"spend": "6000.50", "account_currency": self.currency}]})
@@ -102,6 +104,10 @@ def test_budget_uses_the_ad_account_currency():
 
 def test_refuses_before_spending_anything():
     g = FakeGraph()
+    g.pixels = ["555"]
+    with pytest.raises(meta_ads.PublishError, match="can't use Pixel 777"):
+        meta_ads.Publisher(g).publish(plan(), {"0-0": PNG, "0-1": PNG}, "https://pro.example.net/", "AED")
+    g.pixels = ["777"]
     with pytest.raises(meta_ads.PublishError, match="has no image"):
         meta_ads.Publisher(FakeGraph()).publish(plan(), {"0-0": PNG}, "https://pro.example.net/", "AED")
     with pytest.raises(meta_ads.PublishError, match="JPEG or PNG"):

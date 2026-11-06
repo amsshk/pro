@@ -151,6 +151,17 @@ class Publisher:
         acct = self.account()
         if acct.get("account_status") not in (1, None):
             raise PublishError("the ad account is not active (check billing and status in Ads Manager)")
+        # the ad account must be allowed to use the Pixel, or Meta builds the campaign and then refuses to run it
+        try:
+            r = self.http.get(self._url(f"{self.s['ad_account']}/adspixels"),
+                              params={"fields": "id", "limit": 200, "access_token": self.s["token"]}, timeout=30)
+            listed = {str(p.get("id")) for p in (r.json().get("data") or [])} if r.status_code == 200 else None
+        except Exception:
+            listed = None
+        if listed is not None and str(self.s["pixel_id"]) not in listed:
+            raise PublishError(f"ad account {self.s['ad_account'].replace('act_', '')} can't use Pixel {self.s['pixel_id']}. "
+                               "Pick the ad account that's linked to this Pixel (Business settings > Datasets & pixels > "
+                               "Connected assets), or link it there, then try again")
         # the budget is in the ad account's own currency (any currency works)
         currency = (acct.get("currency") or currency or "AED").upper()
 
