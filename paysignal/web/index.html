@@ -8,13 +8,13 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&family=Noto+Sans+Arabic:wght@400;600&display=swap" rel="stylesheet">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Crect width='28' height='28' rx='8' fill='%23A78BFA'/%3E%3Cpath d='M6 17l4-4 4 3 7-8' stroke='%230D0C12' stroke-width='2.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Crect width='28' height='28' rx='8' fill='%23D4FF3A'/%3E%3Cpath d='M6 17l4-4 4 3 7-8' stroke='%230B0C09' stroke-width='2.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <style>
 :root{
   color-scheme: dark;
-  --ink:#0D0C12; --nav:#09080D; --card:#15131D; --line:#26232F; --soft:#1C1A25; --field:#110F17; --edge:#34303F;
-  --text:#F2EFE8; --muted:#A9A4B8; --dim:#8E8A9C; --violet:#A78BFA; --violet-hi:#DDD6FE; --violet-txt:#C4B5FD;
-  --violet-chip:#241B3D; --violet-card:#1C1530; --violet-edge:#3B2C66; --bubble:#2A2342;
+  --ink:#0B0C09; --nav:#070806; --card:#13150F; --line:#24271E; --soft:#1A1D15; --field:#0F110C; --edge:#33372B;
+  --text:#F3F5EC; --muted:#A5AA98; --dim:#8B907F; --violet:#D4FF3A; --violet-hi:#EEFF9E; --violet-txt:#DCF56A;
+  --violet-chip:#252C0B; --violet-card:#171B0B; --violet-edge:#46560F; --bubble:#22261A;
   --amber:#F5B544; --amber-txt:#F5C66B; --amber-bg:#2A1D0E; --amber-chip:#3A2A0C; --loss-bg:#3B2412; --loss-txt:#FDBA74;
   --head:'Space Grotesk', Inter, sans-serif; --body: Inter, system-ui, sans-serif; --ar:'Noto Sans Arabic', Inter, sans-serif;
 }
@@ -31,12 +31,12 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
 nav.side{flex:1 1 232px;max-width:260px;min-width:220px;background:var(--nav);border-right:1px solid var(--soft);padding:28px 20px;display:flex;flex-direction:column;gap:28px}
 .brand{display:flex;align-items:center;gap:10px;font-family:var(--head);font-weight:700;font-size:20px}
 .navlinks{display:flex;flex-direction:column;gap:4px}
-.navlinks a{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;color:#C2BDD0;text-decoration:none;font-size:14px;min-height:44px}
+.navlinks a{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;color:#C3C7B6;text-decoration:none;font-size:14px;min-height:44px}
 .navlinks a[aria-current="page"]{background:var(--violet);color:var(--ink);font-weight:600}
-.navlinks a:not([aria-current="page"]):hover{background:#1A1824;color:var(--text)}
-.biz{background:#1A1824;border-radius:10px;padding:12px;font-size:14px;display:flex;flex-direction:column;gap:2px}
+.navlinks a:not([aria-current="page"]):hover{background:#181A13;color:var(--text)}
+.biz{background:#181A13;border-radius:10px;padding:12px;font-size:14px;display:flex;flex-direction:column;gap:2px}
 .biz small{color:var(--dim);font-size:12px;letter-spacing:.06em;text-transform:uppercase}
-.statusbox{margin-top:auto;background:#1A1824;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px;font-size:13px}
+.statusbox{margin-top:auto;background:#181A13;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px;font-size:13px}
 .dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:0 0 8px}
 .srow{display:flex;align-items:center;gap:8px}
 main{flex:999 1 560px;min-width:0;padding:32px clamp(16px,3vw,48px) 56px}
@@ -55,18 +55,18 @@ h2{margin:0;font-family:var(--head);font-size:20px;font-weight:600}
 .mstrip button{background:none;border:0;border-right:1px solid var(--line);border-bottom:3px solid transparent;text-align:left;padding:16px 18px 12px;display:flex;flex-direction:column;gap:6px;cursor:pointer;min-width:0}
 .mstrip button:last-child{border-right:0}
 .mstrip button:hover{background:var(--soft)}
-.mstrip button[aria-pressed="true"]{border-bottom-color:var(--violet);background:#191624}
+.mstrip button[aria-pressed="true"]{border-bottom-color:var(--violet);background:#181B12}
 .mstrip .ml{font-size:13px;color:var(--muted);text-decoration:underline dotted var(--edge);text-underline-offset:4px}
 .mstrip .mv{font-family:var(--head);font-size:24px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chg{font-size:12px;font-weight:600;display:inline-flex;gap:4px;align-items:center}
 .chg.up{color:var(--violet-txt)}.chg.down{color:var(--amber-txt)}.chg.flat{color:var(--dim)}
 .chartwrap{position:relative}
 .chartwrap svg{display:block;width:100%;height:auto;overflow:visible}
-.tip{position:absolute;pointer-events:none;background:#211E2B;border:1px solid var(--edge);border-radius:10px;padding:10px 12px;font-size:13px;display:flex;flex-direction:column;gap:4px;min-width:170px;z-index:2;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.tip{position:absolute;pointer-events:none;background:#1F2219;border:1px solid var(--edge);border-radius:10px;padding:10px 12px;font-size:13px;display:flex;flex-direction:column;gap:4px;min-width:170px;z-index:2;box-shadow:0 8px 24px rgba(0,0,0,.4)}
 .tip .r{display:flex;justify-content:space-between;gap:14px}
 .key{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
 .key i{display:inline-block;width:16px;height:0;border-top:2px solid var(--violet)}
-.key i.prev{border-top:2px dashed #6E6880}
+.key i.prev{border-top:2px dashed #6C715F}
 .hbar{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;align-items:center;font-size:14px}
 .hbar .track{grid-column:1/-1;height:8px;border-radius:4px;background:var(--soft);overflow:hidden}
 .hbar .track div{height:100%;border-radius:4px;background:var(--violet)}
@@ -88,7 +88,7 @@ h2{margin:0;font-family:var(--head);font-size:20px;font-weight:600}
 .badge{font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;white-space:nowrap}
 .b-measured{color:var(--violet-txt);background:var(--violet-chip)}
 .b-est{color:var(--amber-txt);background:var(--amber-chip)}
-.b-neutral{color:#CFCADB;background:var(--line)}
+.b-neutral{color:#D0D4C4;background:var(--line)}
 .actions{margin:0;padding:0;list-style:none;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
 .actions li{display:flex;gap:14px;padding:16px;border-radius:12px;background:var(--violet-card);line-height:1.5}
 .actions li.warn{background:var(--amber-bg)}
@@ -117,7 +117,7 @@ td{padding:12px 8px;border-bottom:1px solid var(--soft)}
 .btn-ghost{background:var(--card);color:var(--text);border:1px solid var(--edge)}
 .btn-ghost:hover{border-color:var(--violet)}
 .btn[disabled]{opacity:.55;cursor:wait}
-.drop{border:2px dashed #8E8A9C;border-radius:14px;padding:36px 20px;display:flex;flex-direction:column;align-items:center;gap:10px;background:#18161F;cursor:pointer;text-align:center}
+.drop{border:2px dashed #8B907F;border-radius:14px;padding:36px 20px;display:flex;flex-direction:column;align-items:center;gap:10px;background:#16180F;cursor:pointer;text-align:center}
 .drop.over{border-color:var(--violet);background:var(--violet-card)}
 .result{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;padding:14px 16px;border-radius:12px;background:var(--violet-card);font-size:14px}
 .result.err{background:var(--amber-bg)}
@@ -129,7 +129,7 @@ td{padding:12px 8px;border-bottom:1px solid var(--soft)}
 .conn .small{font-size:13px;color:var(--muted)}
 code.box{flex:1 1 240px;min-width:0;overflow-x:auto;white-space:nowrap;background:var(--soft);border-radius:10px;padding:12px;font-size:13px;display:block}
 .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
-label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;font-weight:500}
+label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D0D4C4;font-weight:500}
 .chat{display:flex;flex-direction:column;gap:14px;max-height:520px;overflow-y:auto;padding-right:4px}
 .msg{max-width:88%;padding:12px 16px;font-size:15px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
 .msg.me{align-self:flex-end;background:var(--bubble);border-radius:14px 14px 4px 14px}
@@ -141,9 +141,9 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
 .chip{background:var(--card);border:1px solid var(--edge);border-radius:999px;padding:0 14px;min-height:44px;font-size:13px;cursor:pointer}
 .chip:hover{border-color:var(--violet)}
 .plan{border:1px solid var(--line);border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:14px}
-.adset{background:#18161F;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;font-size:14px}
+.adset{background:#16180F;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;font-size:14px}
 .ad{border-top:1px solid var(--line);padding-top:8px;display:flex;flex-direction:column;gap:4px}
-.list{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-size:14px;color:#CFCADB}
+.list{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-size:14px;color:#D0D4C4}
 .empty{text-align:center;padding:48px 20px;display:flex;flex-direction:column;gap:14px;align-items:center}
 .spinner{width:18px;height:18px;border:2px solid var(--edge);border-top-color:var(--violet);border-radius:50%;animation:spin 1s linear infinite;display:inline-block}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -197,8 +197,8 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
     return el;
   }
   const logo = () => h("svg", { width: 28, height: 28, viewBox: "0 0 28 28", "aria-hidden": "true" },
-    h("rect", { width: 28, height: 28, rx: 8, fill: "#A78BFA" }),
-    h("path", { d: "M6 17l4-4 4 3 7-8", stroke: "#0D0C12", "stroke-width": "2.4", fill: "none", "stroke-linecap": "round", "stroke-linejoin": "round" }));
+    h("rect", { width: 28, height: 28, rx: 8, fill: "#D4FF3A" }),
+    h("path", { d: "M6 17l4-4 4 3 7-8", stroke: "#0B0C09", "stroke-width": "2.4", fill: "none", "stroke-linecap": "round", "stroke-linejoin": "round" }));
   const icon = (d) => h("svg", { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": 2, "aria-hidden": "true" }, h("path", { d }));
   const isArabic = (s) => /[؀-ۿ]/.test(s || "");
   function toast(text) {
@@ -487,7 +487,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
       const s = status.connections.shopify_app;
       const head = h("div", { class: "between" },
         h("div", { class: "srow", style: "gap:12px" },
-          h("svg", { width: 28, height: 28, viewBox: "0 0 24 24", fill: "none", stroke: "#A78BFA", "stroke-width": 1.8, "aria-hidden": "true" }, h("path", { d: "M6 7h12l-1 13H7L6 7zM9 7a3 3 0 0 1 6 0" })),
+          h("svg", { width: 28, height: 28, viewBox: "0 0 24 24", fill: "none", stroke: "#D4FF3A", "stroke-width": 1.8, "aria-hidden": "true" }, h("path", { d: "M6 7h12l-1 13H7L6 7zM9 7a3 3 0 0 1 6 0" })),
           h("h2", { id: "shop-h" }, s.connected ? "Shopify store" : "Connect your Shopify store")),
         h("span", { class: "badge " + (s.connected ? "b-measured" : "b-neutral") }, s.connected ? "Connected" : "Easiest way"));
       if (!s.connected) {
@@ -700,7 +700,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
     if (!m || (!m.available && !m.connected)) return status && status.admin
       ? h("div", { class: "result err" }, h("span", {}, "Clients can't connect Facebook yet: finish ", h("b", {}, "Clients can connect Facebook & Instagram"), " in Admin → Setup.")) : null;
     const card = h("section", { class: "card", "aria-labelledby": "fb-h", style: "background: var(--violet-card); border-color: var(--violet-edge)" });
-    const fbIcon = h("svg", { width: 28, height: 28, viewBox: "0 0 24 24", fill: "none", stroke: "#A78BFA", "stroke-width": 1.8, "aria-hidden": "true" }, h("path", { d: "M14 8h3V4h-3a4 4 0 0 0-4 4v3H7v4h3v6h4v-6h3l1-4h-4V8z" }));
+    const fbIcon = h("svg", { width: 28, height: 28, viewBox: "0 0 24 24", fill: "none", stroke: "#D4FF3A", "stroke-width": 1.8, "aria-hidden": "true" }, h("path", { d: "M14 8h3V4h-3a4 4 0 0 0-4 4v3H7v4h3v6h4v-6h3l1-4h-4V8z" }));
     if (params && params.get("meta") === "connected") toast("Facebook connected");
     const notice = params && params.get("meta") === "error" ? errorCard(params.get("message") || "Facebook connection failed.") : null;
     const head = (title, badge, on) => h("div", { class: "between" }, h("div", { class: "srow", style: "gap:12px" }, fbIcon, h("h2", { id: "fb-h" }, title)),
@@ -783,7 +783,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
     const results = h("div", { style: "display:flex;flex-direction:column;gap:10px" });
     const input = h("input", { id: "files", type: "file", multiple: true, accept: ".csv,text/csv", class: "sr" });
     const drop = h("label", { class: "drop", for: "files" },
-      h("svg", { width: 36, height: 36, viewBox: "0 0 24 24", fill: "none", stroke: "#A78BFA", "stroke-width": 1.8, "aria-hidden": "true" }, h("path", { d: "M12 16V4M6 10l6-6 6 6M4 20h16" })),
+      h("svg", { width: 36, height: 36, viewBox: "0 0 24 24", fill: "none", stroke: "#D4FF3A", "stroke-width": 1.8, "aria-hidden": "true" }, h("path", { d: "M12 16V4M6 10l6-6 6 6M4 20h16" })),
       h("b", { style: "font-size:16px" }, "Drop export files here, or choose files"),
       h("span", { class: "sub", style: "font-size:14px" }, "Shopify orders · Stripe payments · Meta Business Suite posts · any sales list (id, date, amount, currency). Each file is recognised automatically."),
       input);
@@ -959,7 +959,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
     return h("div", { class: "plan" },
       h("div", { class: "between" }, h("b", { style: "font-size:16px", dir: "auto" }, p.name || "Campaign draft"),
         h("span", { class: "sub", style: "font-size:13px" }, (p.optimization || "Sales") + " · " + fmt.format(Number(p.daily_budget || 0)) + " " + (p.currency || "") + "/day")),
-      p.rationale ? h("p", { style: "margin:0;line-height:1.6;color:#CFCADB", dir: "auto" }, p.rationale) : null,
+      p.rationale ? h("p", { style: "margin:0;line-height:1.6;color:#D0D4C4", dir: "auto" }, p.rationale) : null,
       sets.map((s) => h("div", { class: "adset" },
         h("div", { class: "between" }, h("b", { dir: "auto" }, s.name || "Ad set"), h("span", { class: "sub" }, share(s))),
         s.audience ? h("span", { class: "sub", dir: "auto" }, s.audience) : null,
@@ -1018,33 +1018,33 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
   }
   function makeAdImage(ad, brand, host) {
     const S = 1080, c = h("canvas", { width: S, height: S }), x = c.getContext("2d");
-    x.fillStyle = "#0D0C12"; x.fillRect(0, 0, S, S);
+    x.fillStyle = "#0B0C09"; x.fillRect(0, 0, S, S);
     const g = x.createRadialGradient(S * 0.85, S * 0.1, 40, S * 0.85, S * 0.1, S * 0.9);
-    g.addColorStop(0, "rgba(167,139,250,0.55)"); g.addColorStop(1, "rgba(167,139,250,0)");
+    g.addColorStop(0, "rgba(212,255,58,0.55)"); g.addColorStop(1, "rgba(212,255,58,0)");
     x.fillStyle = g; x.fillRect(0, 0, S, S);
     // rising line motif
-    x.strokeStyle = "rgba(167,139,250,0.35)"; x.lineWidth = 10; x.lineCap = "round"; x.lineJoin = "round";
+    x.strokeStyle = "rgba(212,255,58,0.35)"; x.lineWidth = 10; x.lineCap = "round"; x.lineJoin = "round";
     x.beginPath(); x.moveTo(560, 900); x.lineTo(720, 760); x.lineTo(840, 830); x.lineTo(1010, 620); x.stroke();
     // logo
-    x.fillStyle = "#A78BFA"; x.beginPath(); x.roundRect(80, 80, 96, 96, 26); x.fill();
-    if (brand === "ProAds") { x.strokeStyle = "#0D0C12"; x.lineWidth = 8; x.beginPath(); x.moveTo(101, 138); x.lineTo(115, 124); x.lineTo(129, 134); x.lineTo(154, 106); x.stroke(); }
-    else { x.fillStyle = "#0D0C12"; x.font = "700 56px 'Space Grotesk', Inter, sans-serif"; x.textAlign = "center"; x.textBaseline = "middle"; x.fillText((brand || "?").trim().charAt(0).toUpperCase(), 128, 131); x.textAlign = "left"; }
-    x.fillStyle = "#F2EFE8"; x.font = "700 52px 'Space Grotesk', Inter, sans-serif"; x.textBaseline = "middle"; x.fillText(brand, 200, 130);
+    x.fillStyle = "#D4FF3A"; x.beginPath(); x.roundRect(80, 80, 96, 96, 26); x.fill();
+    if (brand === "ProAds") { x.strokeStyle = "#0B0C09"; x.lineWidth = 8; x.beginPath(); x.moveTo(101, 138); x.lineTo(115, 124); x.lineTo(129, 134); x.lineTo(154, 106); x.stroke(); }
+    else { x.fillStyle = "#0B0C09"; x.font = "700 56px 'Space Grotesk', Inter, sans-serif"; x.textAlign = "center"; x.textBaseline = "middle"; x.fillText((brand || "?").trim().charAt(0).toUpperCase(), 128, 131); x.textAlign = "left"; }
+    x.fillStyle = "#F3F5EC"; x.font = "700 52px 'Space Grotesk', Inter, sans-serif"; x.textBaseline = "middle"; x.fillText(brand, 200, 130);
     // headline, as big as fits
     let size = 112, lines;
     do { x.font = "700 " + size + "px 'Space Grotesk', Inter, sans-serif"; lines = wrapLines(x, ad.headline, S - 160); size -= 6; } while ((lines.length > 4 || lines.length * size * 1.12 > 470) && size > 48);
-    size += 6; x.textBaseline = "alphabetic"; x.fillStyle = "#F2EFE8";
+    size += 6; x.textBaseline = "alphabetic"; x.fillStyle = "#F3F5EC";
     lines.forEach((l, i) => x.fillText(l, 80, 330 + i * size * 1.12));
     // short line from the ad text
     const subText = String(ad.primary_text || "").split(/(?<=[.!?])\s/)[0];
-    x.font = "500 44px Inter, sans-serif"; x.fillStyle = "#C4B5FD";
+    x.font = "500 44px Inter, sans-serif"; x.fillStyle = "#DCF56A";
     wrapLines(x, subText, S - 160).slice(0, 2).forEach((l, i) => x.fillText(l, 80, 330 + lines.length * size * 1.12 + 44 + i * 58));
     // button + address
     const label = CTA_TEXT[ad.call_to_action] || "Learn more";
     x.font = "600 40px Inter, sans-serif"; const bw = x.measureText(label).width + 96;
-    x.fillStyle = "#A78BFA"; x.beginPath(); x.roundRect(80, 880, bw, 96, 48); x.fill();
-    x.fillStyle = "#0D0C12"; x.textBaseline = "middle"; x.fillText(label, 128, 929);
-    x.fillStyle = "#A9A4B8"; x.font = "500 32px Inter, sans-serif"; if (host) x.fillText(host, 80 + bw + 32, 929);
+    x.fillStyle = "#D4FF3A"; x.beginPath(); x.roundRect(80, 880, bw, 96, 48); x.fill();
+    x.fillStyle = "#0B0C09"; x.textBaseline = "middle"; x.fillText(label, 128, 929);
+    x.fillStyle = "#A5AA98"; x.font = "500 32px Inter, sans-serif"; if (host) x.fillText(host, 80 + bw + 32, 929);
     return c.toDataURL("image/jpeg", 0.9);
   }
   function fileToAdImage(file) {
@@ -1213,7 +1213,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
     const W = 120, H = 28, max = Math.max(...vals, 1);
     const pts = vals.map((v, i) => (vals.length > 1 ? i * W / (vals.length - 1) : 0).toFixed(1) + "," + (H - 2 - (v / max) * (H - 4)).toFixed(1)).join(" ");
     return h("svg", { viewBox: "0 0 " + W + " " + H, width: W, height: H, "aria-hidden": "true", style: "width:100%;max-width:120px;height:28px" },
-      h("polyline", { points: pts, fill: "none", stroke: "#A78BFA", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke" }));
+      h("polyline", { points: pts, fill: "none", stroke: "#D4FF3A", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke" }));
   }
   function niceMax(v) { if (v <= 0) return 1; const p = Math.pow(10, Math.floor(Math.log10(v))); const n = v / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p; }
   function lineChart(dates, cur, prev, fmtV, width) {
@@ -1224,19 +1224,19 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
     const path = (vals) => vals.map((v, i) => (i ? "L" : "M") + x(i).toFixed(1) + " " + y(v).toFixed(1)).join(" ");
     const day = (iso) => new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" });
     const grid = [0, 0.25, 0.5, 0.75, 1].map((f) => h("g", {},
-      h("line", { x1: L, x2: W - R, y1: y(max * f), y2: y(max * f), stroke: "#26232F", "stroke-width": 1 }),
-      h("text", { x: L - 8, y: y(max * f) + 4, "text-anchor": "end", fill: "#8E8A9C", "font-size": 11 }, fmt.format(Math.round(max * f)))));
+      h("line", { x1: L, x2: W - R, y1: y(max * f), y2: y(max * f), stroke: "#24271E", "stroke-width": 1 }),
+      h("text", { x: L - 8, y: y(max * f) + 4, "text-anchor": "end", fill: "#8B907F", "font-size": 11 }, fmt.format(Math.round(max * f)))));
     const ticks = n > 1 ? [0, Math.floor((n - 1) / 2), n - 1] : [0];
-    const xl = ticks.map((i) => h("text", { x: x(i), y: H - 8, "text-anchor": i === 0 && n > 1 ? "start" : i === n - 1 && n > 1 ? "end" : "middle", fill: "#8E8A9C", "font-size": 11 }, day(dates[i])));
-    const hair = h("line", { y1: T, y2: H - B, stroke: "#6E6880", "stroke-width": 1, style: "display:none" });
-    const dotC = h("circle", { r: 5, fill: "#A78BFA", stroke: "#15131D", "stroke-width": 2, style: "display:none" });
-    const dotP = h("circle", { r: 4, fill: "#6E6880", stroke: "#15131D", "stroke-width": 2, style: "display:none" });
+    const xl = ticks.map((i) => h("text", { x: x(i), y: H - 8, "text-anchor": i === 0 && n > 1 ? "start" : i === n - 1 && n > 1 ? "end" : "middle", fill: "#8B907F", "font-size": 11 }, day(dates[i])));
+    const hair = h("line", { y1: T, y2: H - B, stroke: "#6C715F", "stroke-width": 1, style: "display:none" });
+    const dotC = h("circle", { r: 5, fill: "#D4FF3A", stroke: "#13150F", "stroke-width": 2, style: "display:none" });
+    const dotP = h("circle", { r: 4, fill: "#6C715F", stroke: "#13150F", "stroke-width": 2, style: "display:none" });
     const tip = h("div", { class: "tip", style: "display:none", role: "status" });
     const hit = h("rect", { x: L, y: T, width: W - L - R, height: H - T - B, fill: "transparent", style: "cursor:crosshair" });
     const svg = h("svg", { viewBox: "0 0 " + W + " " + H, role: "img", "aria-label": "Chart of this period against the previous period" },
       grid, xl,
-      h("path", { d: path(prev), fill: "none", stroke: "#6E6880", "stroke-width": 2, "stroke-dasharray": "5 5", "stroke-linejoin": "round" }),
-      h("path", { d: path(cur), fill: "none", stroke: "#A78BFA", "stroke-width": 2.5, "stroke-linejoin": "round", "stroke-linecap": "round" }),
+      h("path", { d: path(prev), fill: "none", stroke: "#6C715F", "stroke-width": 2, "stroke-dasharray": "5 5", "stroke-linejoin": "round" }),
+      h("path", { d: path(cur), fill: "none", stroke: "#D4FF3A", "stroke-width": 2.5, "stroke-linejoin": "round", "stroke-linecap": "round" }),
       hair, dotP, dotC, hit);
     const wrap = h("div", { class: "chartwrap" }, svg, tip);
     function show(clientX) {
@@ -1279,7 +1279,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
       h("div", { class: "between" }, h("h2", { id: "guide-h" }, "Setup guide"), h("span", { class: "sub", style: "font-size:13px" }, doneN + " of " + d.setup.length + " done")),
       h("div", { class: "progress", role: "progressbar", "aria-valuemin": 0, "aria-valuemax": d.setup.length, "aria-valuenow": doneN }, h("div", { style: "width:" + Math.round(100 * doneN / d.setup.length) + "%" })),
       h("div", { class: "guide" }, d.setup.map((x) => h("a", { href: x.href, class: x.done ? "done" : "" },
-        h("span", { class: "tick", "aria-hidden": "true" }, x.done ? h("svg", { width: 12, height: 12, viewBox: "0 0 24 24", fill: "none", stroke: "#0D0C12", "stroke-width": 4 }, h("path", { d: "M5 12l5 5 9-10" })) : null),
+        h("span", { class: "tick", "aria-hidden": "true" }, x.done ? h("svg", { width: 12, height: 12, viewBox: "0 0 24 24", fill: "none", stroke: "#0B0C09", "stroke-width": 4 }, h("path", { d: "M5 12l5 5 9-10" })) : null),
         h("span", { style: "display:flex;flex-direction:column;gap:2px" }, h("b", { style: "font-size:14px" }, x.label), x.done ? null : h("span", { class: "sub", style: "font-size:13px" }, x.how)),
         h("span", { class: "sr" }, x.done ? "done" : "to do")))));
     if (!d.has_data) {

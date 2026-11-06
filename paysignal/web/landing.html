@@ -11,10 +11,10 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&family=Noto+Sans+Arabic:wght@500;600&display=swap" rel="stylesheet">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Crect width='28' height='28' rx='8' fill='%23A78BFA'/%3E%3Cpath d='M6 17l4-4 4 3 7-8' stroke='%230D0C12' stroke-width='2.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Crect width='28' height='28' rx='8' fill='%23D4FF3A'/%3E%3Cpath d='M6 17l4-4 4 3 7-8' stroke='%230B0C09' stroke-width='2.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <style>
-:root{color-scheme:dark;--ink:#0D0C12;--card:#15131D;--line:#26232F;--soft:#1C1A25;--field:#110F17;--edge:#34303F;
-  --text:#F2EFE8;--muted:#A9A4B8;--violet:#A78BFA;--violet-hi:#DDD6FE;--violet-txt:#C4B5FD;--violet-card:#1C1530;--violet-edge:#3B2C66;
+:root{color-scheme:dark;--ink:#0B0C09;--card:#13150F;--line:#24271E;--soft:#1A1D15;--field:#0F110C;--edge:#33372B;
+  --text:#F3F5EC;--muted:#A5AA98;--violet:#D4FF3A;--violet-hi:#EEFF9E;--violet-txt:#DCF56A;--violet-card:#171B0B;--violet-edge:#46560F;
   --amber:#F5B544;--amber-txt:#F5C66B;--amber-bg:#2A1D0E;--head:'Space Grotesk',Inter,sans-serif}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
@@ -41,7 +41,7 @@ h1 em{font-style:normal;color:var(--violet)}
 .preview{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:20px;display:flex;flex-direction:column;gap:12px}
 .preview .row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;border-radius:12px;background:var(--soft);font-size:14px}
 .tag{font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap}
-.t-loss{color:#FDBA74;background:#3B2412}.t-gain{color:var(--violet-txt);background:#241B3D}.t-est{color:var(--amber-txt);background:#3A2A0C}
+.t-loss{color:#FDBA74;background:#3B2412}.t-gain{color:var(--violet-txt);background:#252C0B}.t-est{color:var(--amber-txt);background:#3A2A0C}
 .preview small{color:var(--muted);font-size:12px}
 section.block{padding:56px 0;border-top:1px solid var(--soft)}
 h2{font-family:var(--head);font-size:clamp(26px,3.4vw,36px);margin:0 0 10px;letter-spacing:-.01em}
@@ -56,17 +56,17 @@ ul.checks li{display:flex;gap:10px;align-items:flex-start;background:var(--card)
 ul.checks svg{flex:0 0 20px;margin-top:2px}
 .signup{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:40px;align-items:start}
 form.card{gap:14px}
-label.f{display:flex;flex-direction:column;gap:6px;font-size:14px;color:#CFCADB;font-weight:500}
+label.f{display:flex;flex-direction:column;gap:6px;font-size:14px;color:#D0D4C4;font-weight:500}
 input,select{font:inherit;color:var(--text);background:var(--field);border:1px solid var(--edge);border-radius:10px;padding:0 12px;min-height:46px;width:100%}
-input::placeholder{color:#8E8A9C}
+input::placeholder{color:#8B907F}
 .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
-.check{display:flex;gap:10px;align-items:flex-start;font-size:14px;color:#CFCADB}
-.check input{width:20px;min-height:20px;height:20px;margin-top:2px;accent-color:#A78BFA}
+.check{display:flex;gap:10px;align-items:flex-start;font-size:14px;color:#D0D4C4}
+.check input{width:20px;min-height:20px;height:20px;margin-top:2px;accent-color:#D4FF3A}
 .err{color:var(--amber-txt);font-size:14px;margin:0}
 .err:empty{display:none}
 footer{border-top:1px solid var(--soft);padding:28px 0 40px;color:var(--muted);font-size:14px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .cookie{position:fixed;left:16px;right:16px;bottom:16px;max-width:620px;margin:0 auto;background:var(--card);border:1px solid var(--edge);border-radius:14px;padding:16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;z-index:10;box-shadow:0 10px 40px rgba(0,0,0,.5)}
-.cookie p{margin:0;font-size:14px;color:#CFCADB;flex:1 1 280px}
+.cookie p{margin:0;font-size:14px;color:#D0D4C4;flex:1 1 280px}
 .cookie[hidden]{display:none}
 @media (max-width:560px){nav.links .btn-primary{display:none}.hero{padding-top:28px}}
 </style>
@@ -75,7 +75,7 @@ footer{border-top:1px solid var(--soft);padding:28px 0 40px;color:var(--muted);f
 <div class="wrap">
   <header class="top">
     <a class="brand" href="/" aria-label="ProAds home">
-      <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#A78BFA"/><path d="M6 17l4-4 4 3 7-8" stroke="#0D0C12" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>ProAds</a>
+      <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#D4FF3A"/><path d="M6 17l4-4 4 3 7-8" stroke="#0B0C09" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>ProAds</a>
     <nav class="links" aria-label="Main">
       <a class="btn btn-ghost" href="/app">Sign in</a>
       <a class="btn btn-primary" href="#signup">Get your free audit</a>
@@ -131,10 +131,10 @@ footer{border-top:1px solid var(--soft);padding:28px 0 40px;color:var(--muted);f
     <section class="block" aria-labelledby="uae">
       <h2 id="uae">Made for how businesses sell in the UAE</h2>
       <ul class="checks">
-        <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>WhatsApp, cash and walk-in sales count too, through promo codes</li>
-        <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>Reads captions and answers in English and Arabic</li>
-        <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>Works in AED, or any currency you sell in</li>
-        <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>Your data stays yours: the AI sees totals, never customer names, emails or phones</li>
+        <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D4FF3A" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>WhatsApp, cash and walk-in sales count too, through promo codes</li>
+        <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D4FF3A" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>Reads captions and answers in English and Arabic</li>
+        <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D4FF3A" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>Works in AED, or any currency you sell in</li>
+        <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D4FF3A" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>Your data stays yours: the AI sees totals, never customer names, emails or phones</li>
       </ul>
     </section>
 
@@ -143,8 +143,8 @@ footer{border-top:1px solid var(--soft);padding:28px 0 40px;color:var(--muted);f
         <h2 id="signup-h">Get your free audit</h2>
         <p class="sub">Create your account, upload your sales, and see your audit right away.</p>
         <ul class="checks" style="grid-template-columns:1fr">
-          <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>Free during early access, no card</li>
-          <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>Delete your data any time</li>
+          <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D4FF3A" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>Free during early access, no card</li>
+          <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D4FF3A" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>Delete your data any time</li>
         </ul>
       </div>
       <form class="card" id="signup-form" novalidate>
