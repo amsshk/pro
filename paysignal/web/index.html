@@ -357,7 +357,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
       try {
         const r = await api("/audit/" + cid() + "?summary=1&language=" + encodeURIComponent(lang));
         if (r.summary) summaryBox.replaceChildren(h("div", { class: "card", style: "background: var(--violet-card); border-color: var(--violet-edge)" },
-          h("div", { class: "between" }, h("h2", {}, "Summary"), h("span", { class: "badge b-neutral" }, r.summary.model + " · " + r.summary.cost_usd.toFixed(3) + " USD")),
+          h("h2", {}, "Summary"),
           h("p", { dir: "auto", style: "margin:0;line-height:1.7;white-space:pre-wrap" }, r.summary.summary)));
         else summaryBox.replaceChildren(errorCard(r.summary_error || "No summary returned."));
       } catch (e) { if (e.message !== "signed out") summaryBox.replaceChildren(errorCard(e.message)); }
@@ -857,7 +857,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
       try {
         const r = await api("/ask/" + cid(), { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ question: text, history: chatHistory.slice(-8).map(({ role, content }) => ({ role, content })) }) });
-        const meta = r.model + " · " + Number(r.cost_usd || 0).toFixed(3) + " USD";
+        const meta = null;
         wait.replaceWith(bubble("ai", r.answer || "(no answer)", meta));
         chatHistory.push({ role: "user", content: text }, { role: "assistant", content: r.answer || "", meta });
       } catch (e) {
@@ -927,8 +927,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
       h("div", { class: "between", style: "border-top:1px solid var(--line);padding-top:12px" },
         r.problems && r.problems.length
           ? h("span", { style: "color: var(--amber-txt); font-size:13px; font-weight:600" }, "Check before using: " + r.problems.join("; "))
-          : h("span", { style: "color: var(--violet-txt); font-size:13px; font-weight:600" }, "Checks passed: within budget, splits add up"),
-        h("span", { class: "sub", style: "font-size:12px" }, r.model + " · " + Number(r.cost_usd || 0).toFixed(3) + " USD")),
+          : h("span", { style: "color: var(--violet-txt); font-size:13px; font-weight:600" }, "Checks passed: within budget, splits add up")),
       organicSection(p.organic_plan, r.landing_url),
       r.problems && r.problems.length ? null : publishSection(r, sets));
   }
