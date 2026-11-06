@@ -31,6 +31,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
+from typing import Optional
 from urllib.parse import urlencode
 
 from flask import Flask, abort, jsonify, redirect, request, send_from_directory
@@ -39,7 +40,8 @@ from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
-from . import growth, shopify_app
+from . import growth, shopify_app, whatsapp
+from .identity import hash_phone
 from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
 from .attribution import make_promo_code, tag_link
@@ -100,6 +102,8 @@ class App:
         self.signup_limiter = Limiter(max_failures=10, window=3600)
         self.growth_http = None                # set in tests
         self.growth_sent: list | None = None   # set in tests to capture sent events
+        self.wa_http = None                    # set in tests
+        self.wa_sync = False                   # tests: send WhatsApp events inline
 
     def known(self, client_id: str) -> bool:
         return client_id in self.clients or self.accounts.get(client_id) is not None
@@ -169,9 +173,63 @@ class App:
         abort(401, "bad or missing X-API-Key")
 
     def ingest(self, client_id: str, payments) -> dict:
+        """Store payments. Sales from customers who first chatted from a WhatsApp ad are
+        credited to that ad, and (if live) reported to Meta."""
+        wa_matches = []
         with self.lock:
-            new = self.engine(client_id).ingest(payments)
+            new = 0
+            for p in payments:
+                if p.client_id != client_id:
+                    continue
+                match = self._wa_match(client_id, p)
+                if self.store.add(p):
+                    new += 1
+                    if match and match.get("ctwa_clid"):
+                        wa_matches.append((p, match))
+        for p, match in wa_matches:
+            self._wa_report(client_id, p, match)
         return {"received": len(payments), "new": new, "duplicates": len(payments) - new}
+
+    # ----- WhatsApp -----
+    def waba_client(self, waba_id: str) -> Optional[str]:
+        for cid, cfg in self.clients.items():
+            if str((cfg.get("whatsapp") or {}).get("waba_id") or "") == waba_id and waba_id:
+                return cid
+        return None
+
+    def _wa_match(self, client_id: str, p) -> Optional[dict]:
+        """If this purchase's phone belongs to a chat that came from an ad, credit the ad."""
+        if p.kind != "purchase" or not p.phone:
+            return None
+        ph = hash_phone(p.phone)
+        match = whatsapp.attribution_for(self.store.chat_for(client_id, ph) if ph else None, p.occurred_at)
+        if match and not (p.utm_content or p.utm_source or p.promo_code):
+            p.utm_source, p.utm_medium, p.utm_content = match["utm_source"], match["utm_medium"], match["utm_content"]
+        return match
+
+    def _wa_report(self, client_id: str, p, match: dict) -> None:
+        cfg = (self.clients.get(client_id) or {}).get("whatsapp") or {}
+        source_id = match["utm_content"].split(":", 1)[1]
+        try:
+            value = self.engine(client_id).scorer.score(p).real_value
+        except Exception:
+            value = p.amount
+        live = bool(cfg.get("live") and cfg.get("dataset_id") and cfg.get("access_token") and cfg.get("waba_id"))
+        status = "too old for Meta (over 7 days)" if whatsapp.too_old_for_meta(p) else ("sending" if live else "practice mode")
+        with self.lock:
+            first = self.store.log_wa_conversion(client_id, p.external_id, source_id, value, p.currency, status)
+        if not first or status != "sending":
+            return
+        event = whatsapp.purchase_event(p, value, str(cfg["waba_id"]), match["ctwa_clid"])
+
+        def run():
+            res = whatsapp.send(event, str(cfg["dataset_id"]), cfg["access_token"], self.wa_http)
+            with self.lock:
+                self.store.set_wa_conversion(client_id, p.external_id, res["status"])
+        if self.wa_sync:
+            run()
+        else:
+            threading.Thread(target=run, daemon=True, name="wa-purchase").start()
 
     # ----- Shopify app -----
     def shopify_http(self):
@@ -720,6 +778,76 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             state.trained_at.pop(client_id, None)
         log.info("privacy %s for %s: %d records deleted", topic, shop, n)
         return {"received": True, "deleted": n}
+
+    # ---------------- WhatsApp ----------------
+    @flask.get("/webhooks/whatsapp")
+    def whatsapp_verify():
+        """Meta's one-time check when you save the webhook in the App Dashboard."""
+        token = whatsapp.settings()["verify_token"]
+        if (request.args.get("hub.mode") == "subscribe" and token
+                and hmac.compare_digest(request.args.get("hub.verify_token", ""), token)):
+            return request.args.get("hub.challenge", ""), 200, {"Content-Type": "text/plain"}
+        abort(403, "verify token does not match PROADS_WHATSAPP_VERIFY_TOKEN")
+
+    @flask.post("/webhooks/whatsapp")
+    def whatsapp_webhook():
+        body = request.get_data()
+        if not whatsapp.verify_signature(body, request.headers.get("X-Hub-Signature-256", ""),
+                                         whatsapp.settings()["app_secret"]):
+            log.warning("rejected WhatsApp webhook: bad signature")
+            abort(401, "bad signature")
+        try:
+            payload = json.loads(body)
+        except ValueError:
+            abort(400, "invalid json")
+        seen = 0
+        for msg in whatsapp.parse_webhook(payload):
+            cid = state.waba_client(msg["waba_id"])
+            if not cid or not msg["phone_hash"]:
+                continue
+            with state.lock:
+                state.store.record_chat(cid, msg["phone_hash"], msg["at"], msg["referral"])
+            seen += 1
+        return {"received": seen}                  # always 200 for genuine events, so Meta doesn't retry
+
+    @flask.get("/whatsapp/<client_id>")
+    def whatsapp_report(client_id):
+        """Ads -> WhatsApp chats -> buyers -> real value."""
+        state.require_key(client_id)
+        cfg = (state.config(client_id).get("whatsapp") or {})
+        with state.lock:
+            state.ensure_trained(client_id)
+            eng = state.engine(client_id)
+            sources = state.store.chats_by_source(client_id)
+            recent = state.store.wa_conversions(client_id)
+            sales: dict[str, dict] = {}
+            for p in state.store.purchases(client_id):
+                if (p.utm_content or "").startswith(("wa-ad:", "wa-post:")):
+                    sid = p.utm_content.split(":", 1)[1]
+                    refunded = state.store.refunded_amount(client_id, p.external_id)
+                    keep = 1 - min(refunded / p.amount, 1.0) if p.amount else 0
+                    s = sales.setdefault(sid, {"orders": 0, "buyers": set(), "revenue": 0.0, "real_value": 0.0})
+                    s["orders"] += 1
+                    s["buyers"].add(hash_phone(p.phone))
+                    s["revenue"] += p.amount
+                    s["real_value"] += eng.scorer.margin(p) * keep
+        rows = []
+        for src in sources:
+            s = sales.get(src["source_id"], {})
+            buyers = len(s.get("buyers", ()))
+            rows.append({**src, "buyers": buyers, "orders": s.get("orders", 0),
+                         "revenue": round(s.get("revenue", 0.0), 2), "real_value": round(s.get("real_value", 0.0), 2),
+                         "chat_to_buyer": round(buyers / src["chats"], 3) if src["chats"] else 0.0})
+        rows.sort(key=lambda r: (r["source_id"] == "", -r["real_value"], -r["chats"]))
+        return {
+            "setup": {"webhook_url": "/webhooks/whatsapp", "verify_token_set": bool(whatsapp.settings()["verify_token"]),
+                      "app_secret_set": bool(whatsapp.settings()["app_secret"]), "waba_id": cfg.get("waba_id", ""),
+                      "sending_to_meta": bool(cfg.get("live") and cfg.get("dataset_id") and cfg.get("access_token"))},
+            "totals": {"chats": sum(r["chats"] for r in rows),
+                       "from_ads": sum(r["chats"] for r in rows if r["source_type"] == "ad"),
+                       "buyers": sum(r["buyers"] for r in rows), "real_value": round(sum(r["real_value"] for r in rows), 2)},
+            "sources": rows, "recent_sales_reported": recent,
+        }
 
     @flask.post("/tracking/<client_id>")
     def new_tracking(client_id):

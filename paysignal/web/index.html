@@ -241,6 +241,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
   const NAV = [
     ["#/audit", "Audit", "M3 12h4l3 8 4-16 3 8h4"],
     ["#/upload", "Connect & upload", "M12 16V4M6 10l6-6 6 6M4 20h16"],
+    ["#/whatsapp", "WhatsApp", "M12 3a9 9 0 0 0-7.8 13.5L3 21l4.6-1.2A9 9 0 1 0 12 3z"],
     ["#/assistant", "Ask & campaigns", "M4 5h16v11H8l-4 4z"],
   ];
   function statusRows() {
@@ -443,6 +444,61 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
     }
     draw(); setTimeout(poll, 0);
     return card;
+  }
+
+  // ---------- WhatsApp ----------
+  async function viewWhatsApp() {
+    const body = h("div", { style: "display:contents" }, loading("Loading WhatsApp results…"));
+    root.replaceChildren(layout("#/whatsapp", [
+      h("header", {}, h("h1", {}, "WhatsApp"), h("p", { class: "sub" }, "Which ads start chats that turn into paying customers.")), body]));
+    let d;
+    try { d = await api("/whatsapp/" + cid()); }
+    catch (e) { if (e.message !== "signed out") body.replaceChildren(errorCard(e.message)); return; }
+    const cur = status ? status.currency : "AED";
+    const blocks = [];
+    if (!d.setup.waba_id || !d.setup.app_secret_set || !d.setup.verify_token_set) {
+      const url = location.origin + d.setup.webhook_url;
+      blocks.push(h("section", { class: "card", style: "background: var(--violet-card); border-color: var(--violet-edge)" },
+        h("h2", {}, "Connect your WhatsApp number"),
+        h("p", { class: "sub", style: "margin:0" }, "Needs the WhatsApp Business Platform (Cloud API) on your Meta app. One-time setup:"),
+        h("ol", { class: "list" },
+          h("li", {}, "Meta App Dashboard → WhatsApp → Configuration → Webhook: paste the address below and your verify token, then subscribe to messages."),
+          h("li", {}, "Server settings: META_APP_SECRET and PROADS_WHATSAPP_VERIFY_TOKEN" + (d.setup.app_secret_set && d.setup.verify_token_set ? " (done)" : "") + "."),
+          h("li", {}, "This business's settings: \"whatsapp\": {\"waba_id\", \"dataset_id\", \"access_token\", \"live\"}" + (d.setup.waba_id ? " (done)" : "") + ".")),
+        h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, h("code", { class: "box" }, url),
+          h("button", { class: "btn btn-ghost", type: "button", onclick: () => copy(url) }, "Copy"))));
+    }
+    const t = d.totals;
+    blocks.push(h("section", { class: "kpis", "aria-label": "WhatsApp totals" },
+      h("div", { class: "kpi" }, h("span", { class: "label" }, "Chats"), h("span", { class: "num" }, fmt.format(t.chats)), h("span", { class: "note" }, fmt.format(t.from_ads) + " started from an ad")),
+      h("div", { class: "kpi" }, h("span", { class: "label" }, "Ad chats that bought"), h("span", { class: "num" }, fmt.format(t.buyers)), h("span", { class: "note" }, t.from_ads ? pct(t.buyers / t.from_ads) + " of chats from ads" : "No ad chats yet")),
+      h("div", { class: "kpi hi" }, h("span", { class: "label" }, "Real profit from WhatsApp"), h("span", { class: "num" }, money(t.real_value, cur)), h("span", { class: "note" }, "After refunds")),
+      h("div", { class: "kpi" }, h("span", { class: "label" }, "Sending to Meta"), h("span", { class: "num", style: "font-size:22px" }, d.setup.sending_to_meta ? "Live" : "Practice mode"), h("span", { class: "note" }, d.setup.sending_to_meta ? "Meta learns which chats buy" : "Nothing is sent yet"))));
+    blocks.push(h("section", { class: "card", "aria-labelledby": "wa-ads" },
+      h("div", { class: "between" }, h("h2", { id: "wa-ads" }, "Ads and posts that start chats"), h("span", { class: "badge b-measured" }, "Measured")),
+      d.sources.length ? h("div", { class: "scroll" }, h("table", {},
+        h("thead", {}, h("tr", {}, ["Source", "Chats", "Buyers", "Chat → buyer", "Sales", "Real profit"].map((x) => h("th", { scope: "col" }, x)))),
+        h("tbody", {}, d.sources.map((r) => h("tr", {},
+          h("td", {}, r.source_id ? h("div", { style: "display:flex;flex-direction:column;gap:2px" },
+              h("b", { dir: "auto" }, r.headline || (r.source_type === "ad" ? "Ad " : "Post ") + r.source_id),
+              h("span", { class: "sub", style: "font-size:12px" }, (r.source_type === "ad" ? "Ad" : "Post") + " · " + r.source_id))
+            : h("span", { class: "sub" }, "Messaged directly (no ad)")),
+          h("td", {}, fmt.format(r.chats)), h("td", {}, fmt.format(r.buyers)),
+          h("td", {}, r.source_id ? h("span", { class: r.chat_to_buyer >= 0.2 ? "pill-gain" : "" }, pct(r.chat_to_buyer)) : "–"),
+          h("td", {}, r.source_id ? fmt.format(Math.round(r.revenue)) + " " + cur : "–"),
+          h("td", { style: "font-weight:600" }, r.source_id ? fmt.format(Math.round(r.real_value)) + " " + cur : "–"))))))
+        : h("p", { class: "sub", style: "margin:0" }, "No chats yet. Once your number is connected, every new chat shows here with the ad it came from."),
+      h("p", { class: "sub", style: "margin:0;font-size:13px" }, "Sales are matched to chats by phone number, so include the customer's phone in your sales list or payment system.")));
+    if (d.recent_sales_reported.length) {
+      blocks.push(h("section", { class: "card", "aria-labelledby": "wa-sent" },
+        h("h2", { id: "wa-sent" }, "WhatsApp sales reported to Meta"),
+        h("div", { class: "scroll" }, h("table", {},
+          h("thead", {}, h("tr", {}, ["Sale", "Ad", "Real value", "Status"].map((x) => h("th", { scope: "col" }, x)))),
+          h("tbody", {}, d.recent_sales_reported.map((x) => h("tr", {}, h("td", {}, x.payment_id), h("td", {}, x.source_id),
+            h("td", {}, fmt.format(Math.round(x.value)) + " " + x.currency),
+            h("td", {}, h("span", { class: "badge " + (x.status === "sent" ? "b-measured" : /error/.test(x.status) ? "b-est" : "b-neutral") }, x.status)))))))));
+    }
+    body.replaceChildren(...blocks);
   }
 
   // ---------- delete account ----------
@@ -672,7 +728,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
   }
 
   // ---------- router ----------
-  const VIEWS = { "#/audit": viewAudit, "#/upload": viewUpload, "#/assistant": viewAssistant };
+  const VIEWS = { "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant };
   function go(hash) { if (location.hash !== hash) location.hash = hash; else route(); }
   async function route() {
     if (!session) return renderLogin();

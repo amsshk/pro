@@ -187,7 +187,8 @@ class AccountStore:
     def delete_everything(self, client_id: str) -> dict:
         """Erase an account and every record that belongs to it."""
         counts = {}
-        for table in ("payments", "posts", "promo_codes", "shopify_shops", "oauth_states", "sessions", "accounts"):
+        for table in ("payments", "posts", "promo_codes", "shopify_shops", "oauth_states", "wa_chats",
+                      "wa_conversions", "sessions", "accounts"):
             try:
                 counts[table] = self.db.execute(f"DELETE FROM {table} WHERE client_id=?", (client_id,)).rowcount
             except Exception:                       # table not created yet

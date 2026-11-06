@@ -20,6 +20,24 @@ click "Allow" in the cookie notice:
   so Meta finds people who actually use ProAds.
 Use `PROADS_META_TEST_CODE` to check events in Events Manager > Test events first.
 
+## WhatsApp: which ads bring chats that buy
+
+When someone taps a Click-to-WhatsApp ad and messages the business, Meta's webhook tells ProAds
+which ad they came from. When that customer later pays (any payment source, matched by phone
+number, within 28 days), the sale is credited to the ad and, when live, reported to Meta's
+Conversions API as a WhatsApp purchase (`action_source: business_messaging`) with its real value.
+Message text and customer names are never stored.
+
+Setup:
+1. The business's WhatsApp number must use the WhatsApp Business Platform (Cloud API) on your Meta app.
+2. Meta App Dashboard > WhatsApp > Configuration > Webhook: callback URL
+   `https://pro.ezdevsoft.net/webhooks/whatsapp`, verify token = `PROADS_WHATSAPP_VERIFY_TOKEN`,
+   subscribe to `messages`.
+3. Server settings: `META_APP_SECRET` (App settings > Basic) and `PROADS_WHATSAPP_VERIFY_TOKEN`.
+4. Business settings in `PAYSIGNAL_CLIENTS`:
+   `"whatsapp": {"waba_id": "...", "dataset_id": "...", "access_token": "...", "live": false}`.
+   Keep `live` false to check the WhatsApp tab first. Meta accepts sales up to 7 days old.
+
 ## Web app
 
 Three screens:
