@@ -8,14 +8,14 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Crect width='28' height='28' rx='5' fill='%2376B900'/%3E%3Cpath d='M5 19l6-6 4 3 8-9' stroke='%230A0A0A' stroke-width='2.4' fill='none' stroke-linecap='square' stroke-linejoin='miter'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Crect width='28' height='28' rx='5' fill='%235E9400'/%3E%3Cpath d='M5 19l6-6 4 3 8-9' stroke='%230A0A0A' stroke-width='2.4' fill='none' stroke-linecap='square' stroke-linejoin='miter'/%3E%3C/svg%3E">
 <style>
 :root{
   color-scheme: dark;
   --ink:#0A0A0A; --nav:#070707; --card:#121212; --line:#242424; --soft:#1A1A1A; --field:#0E0E0E; --edge:#2F2F2F;
-  --text:#EDEDED; --muted:#A3A3A3; --dim:#8A8A8A; --violet:#76B900; --violet-hi:#9BE015; --violet-txt:#A3D94A;
-  --violet-chip:#1C2A06; --violet-card:#141A0A; --violet-edge:#3A5410; --bubble:#1E1E1E;
-  --amber:#F87171; --amber-txt:#FCA5A5; --amber-bg:#2A1215; --amber-chip:#3B1A1E; --loss-bg:#3B1A1E; --loss-txt:#FCA5A5; --win:#4ADE80; --win-txt:#86EFAC; --win-bg:#0F2A1A;
+  --text:#EDEDED; --muted:#A3A3A3; --dim:#8A8A8A; --violet:#5E9400; --violet-hi:#7DB21C; --violet-txt:#8FBF4A;
+  --violet-chip:#172305; --violet-card:#141A0A; --violet-edge:#33490E; --bubble:#1E1E1E;
+  --amber:#F87171; --amber-txt:#FCA5A5; --amber-bg:#2A1215; --amber-chip:#3B1A1E; --loss-bg:#3B1A1E; --loss-txt:#FCA5A5; --win:#5DBB7A; --win-txt:#8FD3A4; --win-bg:#0F2A1A;
   --head:'Space Grotesk', Inter, sans-serif; --body: Inter, system-ui, sans-serif; --ar:'Noto Sans Arabic', Inter, sans-serif;
 }
 *{box-sizing:border-box}
@@ -29,11 +29,11 @@ input::placeholder,textarea::placeholder{color:var(--dim)}
 :focus-visible{outline:2px solid var(--violet);outline-offset:2px}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .shell{display:flex;flex-wrap:wrap;min-height:100vh}
-nav.side{flex:1 1 232px;max-width:260px;min-width:220px;background:rgba(7,7,7,.45);backdrop-filter:blur(1.5px);-webkit-backdrop-filter:blur(1.5px);border-right:1px solid rgba(118,185,0,.18);padding:28px 20px;display:flex;flex-direction:column;gap:28px}
+nav.side{flex:1 1 232px;max-width:260px;min-width:220px;background:rgba(7,7,7,.45);backdrop-filter:blur(1.5px);-webkit-backdrop-filter:blur(1.5px);border-right:1px solid rgba(94,148,0,.18);padding:28px 20px;display:flex;flex-direction:column;gap:28px}
 .brand{display:flex;align-items:center;gap:10px;font-family:var(--head);font-weight:700;font-size:20px}
 .navlinks{display:flex;flex-direction:column;gap:4px}
 .navlinks a{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;color:#C4C4C4;text-decoration:none;font-size:14px;min-height:44px}
-.navlinks a[aria-current="page"]{background:#76B900;color:var(--ink);font-weight:600}
+.navlinks a[aria-current="page"]{background:#5E9400;color:var(--ink);font-weight:600}
 .navlinks a:not([aria-current="page"]):hover{background:#181818;color:var(--text)}
 .biz{background:#181818;border-radius:10px;padding:12px;font-size:14px;display:flex;flex-direction:column;gap:2px}
 .biz small{color:var(--dim);font-size:12px;letter-spacing:.06em;text-transform:uppercase}
@@ -60,7 +60,7 @@ h2{margin:0;font-family:var(--head);font-size:20px;font-weight:600}
 .mstrip button{background:none;border:0;border-right:1px solid var(--line);border-bottom:3px solid transparent;text-align:left;padding:16px 18px 12px;display:flex;flex-direction:column;gap:6px;cursor:pointer;min-width:0}
 .mstrip button:last-child{border-right:0}
 .mstrip button:hover{background:var(--soft)}
-.mstrip button[aria-pressed="true"]{border-image:linear-gradient(90deg,#F2F2F2,#E0EFC6 35%,#A6D45A 65%,#76B900) 1;background:#171A12}
+.mstrip button[aria-pressed="true"]{border-image:linear-gradient(90deg,#F2F2F2,#D6E3C2 35%,#8CB85A 65%,#5E9400) 1;background:#171A12}
 .mstrip .ml{font-size:13px;color:var(--muted);text-decoration:underline dotted var(--edge);text-underline-offset:4px}
 .mstrip .mv{font-family:var(--head);font-size:24px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chg{font-size:12px;font-weight:600;display:inline-flex;gap:4px;align-items:center}
@@ -74,14 +74,14 @@ h2{margin:0;font-family:var(--head);font-size:20px;font-weight:600}
 .key i.prev{border-top:2px dashed #6B6B6B}
 .hbar{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;align-items:center;font-size:14px}
 .hbar .track{grid-column:1/-1;height:8px;border-radius:4px;background:var(--soft);overflow:hidden}
-.hbar .track div{height:100%;border-radius:4px;background:linear-gradient(90deg,#F2F2F2,#E0EFC6 35%,#A6D45A 65%,#76B900)}
+.hbar .track div{height:100%;border-radius:4px;background:linear-gradient(90deg,#F2F2F2,#D6E3C2 35%,#8CB85A 65%,#5E9400)}
 .guide{display:flex;flex-direction:column;gap:2px}
 .guide a{display:flex;gap:12px;align-items:flex-start;padding:10px;border-radius:10px;text-decoration:none;color:var(--text)}
 .guide a:hover{background:var(--soft)}
 .guide .tick{flex:0 0 22px;height:22px;border-radius:50%;border:2px dashed var(--edge);display:flex;align-items:center;justify-content:center}
 .guide .done .tick{border:0;background:var(--violet)}
 .guide .done b{color:var(--muted);text-decoration:line-through}
-.progress{height:6px;border-radius:3px;background:var(--soft);overflow:hidden}.progress div{height:100%;background:linear-gradient(90deg,#F2F2F2,#E0EFC6 35%,#A6D45A 65%,#76B900)}
+.progress{height:6px;border-radius:3px;background:var(--soft);overflow:hidden}.progress div{height:100%;background:linear-gradient(90deg,#F2F2F2,#D6E3C2 35%,#8CB85A 65%,#5E9400)}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
 .kpi{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:8px}
 .kpi.hi{background:var(--violet-card);border-color:var(--violet-edge)}
@@ -117,8 +117,8 @@ td{padding:12px 8px;border-bottom:1px solid var(--soft)}
 .post .val{font-family:var(--head);font-size:24px;font-weight:600}
 .post .val small{font-size:13px;font-weight:500;color:var(--muted)}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:10px;padding:0 18px;min-height:44px;font-size:14px;font-weight:600;cursor:pointer;border:0;text-decoration:none}
-.btn-primary{background:#76B900;color:var(--ink)}
-.btn-primary:hover{background:#8ACF0A;color:var(--ink)}
+.btn-primary{background:#5E9400;color:var(--ink)}
+.btn-primary:hover{background:#6CA60A;color:var(--ink)}
 .btn-ghost{background:var(--card);color:var(--text);border:1px solid var(--edge)}
 .btn-ghost:hover{border-color:var(--violet)}
 .btn[disabled]{opacity:.55;cursor:wait}
@@ -174,9 +174,9 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D0D0D0;
 
 /* glowing pearl frames */
 @property --ga{syntax:"<angle>";inherits:false;initial-value:0deg}
-.card,.mstrip{position:relative;isolation:isolate;box-shadow:0 0 22px -6px rgba(224,239,198,.22),0 0 46px -14px rgba(118,185,0,.14)}
+.card,.mstrip{position:relative;isolation:isolate;box-shadow:0 0 22px -6px rgba(214,227,194,.22),0 0 46px -14px rgba(94,148,0,.14)}
 .card::before,.mstrip::before{content:"";position:absolute;inset:-1px;border-radius:inherit;padding:1px;pointer-events:none;z-index:1;
-  background:conic-gradient(from var(--ga),rgba(242,242,242,.75),rgba(224,239,198,.08) 22%,rgba(166,212,90,.65) 45%,rgba(118,185,0,.08) 70%,rgba(118,185,0,.7) 85%,rgba(242,242,242,.75));
+  background:conic-gradient(from var(--ga),rgba(242,242,242,.75),rgba(214,227,194,.08) 22%,rgba(140,184,90,.65) 45%,rgba(94,148,0,.08) 70%,rgba(94,148,0,.7) 85%,rgba(242,242,242,.75));
   -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;
   animation:glowspin 14s linear infinite}
 .mstrip::before{inset:0}
@@ -201,7 +201,7 @@ main{background:transparent}
     c.width = W * dpr; c.height = H * dpr;
     const x = c.getContext("2d"); x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, W, H);
     let seed = 11; const r = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-    const cols = ["242,242,242", "224,239,198", "166,212,90", "118,185,0"];
+    const cols = ["242,242,242", "214,227,194", "140,184,90", "94,148,0"];
     const col = (px) => cols[Math.min(3, Math.floor(px / W * 4))];
     const pts = Array.from({ length: Math.round(W * H / 6500) }, () => ({ x: r() * W, y: r() * H, s: .8 + r() * 1.6 }));
     x.lineWidth = 1;
@@ -223,7 +223,7 @@ main{background:transparent}
       for (let k = 0; k < 2; k++) for (const a of L[k]) for (const b of L[k + 1]) { x.strokeStyle = "rgba(242,242,242,.07)"; x.beginPath(); x.moveTo(a.x, a.y); x.lineTo(b.x, b.y); x.stroke(); }
       x.lineWidth = 1.6; x.shadowBlur = 12;
       for (const path of [[1, 3, 2], [4, 5, 6], [7, 6, 7]]) {
-        const C = path[0] < 4 ? "242,242,242" : "118,185,0";
+        const C = path[0] < 4 ? "242,242,242" : "94,148,0";
         x.strokeStyle = `rgba(${C},.5)`; x.shadowColor = `rgb(${C})`; x.beginPath();
         path.forEach((j, k) => { const q = L[k][Math.min(j, L[k].length - 1)]; k ? x.lineTo(q.x, q.y) : x.moveTo(q.x, q.y); }); x.stroke();
         path.forEach((j, k) => { const q = L[k][Math.min(j, L[k].length - 1)]; x.fillStyle = `rgba(${C},.85)`; x.beginPath(); x.arc(q.x, q.y, 3, 0, 7); x.fill(); });
@@ -231,7 +231,7 @@ main{background:transparent}
       x.shadowBlur = 0;
       for (const col of L) for (const q of col) { x.strokeStyle = "rgba(242,242,242,.28)"; x.lineWidth = 1.2; x.beginPath(); x.arc(q.x, q.y, 4, 0, 7); x.stroke(); }
     }
-    x.shadowBlur = 0; x.font = "12px 'DejaVu Sans Mono', ui-monospace, monospace"; x.fillStyle = "rgba(118,185,0,.1)";
+    x.shadowBlur = 0; x.font = "12px 'DejaVu Sans Mono', ui-monospace, monospace"; x.fillStyle = "rgba(94,148,0,.1)";
     const f = ["value = margin × (1 − refund_risk)", "P(buy | ad, post, hook)", "θ ~ Beta(α + sales, β + views)", "lift > 1.96σ → boost",
       "match(email#, phone#)", "CAPI → dataset · dedup(event_id)", "score += future_value", "spend × 0.05 → invoice"];
     for (let i = 0; i < Math.round(H / 120); i++) x.fillText(f[i % f.length], r() * (W - 260), 60 + i * 120 + r() * 40);
@@ -263,7 +263,7 @@ main{background:transparent}
     return el;
   }
   const logo = () => h("svg", { width: 28, height: 28, viewBox: "0 0 28 28", "aria-hidden": "true" },
-    h("rect", { width: 28, height: 28, rx: 5, fill: "#76B900" }),
+    h("rect", { width: 28, height: 28, rx: 5, fill: "#5E9400" }),
     h("path", { d: "M5 19l6-6 4 3 8-9", stroke: "#0A0A0A", "stroke-width": "2.6", fill: "none", "stroke-linecap": "square", "stroke-linejoin": "miter" }));
   const icon = (d) => h("svg", { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": 2, "aria-hidden": "true" }, h("path", { d }));
   const isArabic = (s) => /[؀-ۿ]/.test(s || "");
@@ -550,7 +550,7 @@ main{background:transparent}
       const s = status.connections.shopify_app;
       const head = h("div", { class: "between" },
         h("div", { class: "srow", style: "gap:12px" },
-          h("svg", { width: 28, height: 28, viewBox: "0 0 24 24", fill: "none", stroke: "#76B900", "stroke-width": 1.8, "aria-hidden": "true" }, h("path", { d: "M6 7h12l-1 13H7L6 7zM9 7a3 3 0 0 1 6 0" })),
+          h("svg", { width: 28, height: 28, viewBox: "0 0 24 24", fill: "none", stroke: "#5E9400", "stroke-width": 1.8, "aria-hidden": "true" }, h("path", { d: "M6 7h12l-1 13H7L6 7zM9 7a3 3 0 0 1 6 0" })),
           h("h2", { id: "shop-h" }, s.connected ? "Shopify store" : "Connect your Shopify store")),
         h("span", { class: "badge " + (s.connected ? "b-measured" : "b-neutral") }, s.connected ? "Connected" : "Easiest way"));
       if (!s.connected) {
@@ -816,7 +816,7 @@ main{background:transparent}
     if (!m || (!m.available && !m.connected)) return status && status.admin
       ? h("div", { class: "result err" }, h("span", {}, "Clients can't connect Facebook yet: finish ", h("b", {}, "Clients can connect Facebook & Instagram"), " in Admin → Setup.")) : null;
     const card = h("section", { class: "card", "aria-labelledby": "fb-h", style: "background: var(--violet-card); border-color: var(--violet-edge)" });
-    const fbIcon = h("svg", { width: 28, height: 28, viewBox: "0 0 24 24", fill: "none", stroke: "#76B900", "stroke-width": 1.8, "aria-hidden": "true" }, h("path", { d: "M14 8h3V4h-3a4 4 0 0 0-4 4v3H7v4h3v6h4v-6h3l1-4h-4V8z" }));
+    const fbIcon = h("svg", { width: 28, height: 28, viewBox: "0 0 24 24", fill: "none", stroke: "#5E9400", "stroke-width": 1.8, "aria-hidden": "true" }, h("path", { d: "M14 8h3V4h-3a4 4 0 0 0-4 4v3H7v4h3v6h4v-6h3l1-4h-4V8z" }));
     if (params && params.get("meta") === "connected") toast("Facebook connected");
     const notice = params && params.get("meta") === "error" ? errorCard(params.get("message") || "Facebook connection failed.") : null;
     const head = (title, badge, on) => h("div", { class: "between" }, h("div", { class: "srow", style: "gap:12px" }, fbIcon, h("h2", { id: "fb-h" }, title)),
@@ -916,7 +916,7 @@ main{background:transparent}
     const results = h("div", { style: "display:flex;flex-direction:column;gap:10px" });
     const input = h("input", { id: "files", type: "file", multiple: true, accept: ".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", class: "sr" });
     const drop = h("label", { class: "drop", for: "files" },
-      h("svg", { width: 36, height: 36, viewBox: "0 0 24 24", fill: "none", stroke: "#76B900", "stroke-width": 1.8, "aria-hidden": "true" }, h("path", { d: "M12 16V4M6 10l6-6 6 6M4 20h16" })),
+      h("svg", { width: 36, height: 36, viewBox: "0 0 24 24", fill: "none", stroke: "#5E9400", "stroke-width": 1.8, "aria-hidden": "true" }, h("path", { d: "M12 16V4M6 10l6-6 6 6M4 20h16" })),
       h("b", { style: "font-size:16px" }, "Drop export files here, or choose files"),
       h("span", { class: "sub", style: "font-size:14px" }, "CSV or Excel: Shopify, Salla, Zid, WooCommerce, Stripe, Tap, any shop or POS export, or Meta posts. Each file is recognised automatically."),
       input);
@@ -1204,13 +1204,13 @@ main{background:transparent}
     const S = 1080, c = h("canvas", { width: S, height: S }), x = c.getContext("2d");
     x.fillStyle = "#0A0A0A"; x.fillRect(0, 0, S, S);
     const g = x.createRadialGradient(S * 0.85, S * 0.1, 40, S * 0.85, S * 0.1, S * 0.9);
-    g.addColorStop(0, "rgba(118,185,0,0.55)"); g.addColorStop(1, "rgba(118,185,0,0)");
+    g.addColorStop(0, "rgba(94,148,0,0.55)"); g.addColorStop(1, "rgba(94,148,0,0)");
     x.fillStyle = g; x.fillRect(0, 0, S, S);
     // rising line motif
-    x.strokeStyle = "rgba(118,185,0,0.35)"; x.lineWidth = 10; x.lineCap = "round"; x.lineJoin = "round";
+    x.strokeStyle = "rgba(94,148,0,0.35)"; x.lineWidth = 10; x.lineCap = "round"; x.lineJoin = "round";
     x.beginPath(); x.moveTo(560, 900); x.lineTo(720, 760); x.lineTo(840, 830); x.lineTo(1010, 620); x.stroke();
     // logo
-    x.fillStyle = "#76B900"; x.beginPath(); x.roundRect(80, 80, 96, 96, 18); x.fill();
+    x.fillStyle = "#5E9400"; x.beginPath(); x.roundRect(80, 80, 96, 96, 18); x.fill();
     if (brand === "ProAds") { x.strokeStyle = "#0A0A0A"; x.lineWidth = 9; x.lineJoin = "miter"; x.lineCap = "square"; x.beginPath(); x.moveTo(97, 145); x.lineTo(118, 125); x.lineTo(131, 135); x.lineTo(159, 104); x.stroke(); }
     else { x.fillStyle = "#0A0A0A"; x.font = "700 56px 'Space Grotesk', Inter, sans-serif"; x.textAlign = "center"; x.textBaseline = "middle"; x.fillText((brand || "?").trim().charAt(0).toUpperCase(), 128, 131); x.textAlign = "left"; }
     x.fillStyle = "#EDEDED"; x.font = "700 52px 'Space Grotesk', Inter, sans-serif"; x.textBaseline = "middle"; x.fillText(brand, 200, 130);
@@ -1221,12 +1221,12 @@ main{background:transparent}
     lines.forEach((l, i) => x.fillText(l, 80, 330 + i * size * 1.12));
     // short line from the ad text
     const subText = String(ad.primary_text || "").split(/(?<=[.!?])\s/)[0];
-    x.font = "500 44px Inter, sans-serif"; x.fillStyle = "#A3D94A";
+    x.font = "500 44px Inter, sans-serif"; x.fillStyle = "#8FBF4A";
     wrapLines(x, subText, S - 160).slice(0, 2).forEach((l, i) => x.fillText(l, 80, 330 + lines.length * size * 1.12 + 44 + i * 58));
     // button + address
     const label = CTA_TEXT[ad.call_to_action] || "Learn more";
     x.font = "600 40px Inter, sans-serif"; const bw = x.measureText(label).width + 96;
-    x.fillStyle = "#76B900"; x.beginPath(); x.roundRect(80, 880, bw, 96, 48); x.fill();
+    x.fillStyle = "#5E9400"; x.beginPath(); x.roundRect(80, 880, bw, 96, 48); x.fill();
     x.fillStyle = "#0A0A0A"; x.textBaseline = "middle"; x.fillText(label, 128, 929);
     x.fillStyle = "#A3A3A3"; x.font = "500 32px Inter, sans-serif"; if (host) x.fillText(host, 80 + bw + 32, 929);
     return c.toDataURL("image/jpeg", 0.9);
@@ -1399,7 +1399,7 @@ main{background:transparent}
     const W = 120, H = 28, max = Math.max(...vals, 1);
     const pts = vals.map((v, i) => (vals.length > 1 ? i * W / (vals.length - 1) : 0).toFixed(1) + "," + (H - 2 - (v / max) * (H - 4)).toFixed(1)).join(" ");
     return h("svg", { viewBox: "0 0 " + W + " " + H, width: W, height: H, "aria-hidden": "true", style: "width:100%;max-width:120px;height:28px" },
-      h("polyline", { points: pts, fill: "none", stroke: "#76B900", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke" }));
+      h("polyline", { points: pts, fill: "none", stroke: "#5E9400", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke" }));
   }
   function niceMax(v) { if (v <= 0) return 1; const p = Math.pow(10, Math.floor(Math.log10(v))); const n = v / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p; }
   function lineChart(dates, cur, prev, fmtV, width) {
@@ -1415,19 +1415,19 @@ main{background:transparent}
     const ticks = n > 1 ? [0, Math.floor((n - 1) / 2), n - 1] : [0];
     const xl = ticks.map((i) => h("text", { x: x(i), y: H - 8, "text-anchor": i === 0 && n > 1 ? "start" : i === n - 1 && n > 1 ? "end" : "middle", fill: "#8A8A8A", "font-size": 11 }, day(dates[i])));
     const hair = h("line", { y1: T, y2: H - B, stroke: "#6B6B6B", "stroke-width": 1, style: "display:none" });
-    const dotC = h("circle", { r: 5, fill: "#76B900", stroke: "#121212", "stroke-width": 2, style: "display:none" });
+    const dotC = h("circle", { r: 5, fill: "#5E9400", stroke: "#121212", "stroke-width": 2, style: "display:none" });
     const dotP = h("circle", { r: 4, fill: "#6B6B6B", stroke: "#121212", "stroke-width": 2, style: "display:none" });
     const tip = h("div", { class: "tip", style: "display:none", role: "status" });
     const hit = h("rect", { x: L, y: T, width: W - L - R, height: H - T - B, fill: "transparent", style: "cursor:crosshair" });
     const gid = "pl" + Math.random().toString(36).slice(2, 8);
     const svg = h("svg", { viewBox: "0 0 " + W + " " + H, role: "img", "aria-label": "Chart of this period against the previous period" },
       h("defs", {}, h("linearGradient", { id: gid, x1: "0", x2: "1", y1: "0", y2: "0" },
-        h("stop", { offset: "0", "stop-color": "#F2F2F2" }), h("stop", { offset: "0.4", "stop-color": "#E0EFC6" }),
-        h("stop", { offset: "0.7", "stop-color": "#A6D45A" }), h("stop", { offset: "1", "stop-color": "#76B900" }))),
+        h("stop", { offset: "0", "stop-color": "#F2F2F2" }), h("stop", { offset: "0.4", "stop-color": "#D6E3C2" }),
+        h("stop", { offset: "0.7", "stop-color": "#8CB85A" }), h("stop", { offset: "1", "stop-color": "#5E9400" }))),
       grid, xl,
       h("path", { d: path(prev), fill: "none", stroke: "#6B6B6B", "stroke-width": 2, "stroke-dasharray": "5 5", "stroke-linejoin": "round" }),
       h("path", { d: path(cur), fill: "none", stroke: "url(#" + gid + ")", "stroke-width": 2.5, "stroke-linejoin": "round", "stroke-linecap": "round" }),
-      n <= 3 ? cur.map((v, i) => h("circle", { cx: x(i), cy: y(v), r: 5, fill: "#76B900" })) : null,
+      n <= 3 ? cur.map((v, i) => h("circle", { cx: x(i), cy: y(v), r: 5, fill: "#5E9400" })) : null,
       hair, dotP, dotC, hit);
     const wrap = h("div", { class: "chartwrap" }, svg, tip);
     function show(clientX) {
