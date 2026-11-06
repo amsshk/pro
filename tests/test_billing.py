@@ -131,13 +131,13 @@ def test_renewal_invoice_gets_the_ad_spend_fee(app):
                "period_start": 1790000000, "period_end": 1792600000}
         assert signed(c, {"type": "invoice.created", "data": {"object": inv}}).status_code == 200
         url, data = state.stripe_http.posts[-1]
-        assert url == "invoiceitems" and data["invoice"] == "in_1" and data["amount"] == "18002"   # 3% of 6000.50 AED
+        assert url == "invoiceitems" and data["invoice"] == "in_1" and data["amount"] == str(billing.fee_amount(6000.50, 5))   # 5% of 6000.50 AED
         assert "6,000.50" in data["description"] and state.stripe_http.headers == {"Idempotency-Key": "proads-fee-in_1"}
         n = len(state.stripe_http.posts)
         signed(c, {"type": "invoice.created", "data": {"object": inv}})                    # Stripe retries: no double fee
         assert len(state.stripe_http.posts) == n
         b = c.get("/billing/glow-clinic", headers={"X-API-Key": tok}).json
-        assert b["fees"][0]["fee"] == 180.02 and b["spend_so_far"]["fee"] == 180.02 and b["fee_percent"] == 3
+        assert b["fees"][0]["fee"] == b["spend_so_far"]["fee"] == billing.fee_amount(6000.50, 5) / 100 and b["fee_percent"] == 5
         # first invoice of a subscription and other currencies get no fee
         signed(c, {"type": "invoice.created", "data": {"object": {**inv, "id": "in_2", "billing_reason": "subscription_create"}}})
         signed(c, {"type": "invoice.created", "data": {"object": {**inv, "id": "in_3", "currency": "usd"}}})

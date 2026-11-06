@@ -9,7 +9,7 @@ Settings:
                                 https://<domain>/webhooks/proads-billing
   PROADS_STRIPE_PRICE_ID        price_... of the monthly plan (made in the Stripe dashboard)
   PROADS_TRIAL_DAYS             optional free trial on the first subscription
-  PROADS_SPEND_FEE_PERCENT      fee on ad spend published through ProAds (default 3, 0 = off).
+  PROADS_SPEND_FEE_PERCENT      fee on ad spend published through ProAds (default 5, 0 = off).
                                 Added to each renewal invoice for the period just ended
                                 (needs the invoice.created webhook event).
   PROADS_REQUIRE_PLAN           "1" = publishing campaigns needs an active plan
@@ -44,9 +44,9 @@ def settings() -> dict:
 
 def fee_percent() -> float:
     try:
-        return max(0.0, min(float(os.environ.get("PROADS_SPEND_FEE_PERCENT", "3") or 0), 50.0))
+        return max(0.0, min(float(os.environ.get("PROADS_SPEND_FEE_PERCENT", "5") or 0), 50.0))
     except ValueError:
-        return 3.0
+        return 5.0
 
 
 def available() -> bool:
