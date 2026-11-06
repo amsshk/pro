@@ -34,7 +34,13 @@ def scan(http, token: str, version: str, query: str = "", page_ids: Optional[lis
         params["search_terms"] = query[:100]
     else:
         raise ScanError("type a competitor's name or Page link")
-    r = http.get(f"https://graph.facebook.com/{version}/ads_archive", params=params, timeout=40)
+    if http is None:
+        import requests
+        http = requests
+    try:
+        r = http.get(f"https://graph.facebook.com/{version}/ads_archive", params=params, timeout=40)
+    except Exception as e:
+        raise ScanError(f"couldn't reach Meta's Ad Library ({type(e).__name__}). Try again in a minute.") from e
     try:
         body = r.json()
     except Exception:

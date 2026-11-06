@@ -126,3 +126,17 @@ def test_billing_switch_and_status(tmp_path, monkeypatch):
     r = c.post("/billing/other/switch", json={"tier": "premium"}, headers=OTHER)
     assert r.status_code == 200 and posts[-1][1]["items[0][price]"] == "price_prem"
     assert c.get("/billing/other", headers=OTHER).json["tier"] == "premium"
+
+
+def test_scan_works_without_a_test_client(monkeypatch):
+    import requests
+    monkeypatch.setattr(requests, "get", lambda url, params, timeout: R(200, {"data": []}))
+    assert competitors.scan(None, "tok", "v25.0", query="rival") == []
+    def boom(*a, **k):
+        raise requests.ConnectionError("down")
+    monkeypatch.setattr(requests, "get", boom)
+    try:
+        competitors.scan(None, "tok", "v25.0", query="rival")
+        assert False
+    except competitors.ScanError as e:
+        assert "couldn't reach" in str(e)
