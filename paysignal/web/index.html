@@ -470,10 +470,6 @@ main{background:transparent}
         h("div", { class: "kpi" }, h("span", { class: "label" }, "Refunds"), h("span", { class: "num", style: "color: var(--amber)" }, money(a.refunds, cur)), h("span", { class: "note" }, pct(a.refund_rate) + " of sales returned")),
         h("div", { class: "kpi hi" }, h("span", { class: "label" }, "Real profit after refunds"), h("span", { class: "num" }, money(a.real_profit, cur)), h("span", { class: "note" }, "What Meta learns from")),
         c ? h("div", { class: "kpi" }, h("span", { class: "label" }, "Customers who came back"), h("span", { class: "num" }, pct(c.repeat_rate)), h("span", { class: "note" }, "They bring " + pct(c.profit_from_repeat_customers) + " of profit")) : null),
-      h("section", { class: "card", "aria-labelledby": "todo" },
-        h("div", { class: "between" }, h("h2", { id: "todo" }, "Do this week"), h("span", { class: "sub", style: "font-size:13px" }, "From your own numbers")),
-        h("ol", { class: "actions" }, a.actions.map((t, i) =>
-          h("li", { class: /^(Stop|Look into|Post fewer)/.test(t) ? "warn" : "" }, h("span", { class: "num-dot" }, i + 1), h("span", {}, t))))),
     ];
     if (a.monthly && a.monthly.length > 1) {
       const max = Math.max(...a.monthly.map((m) => m.real_profit), 1);
