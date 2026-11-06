@@ -50,7 +50,7 @@ from .attribution import make_promo_code, tag_link
 from .dashboard import build_dashboard, _realized
 from .ads_report import build_report
 from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, business_context
-from . import billing, learning, meta_ads, meta_connect
+from . import billing, competitors, learning, meta_ads, meta_connect
 from .connectors.stripe import verify_signature as stripe_signature_ok
 from .audit import audit_summary, audit_text, build_audit
 from .importers import xlsx_to_csv, import_auto
@@ -772,6 +772,92 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 abort(404, "unknown campaign")
         return {"deleted": True}
 
+    # ---------------- Competitor X-ray (Premium) ----------------
+    def require_premium(client_id):
+        if is_admin(client_id):
+            return
+        with state.lock:
+            tier = state.billing.tier(client_id)
+        if tier != "premium":
+            resp = jsonify({"error": "Competitor X-ray is part of Premium. Upgrade on Plan & billing.",
+                            "needs_plan": True, "needs_tier": "premium"})
+            resp.status_code = 402
+            abort(resp)
+
+    def meta_token(client_id) -> Optional[str]:
+        with state.lock:
+            c = state.meta_conns.get(client_id)
+        if c and c.get("token"):
+            try:
+                return meta_connect.decrypt(c["token"])
+            except Exception:
+                log.warning("could not read the Meta connection of %s", client_id)
+        if is_admin(client_id):
+            return meta_ads.settings()["token"] or None
+        return None
+
+    @flask.post("/competitors/<client_id>/scan")
+    def competitors_scan(client_id):
+        """A competitor's live ads from Meta's Ad Library, plus what the numbers say."""
+        state.require_key(client_id)
+        require_premium(client_id)
+        body = request.get_json(silent=True) or {}
+        if (body.get("pasted") or "").strip():
+            ads = competitors.from_pasted(body["pasted"])
+        else:
+            token = meta_token(client_id)
+            if not token:
+                abort(409, "Connect your Facebook & Instagram first (Connect & upload), or paste the competitor's ads.")
+            q = (body.get("query") or "").strip()
+            page_ids = re.findall(r"\d{6,}", q) if re.search(r"facebook\.com|^\d{6,}$", q) else []
+            country = (body.get("country") or "AE").strip().upper()[:2]
+            try:
+                ads = competitors.scan(state.ads_http, token, meta_ads.settings()["version"], query=q,
+                                       page_ids=page_ids or None, country=country)
+            except competitors.ScanError as e:
+                abort(502, str(e))
+        return {"ads": ads, "summary": competitors.summarize(ads)}
+
+    @flask.post("/competitors/<client_id>/counter")
+    def competitors_counter(client_id):
+        """An original campaign built to beat the competitor's ads; saved to the campaign history."""
+        state.require_key(client_id)
+        require_premium(client_id)
+        body = request.get_json(silent=True) or {}
+        ads = body.get("ads") if isinstance(body.get("ads"), list) else []
+        ads = [competitors.normalize_client(a) for a in ads if isinstance(a, dict)][:40]
+        if not ads:
+            abort(400, "scan a competitor first")
+        try:
+            budget = float(body.get("daily_budget", 0))
+        except (TypeError, ValueError):
+            budget = 0
+        if budget <= 0:
+            abort(400, "send JSON with a positive 'daily_budget'")
+        cfg = state.config(client_id)
+        own = is_admin(client_id)
+        conversion = body.get("conversion") or ("signup" if own else "purchase")
+        if own:
+            product, landing = PROADS_PRODUCT, public_base() + "/"
+        else:
+            product = " ".join(x for x in (cfg.get("name", ""), cfg.get("website", "")) if x)
+            landing = cfg.get("website", "")
+        if landing and not re.match(r"^https?://", landing):
+            landing = "https://" + landing
+        ai = need_ai()
+        try:
+            out = competitors.counter_campaign(ai, ads, ai_context(client_id), budget, conversion, product, landing,
+                                               ads_currency(client_id), body.get("notes", ""))
+        except PermissionError as e:
+            abort(503, str(e))
+        except (RuntimeError, CampaignError) as e:
+            abort(502, str(e))
+        out["can_publish"] = state.ads_settings(client_id, own) is not None
+        if not out["problems"]:
+            with state.lock:
+                out["draft_id"] = state.drafts.add(client_id, {k: v for k, v in out.items() if k != "can_publish"})
+        return out
+
     def ads_currency(client_id) -> str:
         """Budgets are in the currency the client's ad account bills in."""
         with state.lock:
@@ -1222,9 +1308,16 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                                        "fee": billing.fee_amount(spend, billing.fee_percent()) / 100, "fee_currency": cur}
             except Exception as e:
                 log.info("could not read ad spend for %s: %s", client_id, e)
+        with state.lock:
+            out["tier"] = "premium" if is_admin(client_id) else state.billing.tier(client_id)
+        out["premium_available"] = billing.premium_available()
+        out["premium_price"] = None
         if out["available"]:
             try:
-                out["price"] = billing.price_info(billing.Stripe(state.stripe_http))
+                st = billing.Stripe(state.stripe_http)
+                out["price"] = billing.price_info(st)
+                if out["premium_available"]:
+                    out["premium_price"] = billing.price_info(st, billing.settings()["premium_price"])
             except billing.BillingError as e:
                 log.warning("could not read the Stripe price: %s", e)
         return out
@@ -1234,17 +1327,42 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         """Stripe's hosted payment page for the monthly plan. The browser goes there next."""
         state.require_key(client_id)
         stripe = stripe_api()
+        tier = "premium" if (request.get_json(silent=True) or {}).get("tier") == "premium" else "pro"
+        if tier == "premium" and not billing.premium_available():
+            abort(503, "Premium isn't switched on yet.")
         with state.lock:
             b = state.billing.get(client_id) or {}
         if b.get("status") in billing.ACTIVE:
-            abort(409, "You already have an active plan. Use Manage billing to change it.")
+            abort(409, "You already have an active plan. Use the switch button to change it.")
         acct = state.accounts.get(client_id) or {}
         try:
             url = billing.checkout_session(stripe, client_id, acct.get("email", ""), b.get("customer_id"),
-                                           public_base(), first_time=not b.get("subscription_id"))
+                                           public_base(), first_time=not b.get("subscription_id"), tier=tier)
         except billing.BillingError as e:
             abort(502, f"Stripe: {e}")
         return {"url": url}
+
+    @flask.post("/billing/<client_id>/switch")
+    def billing_switch(client_id):
+        """Move an active plan between Pro and Premium (Stripe charges or credits the difference)."""
+        state.require_key(client_id)
+        stripe = stripe_api()
+        tier = (request.get_json(silent=True) or {}).get("tier")
+        if tier not in ("pro", "premium"):
+            abort(400, "send JSON with 'tier': 'pro' or 'premium'")
+        if tier == "premium" and not billing.premium_available():
+            abort(503, "Premium isn't switched on yet.")
+        with state.lock:
+            b = state.billing.get(client_id) or {}
+        if b.get("status") not in billing.ACTIVE or not b.get("subscription_id"):
+            abort(409, "No active plan yet. Choose a plan first.")
+        try:
+            billing.change_tier(stripe, b["subscription_id"], tier)
+        except billing.BillingError as e:
+            abort(502, f"Stripe: {e}")
+        with state.lock:
+            state.billing.upsert(client_id, tier=tier)
+        return {"tier": tier}
 
     @flask.post("/billing/<client_id>/portal")
     def billing_portal(client_id):

@@ -40,7 +40,8 @@ def settings() -> dict:
     except ValueError:
         trial = 0
     return {"key": env("PROADS_STRIPE_SECRET_KEY"), "webhook_secret": env("PROADS_STRIPE_WEBHOOK_SECRET"),
-            "price": env("PROADS_STRIPE_PRICE_ID"), "trial_days": trial,
+            "price": env("PROADS_STRIPE_PRICE_ID"), "premium_price": env("PROADS_STRIPE_PREMIUM_PRICE_ID"),
+            "trial_days": trial,
             "ads_trial_days": ads_trial_days(), "fee_percent": fee_percent()}
 
 
@@ -110,9 +111,9 @@ def price_id(stripe: Stripe) -> str:
                        "(Stripe: Product catalog > ProAds Pro > Pricing > the price's ID), not the amount")
 
 
-def price_info(stripe: Stripe) -> dict:
+def price_info(stripe: Stripe, pid: Optional[str] = None) -> dict:
     """Name and price of the plan for the app to show (cached for an hour)."""
-    pid = price_id(stripe)
+    pid = pid or price_id(stripe)
     hit = _price_cache.get(pid)
     if hit and time.time() - hit[0] < 3600:
         return hit[1]
@@ -125,10 +126,20 @@ def price_info(stripe: Stripe) -> dict:
     return info
 
 
-def checkout_session(stripe: Stripe, client_id: str, email: str, customer_id: Optional[str],
-                     return_base: str, first_time: bool) -> str:
+def premium_available() -> bool:
+    return available() and bool(settings()["premium_price"])
+
+
+def tier_of_price(pid: Optional[str]) -> str:
     s = settings()
-    data = {"mode": "subscription", "line_items[0][price]": price_id(stripe), "line_items[0][quantity]": "1",
+    return "premium" if pid and s["premium_price"] and pid == s["premium_price"] else "pro"
+
+
+def checkout_session(stripe: Stripe, client_id: str, email: str, customer_id: Optional[str],
+                     return_base: str, first_time: bool, tier: str = "pro") -> str:
+    s = settings()
+    pid = s["premium_price"] if tier == "premium" and s["premium_price"] else price_id(stripe)
+    data = {"mode": "subscription", "line_items[0][price]": pid, "line_items[0][quantity]": "1",
             "success_url": return_base + "/app#/billing?paid=1", "cancel_url": return_base + "/app#/billing",
             "client_reference_id": client_id, "metadata[client_id]": client_id,
             "subscription_data[metadata][client_id]": client_id,
@@ -144,6 +155,18 @@ def checkout_session(stripe: Stripe, client_id: str, email: str, customer_id: Op
     if first_time and s["trial_days"]:
         data["subscription_data[trial_period_days]"] = str(s["trial_days"])
     return stripe.post("checkout/sessions", data)["url"]
+
+
+def change_tier(stripe: Stripe, subscription_id: str, tier: str) -> None:
+    """Move an existing subscription between Pro and Premium; Stripe prorates the difference."""
+    s = settings()
+    sub = stripe.get(f"subscriptions/{subscription_id}")
+    items = (sub.get("items") or {}).get("data") or []
+    if not items:
+        raise BillingError("subscription has no items")
+    stripe.post(f"subscriptions/{subscription_id}", {
+        "items[0][id]": items[0]["id"], "items[0][price]": s["premium_price"] if tier == "premium" else price_id(stripe),
+        "proration_behavior": "always_invoice", "metadata[client_id]": (sub.get("metadata") or {}).get("client_id", "")})
 
 
 def portal_session(stripe: Stripe, customer_id: str, return_url: str) -> str:
@@ -233,6 +256,8 @@ class BillingStore:
         fee_cols = {r[1] for r in self.db.execute("PRAGMA table_info(billing_fees)").fetchall()}
         if "fee_currency" not in fee_cols:
             self.db.execute("ALTER TABLE billing_fees ADD COLUMN fee_currency TEXT")
+        if "tier" not in cols:
+            self.db.execute("ALTER TABLE billing ADD COLUMN tier TEXT")
         if "ads_trial_started" not in cols:
             self.db.execute("ALTER TABLE billing ADD COLUMN ads_trial_started INTEGER")
         self.db.commit()
@@ -267,11 +292,15 @@ class BillingStore:
 
     def get(self, client_id: str) -> Optional[dict]:
         row = self.db.execute("SELECT customer_id, subscription_id, status, period_end, cancel_at_period_end,"
-                              " period_start, ads_trial_started FROM billing WHERE client_id=?", (client_id,)).fetchone()
+                              " period_start, ads_trial_started, tier FROM billing WHERE client_id=?", (client_id,)).fetchone()
         if not row:
             return None
         return dict(zip(("customer_id", "subscription_id", "status", "period_end", "cancel_at_period_end",
-                         "period_start", "ads_trial_started"), row))
+                         "period_start", "ads_trial_started", "tier"), row))
+
+    def tier(self, client_id: str) -> str:
+        b = self.get(client_id) or {}
+        return (b.get("tier") or "pro") if b.get("status") in ACTIVE else "free"
 
     def upsert(self, client_id: str, **fields) -> None:
         if not self.get(client_id):
@@ -306,6 +335,7 @@ class BillingStore:
                 self.upsert(cid, customer_id=obj.get("customer"), subscription_id=obj.get("id"),
                             status="canceled" if etype.endswith("deleted") else obj.get("status"),
                             period_end=_period_end(obj), period_start=_period_start(obj),
+                            tier=tier_of_price((((obj.get("items") or {}).get("data") or [{}])[0].get("price") or {}).get("id")),
                             cancel_at_period_end=1 if obj.get("cancel_at_period_end") else 0)
                 return cid
         if etype == "invoice.payment_failed":

@@ -90,6 +90,7 @@ h2{margin:0;font-family:var(--head);font-size:20px;font-weight:600}
 .kpi .num{font-family:var(--head);font-size:30px;font-weight:600}
 .kpi .num small{font-size:16px;color:var(--muted);font-weight:500}
 .kpi .note{font-size:13px;color:var(--muted)}
+.navtag{margin-left:auto;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:999px;color:#0A0A0A;background:linear-gradient(90deg,#F2F2F2,#8CB85A)}
 .badge{font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;white-space:nowrap}
 .b-measured{color:var(--win-txt);background:var(--win-bg)}
 .b-est{color:var(--amber-txt);background:var(--amber-chip)}
@@ -411,6 +412,7 @@ main{background:transparent}
     ["#/upload", "Connect & upload", "M12 16V4M6 10l6-6 6 6M4 20h16"],
     ["#/whatsapp", "WhatsApp", "M12 3a9 9 0 0 0-7.8 13.5L3 21l4.6-1.2A9 9 0 1 0 12 3z"],
     ["#/assistant", "Ask & campaigns", "M4 5h16v11H8l-4 4z"],
+    ["#/competitors", "Competitor X-ray", "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM16 16l5 5M8 11h6M11 8v6", "Premium"],
   ];
   function statusRows() {
     if (!status) return [];
@@ -430,8 +432,8 @@ main{background:transparent}
       h("nav", { class: "side", "aria-label": "Main" },
         h("div", { class: "brand" }, logo(), "ProAds"),
         h("div", { class: "biz" }, h("small", {}, "Business"), status ? status.name : session.client),
-        h("div", { class: "navlinks" }, NAV.concat(status && status.admin ? [["#/admin", "Admin", "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"]] : [["#/billing", "Plan & billing", "M3 7h18v10H3zM3 11h18"]]).map(([href, label, d]) =>
-          h("a", { href, "aria-current": href === active ? "page" : null }, icon(d), label))),
+        h("div", { class: "navlinks" }, NAV.concat(status && status.admin ? [["#/admin", "Admin", "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"]] : [["#/billing", "Plan & billing", "M3 7h18v10H3zM3 11h18"]]).map(([href, label, d, tag]) =>
+          h("a", { href, "aria-current": href === active ? "page" : null }, icon(d), label, tag ? h("span", { class: "navtag" }, tag) : null))),
         h("div", { class: "statusbox" }, statusRows(),
           h("button", { class: "btn btn-ghost", style: "margin-top:6px", onclick: () => signOut() }, "Sign out"))),
       h("main", {}, h("div", { class: "wrap" }, content)));
@@ -1346,6 +1348,108 @@ main{background:transparent}
       h("a", { class: "btn btn-primary", href: "#/billing" }, "Add card"));
   }
 
+  // ---------- Competitor X-ray (Premium) ----------
+  const AD_COUNTRIES = [["AE", "United Arab Emirates"], ["SA", "Saudi Arabia"], ["KW", "Kuwait"], ["QA", "Qatar"], ["BH", "Bahrain"], ["OM", "Oman"], ["EG", "Egypt"],
+    ["US", "United States"], ["GB", "United Kingdom"], ["DE", "Germany"], ["FR", "France"], ["IT", "Italy"], ["ES", "Spain"], ["NL", "Netherlands"],
+    ["IN", "India"], ["PK", "Pakistan"], ["TH", "Thailand"], ["SG", "Singapore"], ["AU", "Australia"], ["CA", "Canada"], ["BR", "Brazil"], ["TR", "Turkey"], ["ZA", "South Africa"]];
+  async function viewCompetitors() {
+    const head = h("header", { class: "between", style: "align-items:flex-end" },
+      h("div", {}, h("h1", {}, "Competitor X-ray"), h("p", { class: "sub" }, "See the ads your competitors keep paying for, then beat them with your own.")),
+      h("span", { class: "badge b-measured" }, "Premium"));
+    root.replaceChildren(layout("#/competitors", [head, loading()]));
+    let tier = "free";
+    try { tier = (await api("/billing/" + cid())).tier || "free"; } catch (e) { if (e.message === "signed out") return; }
+    if (tier !== "premium") {
+      root.replaceChildren(layout("#/competitors", [head,
+        h("section", { class: "card", style: "background: var(--violet-card); border-color: var(--violet-edge)" },
+          h("h2", {}, "Part of Premium"),
+          h("ul", { class: "list" },
+            h("li", {}, "Type a competitor's name or Facebook Page: see every ad they're running right now"),
+            h("li", {}, "The ads they've kept running longest are the ones making them money. We put those on top"),
+            h("li", {}, "The AI explains why they work, where they're weak, and builds you an original campaign that beats them"),
+            h("li", {}, "Publish it to your ad account in one click, like any other campaign")),
+          h("a", { class: "btn btn-primary", href: "#/billing", style: "align-self:flex-start" }, "See Premium"))]));
+      return;
+    }
+    let found = [];
+    const query = h("input", { id: "cq", placeholder: "Competitor name, or their Facebook Page link", autocomplete: "off", required: false });
+    const country = h("select", { id: "cc" }, AD_COUNTRIES.map(([k, n]) => h("option", { value: k }, n)));
+    const pasted = h("textarea", { id: "cp", placeholder: "Paste their ad texts here, one ad per paragraph (leave a blank line between ads)" });
+    const scanBtn = h("button", { class: "btn btn-primary", type: "submit" }, "Scan their ads");
+    const results = h("div", { style: "display:flex;flex-direction:column;gap:16px" });
+    const form = h("form", { style: "display:flex;flex-direction:column;gap:12px", onsubmit: async (e) => {
+      e.preventDefault();
+      if (!query.value.trim() && !pasted.value.trim()) { toast("Type a competitor or paste their ads"); return; }
+      scanBtn.disabled = true; results.replaceChildren(loading("Reading their live ads from Meta's Ad Library…"));
+      try {
+        const r = await api("/competitors/" + cid() + "/scan", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: query.value.trim(), country: country.value, pasted: pasted.value }) });
+        found = r.ads || [];
+        results.replaceChildren(...renderScan(r));
+      } catch (err) { if (err.message !== "signed out") results.replaceChildren(errorCard(err.message)); }
+      scanBtn.disabled = false;
+    } },
+      h("div", { class: "grid2" }, h("label", { class: "f", for: "cq" }, "Competitor", query), h("label", { class: "f", for: "cc" }, "Country they advertise in", country)),
+      h("details", {}, h("summary", { style: "cursor:pointer;font-size:13px;color:#D0D0D0" }, "No results? Paste their ads instead"),
+        h("label", { class: "f", for: "cp", style: "margin-top:10px" }, "Their ad texts", pasted)),
+      h("p", { class: "sub", style: "margin:0;font-size:13px" }, "Meta's Ad Library shows every ad running in Europe and the UK; in other countries it can show fewer. Their names and words stay out of your ads."),
+      scanBtn);
+
+    function renderScan(r) {
+      const s = r.summary || {};
+      if (!s.ads) return [h("div", { class: "result err" }, h("span", {}, "No live ads found. Try their exact Page name or Page link, another country, or paste their ads."))];
+      const top = s.longest_running && s.longest_running.length ? s.longest_running : found.slice(0, 8);
+      const kpi = (label, v) => h("div", { class: "kpi" }, h("span", { class: "label" }, label), h("b", { style: "font-family: var(--head);font-size:26px" }, v));
+      const longest = top[0] && top[0].days_running != null ? top[0].days_running + " days" : "—";
+      const ads = h("div", { style: "display:flex;flex-direction:column;gap:10px" }, top.map((a, i) => h("div", { class: "ad" },
+        h("div", { class: "between" }, h("span", { style: "font-size:12px;color: var(--muted)" }, [a.page, i === 0 && a.days_running > 14 ? "their longest-running ad" : ""].filter(Boolean).join(" · ")),
+          a.days_running != null ? h("span", { class: "badge " + (a.days_running >= 30 ? "b-measured" : "b-neutral") }, a.days_running + " days live") : null),
+        a.headline ? h("b", { dir: "auto" }, a.headline) : null,
+        a.text ? h("span", { dir: "auto", style: "white-space:pre-wrap" }, a.text.length > 320 ? a.text.slice(0, 320) + "…" : a.text) : null,
+        a.snapshot_url ? h("a", { href: a.snapshot_url, target: "_blank", rel: "noopener", style: "font-size:13px" }, "See the ad on Meta") : null)));
+      return [
+        h("section", { class: "card" },
+          h("div", { class: "between" }, h("h2", {}, "What they're running"), h("span", { class: "badge b-neutral" }, "From Meta's Ad Library")),
+          h("div", { class: "adkpis" }, kpi("Live ads", fmt.format(s.ads)), kpi("Advertisers", fmt.format((s.advertisers || []).length || 1)), kpi("Longest running", longest),
+            kpi("Where", (s.platforms || []).slice(0, 2).map((p) => p.name).join(", ") || "—")),
+          h("p", { class: "sub", style: "margin:0;font-size:13px" }, "Nobody keeps paying for an ad that loses money. The longer an ad runs, the more likely it works, so those come first."),
+          ads),
+        counterCard()];
+    }
+
+    function counterCard() {
+      const budget = h("input", { id: "xb", type: "number", min: 10, step: 5, value: status && status.admin ? (adsCurrency() === "THB" ? 350 : 35) : 300, required: true });
+      const conv = h("select", { id: "xg" }, (status && status.admin ? [["Sign-ups", "signup"]] : []).concat([["Sales", "purchase"], ["Sign-ups or leads", "signup"]]).map(([l, v]) => h("option", { value: v }, l)));
+      const notes = h("textarea", { id: "xn", placeholder: "Your offer, what makes you better, what to avoid…" });
+      const out = h("div", { style: "display:flex;flex-direction:column;gap:12px" });
+      const btn = h("button", { class: "btn btn-primary", type: "submit" }, "Build a campaign that beats them");
+      const listOf = (title, xs, color) => Array.isArray(xs) && xs.length ? h("div", { class: "adset", style: "gap:8px" }, h("b", { style: color ? "color:" + color : "" }, title),
+        h("ul", { class: "list" }, xs.map((x) => h("li", { dir: "auto" }, String(x))))) : null;
+      return h("section", { class: "card" },
+        h("div", { class: "between" }, h("h2", {}, "Beat them"), h("span", { class: "badge b-neutral" }, "Original ads, never copies")),
+        h("form", { style: "display:flex;flex-direction:column;gap:12px", onsubmit: async (e) => {
+          e.preventDefault(); btn.disabled = true;
+          out.replaceChildren(loading("Studying their ads and planning yours. This can take up to a minute…"));
+          try {
+            const r = await api("/competitors/" + cid() + "/counter", { method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ ads: found, daily_budget: Number(budget.value), conversion: conv.value, notes: notes.value }) });
+            const ins = r.insights || {};
+            out.replaceChildren(
+              h("div", { class: "row", style: "align-items:stretch" },
+                listOf("What's working for them", ins.whats_working, "var(--violet-txt)"), listOf("Their offers", ins.their_offers),
+                listOf("Their weak spots", ins.weak_spots, "#F87171"), listOf("How you beat them", ins.how_we_beat_them, "var(--violet-txt)")),
+              renderPlan(r));
+          } catch (err) { if (err.message !== "signed out") out.replaceChildren(errorCard(err.message)); }
+          btn.disabled = false;
+        } },
+          h("div", { class: "grid2" }, h("label", { class: "f", for: "xb" }, "Daily budget (" + adsCurrency() + ")", budget), h("label", { class: "f", for: "xg" }, "Goal", conv)),
+          h("label", { class: "f", for: "xn" }, "Notes", notes), btn),
+        out);
+    }
+
+    root.replaceChildren(layout("#/competitors", [head, h("section", { class: "card" }, h("h2", {}, "Who do you want to beat?"), form), results]));
+  }
+
   // ---------- plan & billing ----------
   async function viewBilling(params) {
     root.replaceChildren(layout("#/billing", [h("header", {}, h("h1", {}, "Plan & billing")), loading()]));
@@ -1355,10 +1459,26 @@ main{background:transparent}
     catch (e) { if (e.message !== "signed out") root.replaceChildren(layout("#/billing", [h("h1", {}, "Plan & billing"), errorCard(e.message)])); return; }
     const date = (t) => t ? new Date(t * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
     const price = b.price && b.price.amount !== null ? fmt.format(b.price.amount) + " " + b.price.currency + " / " + b.price.interval : "";
-    const go = (path) => async (e) => {
+    const go = (path, body) => async (e) => {
       const btn = e.currentTarget; btn.disabled = true;
-      try { location.href = (await api("/billing/" + cid() + path, { method: "POST" })).url; }
+      try { location.href = (await api("/billing/" + cid() + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) })).url; }
       catch (err) { if (err.message !== "signed out") toast(err.message); btn.disabled = false; }
+    };
+    const tier = b.tier || (b.active ? "pro" : "free");
+    const switchTo = (to) => {
+      const holder = h("div", { style: "display:flex;flex-direction:column;gap:8px" });
+      const ask = h("button", { class: to === "premium" ? "btn btn-primary" : "btn btn-ghost", type: "button" }, to === "premium" ? "Upgrade to Premium" : "Switch to Pro");
+      ask.addEventListener("click", () => holder.replaceChildren(
+        h("span", { style: "font-size:14px" }, to === "premium" ? "Stripe charges the difference for the rest of this month now. Switch?" : "You'll get credit for the unused Premium days. Switch?"),
+        h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" },
+          h("button", { class: "btn btn-primary", type: "button", onclick: async (e) => {
+            e.currentTarget.disabled = true;
+            try { await api("/billing/" + cid() + "/switch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tier: to }) }); toast(to === "premium" ? "Premium is on." : "You're on Pro now."); viewBilling(); }
+            catch (err) { if (err.message !== "signed out") toast(err.message); e.target.disabled = false; }
+          } }, "Yes, switch"),
+          h("button", { class: "btn btn-ghost", type: "button", onclick: () => holder.replaceChildren(ask) }, "Not now"))));
+      holder.append(ask);
+      return holder;
     };
     const free = h("section", { class: "card" },
       h("div", { class: "between" }, h("h2", {}, "Free"), b.active ? null : h("span", { class: "badge b-neutral" }, "Your plan")),
@@ -1371,26 +1491,43 @@ main{background:transparent}
       line = b.status === "trialing" ? "Free trial until " + date(b.period_end)
         : b.status === "past_due" ? "Your last payment failed. Update your card to keep your plan."
         : b.cancel_at_period_end ? "Cancelled: active until " + date(b.period_end) : "Renews on " + date(b.period_end);
-      action = h("button", { class: "btn btn-primary", type: "button", onclick: go("/portal") }, "Manage billing & invoices");
+      action = h("button", { class: "btn btn-ghost", type: "button", onclick: go("/portal") }, "Manage billing & invoices");
     } else {
       const ads = b.ads || {};
       const left = ads.trial_ends ? Math.max(0, ads.trial_ends * 1000 - Date.now()) : 0;
       line = ads.in_trial ? "Your free ad test ends in " + timeLeft(left) + ". Add your card so your ads keep running."
         : ads.trial_started ? "Your free ad test has ended, so your ads are paused. Add your card and they start again."
         : "Test your ads free for " + (ads.trial_days || 3) + " days first. No card needed until then. Cancel any time.";
-      action = h("button", { class: "btn btn-primary", type: "button", onclick: go("/checkout") }, ads.trial_started ? "Add card & keep ads running" : "Upgrade now");
+      action = null;
     }
-    const pro = h("section", { class: "card", style: "background: var(--violet-card); border-color: var(--violet-edge)" },
-      h("div", { class: "between" }, h("h2", {}, (b.price && b.price.name) || "Pro"), b.active ? h("span", { class: "badge b-measured" }, "Your plan") : null),
-      price ? h("b", { style: "font-family: var(--head); font-size:28px" }, price) : null,
-      b.fee_percent > 0 ? h("span", { class: "sub", style: "font-size:14px" }, "Grows with you: plus " + b.fee_percent + "% of the ad spend you run through ProAds, added to your monthly invoice.") : null,
-      proItems,
-      b.spend_so_far ? h("div", { class: "result" }, h("span", {}, "This period: " + fmt.format(b.spend_so_far.spend) + " " + (b.spend_so_far.currency || "") + " ad spend"),
-        h("b", {}, "Fee so far " + fmt.format(b.spend_so_far.fee) + " " + (b.spend_so_far.currency || ""))) : null, h("span", { class: "sub", style: b.status === "past_due" ? "color: var(--amber-txt)" : "" }, line), action,
-      b.active || !b.has_customer ? null : h("button", { class: "btn btn-ghost", type: "button", onclick: go("/portal") }, "Past invoices"));
+    const priceOf = (p) => p && p.amount !== null && p.amount !== undefined ? fmt.format(p.amount) + " " + p.currency + " / " + p.interval : "";
+    const feeLine = b.fee_percent > 0 ? h("span", { class: "sub", style: "font-size:14px" }, "Plus " + b.fee_percent + "% of the ad spend you run through ProAds, added to your monthly invoice.") : null;
+    const startBtn = (t, label) => b.available && !b.active ? h("button", { class: t === "premium" ? "btn btn-primary" : "btn btn-ghost", type: "button", onclick: go("/checkout", { tier: t }) }, label) : null;
+    const mine = (t) => tier === t ? h("span", { class: "badge b-measured" }, "Your plan") : null;
+    const pro = h("section", { class: "card" },
+      h("div", { class: "between" }, h("h2", {}, "Pro"), mine("pro")),
+      price ? h("b", { style: "font-family: var(--head); font-size:28px" }, price) : null, feeLine, proItems,
+      tier === "pro" ? [h("span", { class: "sub", style: b.status === "past_due" ? "color: var(--amber-txt)" : "" }, line), action].filter(Boolean) : [],
+      startBtn("pro", (b.ads || {}).trial_started ? "Add card & keep ads running" : "Choose Pro"),
+      tier === "premium" && b.available ? switchTo("pro") : null);
+    const premItems = h("ul", { class: "list" }, h("li", {}, "Everything in Pro"),
+      h("li", {}, h("b", {}, "Competitor X-ray: "), "see the ads your competitors keep paying for, and why they work"),
+      h("li", {}, "One click: an original campaign built to beat them, ready to publish"),
+      h("li", {}, "Their weak spots and the angles they're missing"));
+    const premium = h("section", { class: "card", style: "background: var(--violet-card); border-color: var(--violet-edge)" },
+      h("div", { class: "between" }, h("h2", {}, "Premium"), mine("premium") || h("span", { class: "badge b-neutral" }, "Most power")),
+      priceOf(b.premium_price) ? h("b", { style: "font-family: var(--head); font-size:28px" }, priceOf(b.premium_price)) : null, feeLine, premItems,
+      tier === "premium" ? [h("span", { class: "sub", style: b.status === "past_due" ? "color: var(--amber-txt)" : "" }, line), action].filter(Boolean) : [],
+      !b.premium_available ? h("span", { class: "sub" }, "Premium is coming soon.")
+        : tier === "pro" ? switchTo("premium") : startBtn("premium", "Choose Premium"),
+      tier === "premium" ? h("a", { class: "btn btn-ghost", href: "#/competitors" }, "Open Competitor X-ray") : null);
     root.replaceChildren(layout("#/billing", [
       h("header", {}, h("h1", {}, "Plan & billing"), h("p", { class: "sub" }, "Payments are handled by Stripe. ProAds never sees your card.")),
-      h("div", { class: "row" }, free, pro),
+      !b.available ? h("div", { class: "result" }, h("span", {}, "Paid plans are coming soon.")) : null,
+      h("div", { class: "row", style: "align-items:stretch" }, free, pro, premium),
+      tier === "free" && b.has_customer ? h("button", { class: "btn btn-ghost", type: "button", style: "align-self:flex-start", onclick: go("/portal") }, "Past invoices") : null,
+      b.spend_so_far ? h("div", { class: "result" }, h("span", {}, "This period: " + fmt.format(b.spend_so_far.spend) + " " + (b.spend_so_far.currency || "") + " ad spend"),
+        h("b", {}, "Fee so far " + fmt.format(b.spend_so_far.fee) + " " + (b.spend_so_far.currency || ""))) : null,
       b.fees && b.fees.length ? h("section", { class: "card" }, h("h2", {}, "Ad spend fees"),
         h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Date", "Ad spend", "Fee"].map((t) => h("th", { scope: "col" }, t)))),
           h("tbody", {}, b.fees.map((f) => h("tr", {}, h("td", {}, f.created_at.slice(0, 10)), h("td", {}, fmt.format(f.spend) + " " + (f.currency || "")), h("td", {}, fmt.format(f.fee) + " " + (f.fee_currency || f.currency || "")))))))) : null]));
@@ -1755,7 +1892,7 @@ main{background:transparent}
   }
 
   // ---------- router ----------
-  const VIEWS = { "#/platforms": viewPlatforms, "#/home": viewHome, "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling };
+  const VIEWS = { "#/platforms": viewPlatforms, "#/home": viewHome, "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling, "#/competitors": viewCompetitors };
   function go(hash) { if (location.hash !== hash) location.hash = hash; else route(); }
   async function route() {
     const [path, query] = location.hash.split("?");
