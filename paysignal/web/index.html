@@ -718,6 +718,16 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D2D0DB;
         h("ul", { class: "list" }, h("li", {}, "Nothing spends money until you press Go live"), h("li", {}, "ProAds never sees your Facebook password"), h("li", {}, "Disconnect any time")),
         btn, ...(notice ? [notice] : []));
     }
+    function disconnectBtn() {
+      let armed = false;
+      const b = h("button", { class: "btn btn-ghost", type: "button" }, "Disconnect");
+      b.addEventListener("click", async () => {
+        if (!armed) { armed = true; b.textContent = "Click again to disconnect"; return; }
+        try { await api("/meta/" + cid() + "/disconnect", { method: "POST" }); status = await api("/status/" + cid()); drawConnect(false); }
+        catch (e) { if (e.message !== "signed out") toast(e.message); }
+      });
+      return b;
+    }
     async function drawPicker(v) {
       const opt = (xs, sel, label) => [h("option", { value: "" }, "Choose…"), xs.map((x) => h("option", { value: x.id, selected: x.id === sel || null }, label(x)))];
       const acct = h("select", { id: "fb-acct" }, opt(v.ad_accounts, v.ad_account, (a) => a.name + " · " + a.currency + (a.active ? "" : " (not active)")));
@@ -751,21 +761,15 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D2D0DB;
         h("label", { class: "f", for: "fb-pixel" }, "Pixel (where your sales are sent)", pixel, pixelId,
           h("span", { class: "sub", style: "font-size:12px" }, "Not in the list? Copy the ID from Business settings → Data sources → Datasets & pixels.")),
         h("label", { for: "fb-send", style: "display:flex;gap:10px;align-items:center;font-size:14px" }, send, "Send my sales to Meta so ads find people who pay"),
-        save, err);
+        h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, save, disconnectBtn()), err);
       card.replaceChildren(head("Facebook & Instagram", "Connected as " + v.user, true),
         h("p", { class: "sub", style: "margin:0" }, "Pick what ProAds should use."), form, ...(notice ? [notice] : []));
       loadPixels();
     }
     function drawReady(v) {
-      let armed = false;
       const change = h("button", { class: "btn btn-ghost", type: "button" }, "Change");
       change.addEventListener("click", async () => drawPicker(await api("/meta/" + cid())));
-      const disc = h("button", { class: "btn btn-ghost", type: "button" }, "Disconnect");
-      disc.addEventListener("click", async () => {
-        if (!armed) { armed = true; disc.textContent = "Click again to disconnect"; return; }
-        try { await api("/meta/" + cid() + "/disconnect", { method: "POST" }); status = await api("/status/" + cid()); drawConnect(false); }
-        catch (e) { if (e.message !== "signed out") toast(e.message); }
-      });
+      const disc = disconnectBtn();
       const left = v.expires_at ? Math.round((v.expires_at * 1000 - Date.now()) / 86400000) : null;
       card.replaceChildren(head("Facebook & Instagram", "Ready", true),
         h("ul", { class: "list" },
