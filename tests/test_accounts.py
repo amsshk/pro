@@ -156,3 +156,25 @@ def test_no_ad_events_without_consent(app):
     time.sleep(0.2)
     assert app.extensions["paysignal"].growth_sent == []
     assert app.extensions["paysignal"].store.db.execute("SELECT ads_ctx FROM accounts").fetchone()[0] is None
+
+
+def test_delete_account_removes_everything(app):
+    c = app.test_client()
+    r = c.post("/auth/signup", json=GOOD).json
+    H = {"X-API-Key": r["token"]}
+    c.post("/import/glow-clinic", data=SALES, headers=H)
+    c.post("/tracking/glow-clinic", json={"post_name": "Story", "platform": "instagram"}, headers=H)
+    assert c.get("/status/glow-clinic", headers=H).json["self_serve"]
+    assert c.post("/account/delete/glow-clinic", json={"password": "wrong-one"}, headers=H).status_code == 401
+    assert c.post("/account/delete/glow-clinic", json={"password": GOOD["password"]}, headers=H).json["deleted"]
+    db = app.extensions["paysignal"].store.db
+    for table in ("payments", "promo_codes", "accounts", "sessions"):
+        assert db.execute(f"SELECT COUNT(*) FROM {table} WHERE client_id='glow-clinic'").fetchone()[0] == 0
+    assert c.get("/status/glow-clinic", headers=H).status_code == 404
+    assert c.post("/auth/login", json={"login": GOOD["email"], "password": GOOD["password"]}).status_code == 401
+    assert b"Delete your data" in c.get("/data-deletion").data
+
+
+def test_settings_business_cannot_self_delete(app):
+    c = app.test_client()
+    assert c.post("/account/delete/pro", json={"password": "A7medooh"}, headers={"X-API-Key": "A7medooh"}).status_code == 400

@@ -445,6 +445,36 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
     return card;
   }
 
+  // ---------- delete account ----------
+  function deleteCard() {
+    const pw = h("input", { id: "delpw", type: "password", autocomplete: "current-password", placeholder: "Your password" });
+    const msg = h("p", { class: "sub", role: "alert", style: "margin:0;color: var(--amber-txt)" });
+    let armed = false;
+    const btn = h("button", { class: "btn btn-ghost", type: "submit", style: "border-color:#7C4A1E;color: var(--loss-txt)" }, "Delete my account and data");
+    const form = h("form", { style: "display:flex;gap:8px;flex-wrap:wrap;align-items:center", onsubmit: async (e) => {
+      e.preventDefault(); msg.textContent = "";
+      if (!pw.value) { msg.textContent = "Enter your password to confirm."; return; }
+      if (!armed) { armed = true; btn.textContent = "Yes, delete everything permanently"; return; }
+      btn.disabled = true;
+      try {
+        await api("/account/delete/" + cid(), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: pw.value }) });
+        session = null; status = null;
+        try { sessionStorage.removeItem(SKEY); } catch (e2) {}
+        root.replaceChildren(h("div", { class: "login" }, h("div", { class: "card", style: "max-width:460px" },
+          h("h1", { style: "font-size:26px" }, "Your account is deleted"),
+          h("p", { class: "sub" }, "Your account and all its data have been removed from ProAds."),
+          h("a", { class: "btn btn-primary", href: "/" }, "Back to home"))));
+      } catch (e2) {
+        if (e2.message === "signed out") return;
+        msg.textContent = e2.message; btn.disabled = false; armed = false; btn.textContent = "Delete my account and data";
+      }
+    } }, h("label", { for: "delpw", class: "sr" }, "Password"), h("div", { style: "flex:1 1 220px" }, pw), btn);
+    return h("section", { class: "card", "aria-labelledby": "yourdata" },
+      h("h2", { id: "yourdata" }, "Your data"),
+      h("p", { class: "sub", style: "margin:0" }, "Delete your account, sales records, posts, tracking codes and store connections. This can't be undone."),
+      form, msg);
+  }
+
   // ---------- upload & connect ----------
   async function viewUpload(params) {
     const results = h("div", { style: "display:flex;flex-direction:column;gap:10px" });
@@ -545,6 +575,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
         h("section", { class: "card", "aria-labelledby": "s3" },
           h("div", { class: "srow", style: "gap:12px" }, h("span", { class: "num-dot" }, "3"), h("h2", { id: "s3" }, "Track every new post")),
           tForm, tOut, h("h3", { style: "margin:8px 0 0;font-size:15px" }, "Your codes"), tList)),
+      status && status.self_serve ? deleteCard() : null,
     ]));
     loadCodes();
   }

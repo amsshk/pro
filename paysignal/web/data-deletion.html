@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Delete your data · ProAds</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+<style>
+:root{color-scheme:dark}
+body{margin:0;background:#0D0C12;color:#F2EFE8;font-family:Inter,system-ui,sans-serif;line-height:1.65;font-size:16px}
+a{color:#A78BFA}a:hover{color:#DDD6FE}
+main{max-width:760px;margin:0 auto;padding:32px clamp(16px,4vw,40px) 64px}
+.brand{display:inline-flex;align-items:center;gap:10px;font-family:'Space Grotesk',Inter,sans-serif;font-weight:700;font-size:20px;color:#F2EFE8;text-decoration:none}
+h1{font-family:'Space Grotesk',Inter,sans-serif;font-size:36px;margin:28px 0 8px}
+h2{font-family:'Space Grotesk',Inter,sans-serif;font-size:21px;margin:32px 0 8px}
+p,li{color:#CFCADB}
+ol{padding-left:22px}
+.box{background:#15131D;border:1px solid #26232F;border-radius:14px;padding:18px 20px}
+</style>
+</head>
+<body>
+<main>
+  <a class="brand" href="/"><svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#A78BFA"/><path d="M6 17l4-4 4 3 7-8" stroke="#0D0C12" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>ProAds</a>
+  <h1>Delete your data</h1>
+  <p>You can delete your ProAds account and everything stored with it at any time. Deletion is immediate and permanent.</p>
+
+  <h2>Delete it yourself (instant)</h2>
+  <div class="box">
+    <ol>
+      <li>Sign in at <a href="/app">pro.ezdevsoft.net/app</a>.</li>
+      <li>Open <b>Connect &amp; upload</b>.</li>
+      <li>At the bottom, under <b>Your data</b>, click <b>Delete my account and data</b>.</li>
+      <li>Enter your password to confirm.</li>
+    </ol>
+  </div>
+
+  <h2>What gets deleted</h2>
+  <ul>
+    <li>Your account: business name, email, phone, website and password.</li>
+    <li>Every sales and refund record you uploaded or connected.</li>
+    <li>Your post statistics, tracking links and promo codes.</li>
+    <li>Any connected Shopify store's access.</li>
+  </ul>
+  <p>Events already sent to Meta for ads measurement are held by Meta under its own policies; you can manage them in your Facebook or Instagram settings.</p>
+
+  <h2>Can't sign in?</h2>
+  <p id="contact">Contact us and we'll delete your data after confirming the request comes from the account's email.</p>
+
+  <p>More about how we handle data: <a href="/privacy">Privacy policy</a>.</p>
+</main>
+<script>
+"use strict";
+fetch("/public-config").then((r) => r.json()).then((c) => {
+  if (!c.contact) return;
+  const p = document.getElementById("contact");
+  const a = document.createElement("a");
+  a.href = "mailto:" + c.contact + "?subject=Delete%20my%20ProAds%20data"; a.textContent = c.contact;
+  p.replaceChildren("Email ", a, " from the email you signed up with, and we'll delete your data within 30 days.");
+}).catch(() => {});
+</script>
+</body>
+</html>

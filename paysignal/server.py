@@ -521,6 +521,31 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             token = state.accounts.new_session(cid)
         return {"client_id": cid, "token": token}
 
+    @flask.get("/data-deletion")
+    def data_deletion():
+        return page("data-deletion.html", referrer="strict-origin-when-cross-origin")
+
+    @flask.post("/account/delete/<client_id>")
+    def delete_account(client_id):
+        """Self-serve: delete the account and all its data. Needs the session and the password again."""
+        state.require_key(client_id)
+        acct = state.accounts.get(client_id)
+        if not acct:
+            abort(400, "This business is managed in the server settings; delete it there")
+        body = request.get_json(silent=True) or {}
+        lock_key = f"login:{acct['email']}"
+        if state.login_limiter.locked_for(lock_key):
+            abort(429, "Too many wrong attempts. Try again later.")
+        if not check_password(body.get("password") or "", acct["pw_hash"]):
+            state.login_limiter.fail(lock_key)
+            abort(401, "Wrong password")
+        with state.lock:
+            counts = state.accounts.delete_everything(client_id)
+            for cache in (state.engines, state.posts, state.trained_at):
+                cache.pop(client_id, None)
+        log.info("account %s deleted by its owner: %s", client_id, counts)
+        return {"deleted": True}
+
     @flask.post("/auth/logout")
     def logout():
         token = request.headers.get("X-API-Key", "")
@@ -550,6 +575,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         return {
             "client_id": client_id,
             "name": cfg.get("name", client_id),
+            "self_serve": bool(cfg.get("self_serve")),
             "currency": cfg.get("currency", "AED"),
             "website": cfg.get("website", ""),
             "connections": {

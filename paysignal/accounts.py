@@ -184,6 +184,17 @@ class AccountStore:
                               (token_hash(token),)).fetchone()
         return row[0] if row and row[1] > time.time() else None
 
+    def delete_everything(self, client_id: str) -> dict:
+        """Erase an account and every record that belongs to it."""
+        counts = {}
+        for table in ("payments", "posts", "promo_codes", "shopify_shops", "oauth_states", "sessions", "accounts"):
+            try:
+                counts[table] = self.db.execute(f"DELETE FROM {table} WHERE client_id=?", (client_id,)).rowcount
+            except Exception:                       # table not created yet
+                counts[table] = 0
+        self.db.commit()
+        return counts
+
     def end_session(self, token: str) -> None:
         self.db.execute("DELETE FROM sessions WHERE token_hash=?", (token_hash(token),))
         self.db.commit()
