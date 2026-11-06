@@ -127,7 +127,63 @@ class AccountStore:
         client_id  TEXT NOT NULL,
         expires    REAL NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS password_resets (
+        token_hash TEXT PRIMARY KEY,
+        client_id  TEXT NOT NULL,
+        expires    REAL NOT NULL
+    );
     """
+    RESET_SECONDS = 3600
+
+    # ----- password reset -----
+    def new_reset(self, client_id: str) -> str:
+        token = secrets.token_urlsafe(32)
+        now = time.time()
+        self.db.execute("DELETE FROM password_resets WHERE expires < ? OR client_id=?", (now, client_id))
+        self.db.execute("INSERT INTO password_resets VALUES (?,?,?)",
+                        (token_hash(token), client_id, now + self.RESET_SECONDS))
+        self.db.commit()
+        return token
+
+    def use_reset(self, token: str) -> Optional[str]:
+        """The account for a valid reset token; the token works once."""
+        if not token:
+            return None
+        h = token_hash(token)
+        row = self.db.execute("SELECT client_id, expires FROM password_resets WHERE token_hash=?", (h,)).fetchone()
+        self.db.execute("DELETE FROM password_resets WHERE token_hash=?", (h,))
+        self.db.commit()
+        return row[0] if row and row[1] > time.time() else None
+
+    def set_password(self, client_id: str, password: str) -> None:
+        """New password, and every existing sign-in ends."""
+        self.db.execute("UPDATE accounts SET pw_hash=? WHERE client_id=?", (hash_password(password), client_id))
+        self.db.execute("DELETE FROM sessions WHERE client_id=?", (client_id,))
+        self.db.commit()
+
+    # ----- admin -----
+    def overview(self) -> list[dict]:
+        def count(sql, cid):
+            try:
+                return self.db.execute(sql, (cid,)).fetchone()[0]
+            except Exception:
+                return 0
+        out = []
+        for row in self.db.execute("SELECT client_id, email, name, phone, website, currency, created_at,"
+                                   " activated_at FROM accounts ORDER BY created_at DESC").fetchall():
+            cid = row[0]
+            out.append({
+                "client_id": cid, "email": row[1], "name": row[2], "phone": row[3], "website": row[4],
+                "currency": row[5], "created_at": row[6], "activated_at": row[7],
+                "orders": count("SELECT COUNT(*) FROM payments WHERE client_id=? AND kind='purchase'", cid),
+                "sales": count("SELECT COALESCE(SUM(amount),0) FROM payments WHERE client_id=? AND kind='purchase'", cid),
+                "posts": count("SELECT COUNT(*) FROM posts WHERE client_id=?", cid),
+                "last_data": count("SELECT MAX(occurred_at) FROM payments WHERE client_id=? AND kind='purchase'", cid),
+                "shopify": bool(count("SELECT COUNT(*) FROM shopify_shops WHERE client_id=?", cid)),
+                "wa_chats": count("SELECT COUNT(*) FROM wa_chats WHERE client_id=?", cid),
+                "signed_in": bool(count("SELECT COUNT(*) FROM sessions WHERE client_id=? AND expires > strftime('%s','now')", cid)),
+            })
+        return out
 
     def __init__(self, db):
         self.db = db
@@ -188,7 +244,7 @@ class AccountStore:
         """Erase an account and every record that belongs to it."""
         counts = {}
         for table in ("payments", "posts", "promo_codes", "shopify_shops", "oauth_states", "wa_chats",
-                      "wa_conversions", "sessions", "accounts"):
+                      "wa_conversions", "sessions", "password_resets", "accounts"):
             try:
                 counts[table] = self.db.execute(f"DELETE FROM {table} WHERE client_id=?", (client_id,)).rowcount
             except Exception:                       # table not created yet

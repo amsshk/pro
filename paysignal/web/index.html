@@ -232,9 +232,61 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
       h("label", { class: "f", for: "client" }, "Email (or business ID)", client),
       h("label", { class: "f", for: "key" }, "Password (or access key)", key),
       err, btn,
+      h("button", { type: "button", class: "chip", style: "align-self:flex-start;border:0;background:none;padding:0;min-height:32px;color: var(--violet)", onclick: () => renderForgot(client.value) }, "Forgot password?"),
       h("p", { class: "sub", style: "margin:0;font-size:14px" }, "New here? ", h("a", { href: "/#signup" }, "Create a free account")));
     root.replaceChildren(h("div", { class: "login" }, form));
     client.focus();
+  }
+
+  function renderForgot(prefill) {
+    const email = h("input", { id: "femail", type: "email", autocomplete: "email", required: true, value: /@/.test(prefill || "") ? prefill : "" });
+    const out = h("p", { class: "sub", role: "status", style: "margin:0" });
+    const btn = h("button", { class: "btn btn-primary", type: "submit" }, "Send reset link");
+    const form = h("form", { class: "card", onsubmit: async (e) => {
+      e.preventDefault(); btn.disabled = true;
+      try {
+        const res = await fetch("/auth/forgot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: email.value }) });
+        const d = await res.json().catch(() => ({}));
+        out.textContent = d.message || d.error || "Please try again.";
+      } catch (e2) { out.textContent = "Cannot reach the server. Check your internet connection."; }
+      btn.disabled = false;
+    } },
+      h("a", { class: "brand", href: "/", style: "text-decoration:none;color:inherit" }, logo(), "ProAds"),
+      h("div", {}, h("h1", { style: "font-size:26px" }, "Reset your password"), h("p", { class: "sub" }, "Enter the email you signed up with.")),
+      h("label", { class: "f", for: "femail" }, "Email", email), out, btn,
+      h("button", { type: "button", class: "btn btn-ghost", onclick: () => renderLogin() }, "Back to sign in"));
+    root.replaceChildren(h("div", { class: "login" }, form));
+    email.focus();
+  }
+
+  function renderReset(token) {
+    const pw = h("input", { id: "npw", type: "password", autocomplete: "new-password", required: true, minlength: 10 });
+    const pw2 = h("input", { id: "npw2", type: "password", autocomplete: "new-password", required: true });
+    const err = h("p", { class: "sub", role: "alert", style: "margin:0;color: var(--amber-txt)" });
+    const btn = h("button", { class: "btn btn-primary", type: "submit" }, "Save new password");
+    const form = h("form", { class: "card", onsubmit: async (e) => {
+      e.preventDefault(); err.textContent = "";
+      if (pw.value.length < 10) { err.textContent = "Use a password of at least 10 characters."; return; }
+      if (pw.value !== pw2.value) { err.textContent = "The two passwords don't match."; return; }
+      btn.disabled = true;
+      try {
+        const res = await fetch("/auth/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, password: pw.value }) });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(d.error || "Please ask for a new reset link.");
+        session = { client: d.client_id, key: d.token };
+        try { sessionStorage.setItem(SKEY, JSON.stringify(session)); } catch (e2) {}
+        window.history.replaceState(null, "", "/app#/audit");
+        toast("Password changed");
+        route();
+      } catch (e2) { err.textContent = e2.message; btn.disabled = false; }
+    } },
+      h("a", { class: "brand", href: "/", style: "text-decoration:none;color:inherit" }, logo(), "ProAds"),
+      h("div", {}, h("h1", { style: "font-size:26px" }, "Choose a new password"), h("p", { class: "sub" }, "You'll be signed out everywhere else.")),
+      h("input", { type: "text", autocomplete: "username", hidden: true, "aria-hidden": "true", tabindex: "-1" }),
+      h("label", { class: "f", for: "npw" }, "New password (at least 10 characters)", pw),
+      h("label", { class: "f", for: "npw2" }, "Type it again", pw2), err, btn);
+    root.replaceChildren(h("div", { class: "login" }, form));
+    pw.focus();
   }
 
   // ---------- layout ----------
@@ -261,7 +313,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
       h("nav", { class: "side", "aria-label": "Main" },
         h("div", { class: "brand" }, logo(), "ProAds"),
         h("div", { class: "biz" }, h("small", {}, "Business"), status ? status.name : session.client),
-        h("div", { class: "navlinks" }, NAV.map(([href, label, d]) =>
+        h("div", { class: "navlinks" }, NAV.concat(status && status.admin ? [["#/admin", "Admin", "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"]] : []).map(([href, label, d]) =>
           h("a", { href, "aria-current": href === active ? "page" : null }, icon(d), label))),
         h("div", { class: "statusbox" }, statusRows(),
           h("button", { class: "btn btn-ghost", style: "margin-top:6px", onclick: () => signOut() }, "Sign out"))),
@@ -501,6 +553,59 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
     body.replaceChildren(...blocks);
   }
 
+  // ---------- admin ----------
+  async function viewAdmin() {
+    if (!status || !status.admin) return viewAudit();
+    const body = h("div", { style: "display:contents" }, loading("Loading accounts…"));
+    root.replaceChildren(layout("#/admin", [
+      h("header", {}, h("h1", {}, "Admin"), h("p", { class: "sub" }, "Everyone who signed up, and how far they got.")), body]));
+    let d;
+    try { d = await api("/admin/" + cid() + "/accounts"); }
+    catch (e) { if (e.message !== "signed out") body.replaceChildren(errorCard(e.message)); return; }
+    const t = d.totals;
+    const when = (x) => x ? new Date(x.replace(" ", "T") + (x.length <= 19 ? "Z" : "")).toLocaleDateString() : "–";
+    const linkBox = h("div", { style: "display:contents" });
+    async function makeLink(a) {
+      try {
+        const r = await api("/admin/" + cid() + "/reset-link/" + encodeURIComponent(a.client_id), { method: "POST" });
+        linkBox.replaceChildren(h("section", { class: "card", style: "background: var(--violet-card); border-color: var(--violet-edge)" },
+          h("h2", {}, "Reset link for " + a.name),
+          h("p", { class: "sub", style: "margin:0" }, "Send this to " + a.email + (a.phone ? " (" + a.phone + ")" : "") + ". It works once, for 60 minutes."),
+          h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, h("code", { class: "box" }, r.link), h("button", { class: "btn btn-primary", type: "button", onclick: () => copy(r.link) }, "Copy"))));
+        linkBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      } catch (e) { if (e.message !== "signed out") toast(e.message); }
+    }
+    function delButton(a) {
+      let armed = false;
+      return h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px;color: var(--loss-txt)", onclick: async (ev) => {
+        const b = ev.currentTarget;
+        if (!armed) { armed = true; b.textContent = "Click again: delete " + a.name; return; }
+        b.disabled = true;
+        try { await api("/admin/" + cid() + "/delete/" + encodeURIComponent(a.client_id), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: a.client_id }) }); toast("Deleted " + a.name); viewAdmin(); }
+        catch (e) { if (e.message !== "signed out") { toast(e.message); b.disabled = false; } }
+      } }, "Delete");
+    }
+    body.replaceChildren(
+      h("section", { class: "kpis", "aria-label": "Sign-ups" },
+        h("div", { class: "kpi" }, h("span", { class: "label" }, "Accounts"), h("span", { class: "num" }, fmt.format(t.accounts)), h("span", { class: "note" }, fmt.format(t.new_this_week) + " new this week")),
+        h("div", { class: "kpi hi" }, h("span", { class: "label" }, "Active (brought in data)"), h("span", { class: "num" }, fmt.format(t.activated)), h("span", { class: "note" }, t.accounts ? pct(t.activated / t.accounts) + " of sign-ups" : "No sign-ups yet")),
+        h("div", { class: "kpi" }, h("span", { class: "label" }, "Connected Shopify"), h("span", { class: "num" }, fmt.format(t.with_shopify)), h("span", { class: "note" }, "stores")),
+        h("div", { class: "kpi" }, h("span", { class: "label" }, "Using WhatsApp"), h("span", { class: "num" }, fmt.format(t.with_whatsapp)), h("span", { class: "note" }, "accounts with chats"))),
+      linkBox,
+      h("section", { class: "card", "aria-labelledby": "accts" },
+        h("div", { class: "between" }, h("h2", { id: "accts" }, "Accounts"), h("span", { class: "badge " + (d.email_on ? "b-measured" : "b-neutral") }, d.email_on ? "Reset emails on" : "Reset emails off: use reset links")),
+        d.accounts.length ? h("div", { class: "scroll" }, h("table", { style: "min-width:860px" },
+          h("thead", {}, h("tr", {}, ["Business", "Signed up", "Status", "Orders", "Posts", "Last sale", ""].map((x) => h("th", { scope: "col" }, x)))),
+          h("tbody", {}, d.accounts.map((a) => h("tr", {},
+            h("td", {}, h("div", { style: "display:flex;flex-direction:column;gap:2px" }, h("b", { dir: "auto" }, a.name), h("span", { class: "sub", style: "font-size:12px" }, a.email + (a.phone ? " · " + a.phone : "")))),
+            h("td", {}, when(a.created_at)),
+            h("td", {}, h("span", { class: "badge " + (a.activated_at ? "b-measured" : "b-neutral") }, a.activated_at ? "Active" : "Signed up only")),
+            h("td", {}, fmt.format(a.orders)), h("td", {}, fmt.format(a.posts)), h("td", {}, a.last_data ? when(a.last_data) : "–"),
+            h("td", {}, h("div", { style: "display:flex;gap:6px;justify-content:flex-end" },
+              h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => makeLink(a) }, "Reset link"), delButton(a))))))))
+          : h("p", { class: "sub", style: "margin:0" }, "No one has signed up yet. Share pro.ezdevsoft.net or start your first ad.")));
+  }
+
   // ---------- delete account ----------
   function deleteCard() {
     const pw = h("input", { id: "delpw", type: "password", autocomplete: "current-password", placeholder: "Your password" });
@@ -637,14 +742,14 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
   }
 
   // ---------- assistant ----------
-  const history = [];
+  const chatHistory = [];
   function viewAssistant() {
     const chat = h("div", { class: "chat", "aria-live": "polite" });
     const q = h("input", { id: "q", placeholder: "Ask in English or Arabic…", autocomplete: "off", dir: "auto" });
     const send = h("button", { class: "btn btn-primary", type: "submit", "aria-label": "Send question", style: "padding:0 16px" }, icon("M5 12h14M13 6l6 6-6 6"));
     const bubble = (role, text, meta) => h("div", { class: "msg " + role, dir: "auto", lang: isArabic(text) ? "ar" : null }, text, meta ? h("span", { class: "meta", dir: "ltr" }, meta) : null);
-    for (const m of history) chat.appendChild(bubble(m.role === "user" ? "me" : "ai", m.content, m.meta));
-    if (!history.length) chat.appendChild(bubble("ai", "Ask me anything about your sales, refunds and posts. I only see your totals and post results, never customer details."));
+    for (const m of chatHistory) chat.appendChild(bubble(m.role === "user" ? "me" : "ai", m.content, m.meta));
+    if (!chatHistory.length) chat.appendChild(bubble("ai", "Ask me anything about your sales, refunds and posts. I only see your totals and post results, never customer details."));
     async function ask(text) {
       text = (text || "").trim(); if (!text) return;
       chat.appendChild(bubble("me", text));
@@ -653,10 +758,10 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
       send.disabled = true; q.value = "";
       try {
         const r = await api("/ask/" + cid(), { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question: text, history: history.slice(-8).map(({ role, content }) => ({ role, content })) }) });
+          body: JSON.stringify({ question: text, history: chatHistory.slice(-8).map(({ role, content }) => ({ role, content })) }) });
         const meta = r.model + " · " + Number(r.cost_usd || 0).toFixed(3) + " USD";
         wait.replaceWith(bubble("ai", r.answer || "(no answer)", meta));
-        history.push({ role: "user", content: text }, { role: "assistant", content: r.answer || "", meta });
+        chatHistory.push({ role: "user", content: text }, { role: "assistant", content: r.answer || "", meta });
       } catch (e) {
         if (e.message === "signed out") return;
         wait.replaceWith(h("div", { class: "msg err", role: "alert" }, /billing/i.test(e.message) ? "Meta AI is blocked by a billing problem on your Meta Model API account. Fix it at dev.meta.ai, then try again." : e.message));
@@ -728,12 +833,13 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
   }
 
   // ---------- router ----------
-  const VIEWS = { "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant };
+  const VIEWS = { "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin };
   function go(hash) { if (location.hash !== hash) location.hash = hash; else route(); }
   async function route() {
-    if (!session) return renderLogin();
     const [path, query] = location.hash.split("?");
     const params = new URLSearchParams(query || "");
+    if (path === "#/reset" && params.get("token")) return renderReset(params.get("token"));
+    if (!session) return renderLogin();
     if (!status || params.has("shopify")) {
       try { status = await api("/status/" + cid()); } catch (e) { if (e.message !== "signed out") root.replaceChildren(h("div", { class: "login" }, errorCard(e.message))); return; }
     }

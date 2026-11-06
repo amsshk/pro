@@ -11,6 +11,11 @@ algorithm learns to find people who pay, not people who watch.
   set in `PAYSIGNAL_CLIENTS`.
 - `/privacy` privacy policy (set `PROADS_CONTACT_EMAIL` to show a contact email).
 - 5 wrong passwords or access keys lock that login for 15 minutes.
+- **Forgot password:** emails a one-hour, single-use reset link when SMTP is set up
+  (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`). Without email, the admin
+  makes the link on the Admin page and sends it by WhatsApp. A reset ends all other sign-ins.
+- **Admin tab** (for `pro`, or any settings business with `"admin": true` / listed in `PROADS_ADMINS`):
+  every sign-up, whether they brought in data, orders, posts, last sale, reset links, delete.
 
 **Tracking ProAds' own ads** (optional): set `PROADS_META_DATASET_ID` (your Pixel ID) and
 `PROADS_META_TOKEN` (Conversions API token, from Events Manager). Then, only for visitors who

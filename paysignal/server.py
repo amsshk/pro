@@ -40,7 +40,7 @@ from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
-from . import growth, shopify_app, whatsapp
+from . import growth, mailer, shopify_app, whatsapp
 from .identity import hash_phone
 from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
@@ -604,6 +604,108 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         log.info("account %s deleted by its owner: %s", client_id, counts)
         return {"deleted": True}
 
+    # ---------------- password reset ----------------
+    def public_base() -> str:
+        configured = os.environ.get("PROADS_PUBLIC_URL", "").strip().rstrip("/")
+        if configured:
+            return configured
+        proto = request.headers.get("X-Forwarded-Proto", request.scheme)
+        return f"{proto}://{request.host}"
+
+    def reset_link(token: str) -> str:
+        return f"{public_base()}/app#/reset?token={token}"     # after '#', so it never reaches server logs
+
+    @flask.post("/auth/forgot")
+    def forgot_password():
+        """Same answer whether or not the email has an account, so nobody can probe emails."""
+        email = ((request.get_json(silent=True) or {}).get("email") or "").strip().lower()
+        if not mailer.available():
+            contact = os.environ.get("PROADS_CONTACT_EMAIL", "")
+            return {"sent": False, "message": "Password reset by email isn't switched on yet. "
+                    + (f"Email {contact} and we'll help you." if contact else "Please contact us and we'll help you.")}
+        key = f"forgot:{email}"
+        if email and not state.signup_limiter.locked_for(key):
+            state.signup_limiter.fail(key)              # at most 10 reset emails per address per hour
+            acct = state.accounts.by_email(email)
+            if acct:
+                with state.lock:
+                    token = state.accounts.new_reset(acct["client_id"])
+                link = reset_link(token)
+                threading.Thread(target=mailer.send, daemon=True, args=(acct["email"], "Reset your ProAds password",
+                    f"Hi {acct['name']},\n\nSomeone asked to reset the password for your ProAds account. "
+                    f"If it was you, open this link within one hour:\n\n{link}\n\n"
+                    "If it wasn't you, ignore this email. Your password stays the same.\n\nProAds")).start()
+        return {"sent": True, "message": "If that email has a ProAds account, a reset link is on its way. "
+                                         "It works for one hour."}
+
+    @flask.post("/auth/reset")
+    def reset_password():
+        body = request.get_json(silent=True) or {}
+        password = body.get("password") or ""
+        if len(password) < 10:
+            abort(400, "Use a password of at least 10 characters")
+        with state.lock:
+            cid = state.accounts.use_reset(body.get("token") or "")
+            if not cid or not state.accounts.get(cid):
+                abort(400, "This reset link has expired or was already used. Ask for a new one.")
+            state.accounts.set_password(cid, password)
+            token = state.accounts.new_session(cid)
+        acct = state.accounts.get(cid)
+        state.login_limiter.clear(f"login:{acct['email']}")
+        log.info("password reset for %s", cid)
+        return {"client_id": cid, "token": token}
+
+    # ---------------- admin ----------------
+    def is_admin(client_id: str) -> bool:
+        """Only businesses from the server settings can be admins: set "admin": true there,
+        or list their IDs in PROADS_ADMINS (default: pro)."""
+        cfg = state.clients.get(client_id)
+        if cfg is None:
+            return False
+        admins = {x.strip() for x in os.environ.get("PROADS_ADMINS", "pro").split(",") if x.strip()}
+        return bool(cfg.get("admin")) or client_id in admins
+
+    def require_admin(admin_id: str) -> None:
+        state.require_key(admin_id)
+        if not is_admin(admin_id):
+            abort(403, "admins only")
+
+    @flask.get("/admin/<admin_id>/accounts")
+    def admin_accounts(admin_id):
+        require_admin(admin_id)
+        with state.lock:
+            rows = state.accounts.overview()
+        week_ago = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(time.time() - 7 * 86400))
+        return {"accounts": rows, "email_on": mailer.available(), "totals": {
+            "accounts": len(rows), "activated": sum(1 for r in rows if r["activated_at"]),
+            "new_this_week": sum(1 for r in rows if r["created_at"] >= week_ago),
+            "with_shopify": sum(1 for r in rows if r["shopify"]), "with_whatsapp": sum(1 for r in rows if r["wa_chats"])}}
+
+    @flask.post("/admin/<admin_id>/reset-link/<client_id>")
+    def admin_reset_link(admin_id, client_id):
+        """A one-hour reset link the admin can send by WhatsApp when email isn't set up."""
+        require_admin(admin_id)
+        if not state.accounts.get(client_id):
+            abort(404, "unknown account")
+        with state.lock:
+            token = state.accounts.new_reset(client_id)
+        log.info("admin %s made a reset link for %s", admin_id, client_id)
+        return {"link": reset_link(token), "expires_in_minutes": 60}
+
+    @flask.post("/admin/<admin_id>/delete/<client_id>")
+    def admin_delete(admin_id, client_id):
+        require_admin(admin_id)
+        if (request.get_json(silent=True) or {}).get("confirm") != client_id:
+            abort(400, "send {\"confirm\": \"<account id>\"} to delete")
+        if not state.accounts.get(client_id):
+            abort(404, "unknown account")
+        with state.lock:
+            state.accounts.delete_everything(client_id)
+            for cache in (state.engines, state.posts, state.trained_at):
+                cache.pop(client_id, None)
+        log.info("admin %s deleted account %s", admin_id, client_id)
+        return {"deleted": True}
+
     @flask.post("/auth/logout")
     def logout():
         token = request.headers.get("X-API-Key", "")
@@ -634,6 +736,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             "client_id": client_id,
             "name": cfg.get("name", client_id),
             "self_serve": bool(cfg.get("self_serve")),
+            "admin": is_admin(client_id),
             "currency": cfg.get("currency", "AED"),
             "website": cfg.get("website", ""),
             "connections": {
@@ -881,6 +984,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         with state.lock:
             return {"codes": state.store.promos(client_id)}
 
+    @flask.errorhandler(403)
     @flask.errorhandler(429)
     @flask.errorhandler(409)
     @flask.errorhandler(401)
