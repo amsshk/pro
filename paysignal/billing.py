@@ -81,9 +81,29 @@ class Stripe:
 _price_cache: dict = {}
 
 
+def price_id(stripe: Stripe) -> str:
+    """The plan's price ID. A product ID (prod_...) also works: its default price is used."""
+    pid = settings()["price"]
+    if pid.startswith("price_"):
+        return pid
+    if pid.startswith("prod_"):
+        hit = _price_cache.get("product:" + pid)
+        if hit and time.time() - hit[0] < 3600:
+            return hit[1]
+        default = stripe.get(f"products/{pid}").get("default_price")
+        if isinstance(default, dict):
+            default = default.get("id")
+        if not default:
+            raise BillingError("the product in PROADS_STRIPE_PRICE_ID has no default price")
+        _price_cache["product:" + pid] = (time.time(), default)
+        return default
+    raise BillingError("PROADS_STRIPE_PRICE_ID must be a price ID that starts with price_ "
+                       "(Stripe: Product catalog > ProAds Pro > Pricing > the price's ID), not the amount")
+
+
 def price_info(stripe: Stripe) -> dict:
     """Name and price of the plan for the app to show (cached for an hour)."""
-    pid = settings()["price"]
+    pid = price_id(stripe)
     hit = _price_cache.get(pid)
     if hit and time.time() - hit[0] < 3600:
         return hit[1]
@@ -99,7 +119,7 @@ def price_info(stripe: Stripe) -> dict:
 def checkout_session(stripe: Stripe, client_id: str, email: str, customer_id: Optional[str],
                      return_base: str, first_time: bool) -> str:
     s = settings()
-    data = {"mode": "subscription", "line_items[0][price]": s["price"], "line_items[0][quantity]": "1",
+    data = {"mode": "subscription", "line_items[0][price]": price_id(stripe), "line_items[0][quantity]": "1",
             "success_url": return_base + "/app#/billing?paid=1", "cancel_url": return_base + "/app#/billing",
             "client_reference_id": client_id, "metadata[client_id]": client_id,
             "subscription_data[metadata][client_id]": client_id,
