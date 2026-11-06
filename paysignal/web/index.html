@@ -19,7 +19,8 @@
   --head:'Space Grotesk', Inter, sans-serif; --body: Inter, system-ui, sans-serif; --ar:'Noto Sans Arabic', Inter, sans-serif;
 }
 *{box-sizing:border-box}
-html,body{margin:0;background:var(--ink);color:var(--text);font-family:var(--body);font-size:15px}
+html{background:var(--ink)}
+html,body{margin:0;color:var(--text);font-family:var(--body);font-size:15px}
 a{color:var(--violet)}a:hover{color:var(--violet-hi)}
 button,input,select,textarea{font:inherit;color:var(--text)}
 input,select,textarea{background:var(--field);border:1px solid var(--edge);border-radius:10px;padding:0 12px;min-height:44px;width:100%}
@@ -170,14 +171,60 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D2D0DB;
   .mstrip button:nth-child(n+3){border-top:1px solid var(--line)}
   .mstrip .mv{font-size:19px}
 }
+
+/* glowing pearl frames */
+@property --ga{syntax:"<angle>";inherits:false;initial-value:0deg}
+.card,.mstrip{position:relative;isolation:isolate;box-shadow:0 0 22px -6px rgba(196,181,253,.22),0 0 46px -14px rgba(153,246,228,.14)}
+.card::before,.mstrip::before{content:"";position:absolute;inset:-1px;border-radius:inherit;padding:1px;pointer-events:none;z-index:1;
+  background:conic-gradient(from var(--ga),rgba(240,171,252,.75),rgba(196,181,253,.08) 22%,rgba(165,180,252,.65) 45%,rgba(153,246,228,.08) 70%,rgba(153,246,228,.7) 85%,rgba(240,171,252,.75));
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;
+  animation:glowspin 14s linear infinite}
+.mstrip::before{inset:0}
+@keyframes glowspin{to{--ga:360deg}}
+@media (prefers-reduced-motion:reduce){.card::before,.mstrip::before{animation:none}}
+#bgnet{position:fixed;inset:0;width:100vw;height:100vh;z-index:-1;pointer-events:none;opacity:.9}
+.card,.mstrip{background:rgba(22,22,28,.78)!important;backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
+main{background:transparent}
 </style>
 </head>
 <body>
+<canvas id="bgnet" aria-hidden="true"></canvas>
 <div id="app" aria-live="polite"></div>
 <noscript>ProAds needs JavaScript turned on.</noscript>
 <script>
 "use strict";
 (function () {
+  // algorithm background: a neural-network mesh with lit paths and faint formulas
+  function drawNet() {
+    const c = document.getElementById("bgnet"); if (!c) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2), W = innerWidth, H = innerHeight;
+    c.width = W * dpr; c.height = H * dpr;
+    const x = c.getContext("2d"); x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, W, H);
+    let seed = 11; const r = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const cols = ["240,171,252", "196,181,253", "165,180,252", "153,246,228"];
+    const col = (px) => cols[Math.min(3, Math.floor(px / W * 4))];
+    const pts = Array.from({ length: Math.round(W * H / 6500) }, () => ({ x: r() * W, y: r() * H, s: .8 + r() * 1.6 }));
+    x.lineWidth = 1;
+    for (const a of pts) for (const b of pts) { const d = Math.hypot(a.x - b.x, a.y - b.y); if (d < 110 && a !== b) { x.strokeStyle = `rgba(${col(a.x)},${.10 * (1 - d / 110)})`; x.beginPath(); x.moveTo(a.x, a.y); x.lineTo(b.x, b.y); x.stroke(); } }
+    for (const p of pts) { x.fillStyle = `rgba(${col(p.x)},.35)`; x.beginPath(); x.arc(p.x, p.y, p.s, 0, 7); x.fill(); }
+    // a few lit paths through the mesh
+    x.lineWidth = 1.6; x.shadowBlur = 12;
+    for (let k = 0; k < 5; k++) {
+      let p = pts[Math.floor(r() * pts.length)]; const path = [p];
+      for (let s2 = 0; s2 < 5; s2++) { let best = null, bd = 1e9; for (const q of pts) { const d = Math.hypot(q.x - p.x - 90, q.y - p.y); if (q !== p && q.x > p.x && d < bd) { bd = d; best = q; } } if (!best) break; path.push(best); p = best; }
+      const C = col(path[0].x); x.strokeStyle = `rgba(${C},.45)`; x.shadowColor = `rgb(${C})`;
+      x.beginPath(); path.forEach((q, i) => i ? x.lineTo(q.x, q.y) : x.moveTo(q.x, q.y)); x.stroke();
+      for (const q of path) { x.fillStyle = `rgba(${C},.8)`; x.beginPath(); x.arc(q.x, q.y, 2.6, 0, 7); x.fill(); }
+    }
+    x.shadowBlur = 0; x.font = "12px 'DejaVu Sans Mono', ui-monospace, monospace"; x.fillStyle = "rgba(220,211,245,.1)";
+    const f = ["value = margin × (1 − refund_risk)", "P(buy | ad, post, hook)", "θ ~ Beta(α + sales, β + views)", "lift > 1.96σ → boost",
+      "match(email#, phone#)", "CAPI → dataset · dedup(event_id)", "score += future_value", "spend × 0.05 → invoice"];
+    for (let i = 0; i < Math.round(H / 120); i++) x.fillText(f[i % f.length], r() * (W - 260), 60 + i * 120 + r() * 40);
+  }
+  let netTimer = null;
+  window.addEventListener("resize", () => { clearTimeout(netTimer); netTimer = setTimeout(drawNet, 200); });
+  drawNet();
+
   const root = document.getElementById("app");
   const fmt = new Intl.NumberFormat("en-US");
   const pct = (x) => Math.round((x || 0) * 100) + "%";
