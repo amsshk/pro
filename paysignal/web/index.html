@@ -15,7 +15,7 @@
   --ink:#0E0E12; --nav:#0A0A0D; --card:#16161C; --line:#27272F; --soft:#1D1D24; --field:#111116; --edge:#34343E;
   --text:#F4F2F7; --muted:#A8A6B3; --dim:#8D8B98; --violet:#DCD3F5; --violet-hi:#F4F0FF; --violet-txt:#E6DEFA;
   --violet-chip:#25222F; --violet-card:#1A1822; --violet-edge:#3E3952; --bubble:#262330;
-  --amber:#F5B544; --amber-txt:#F5C66B; --amber-bg:#2A1D0E; --amber-chip:#3A2A0C; --loss-bg:#3B2412; --loss-txt:#FDBA74;
+  --amber:#F87171; --amber-txt:#FCA5A5; --amber-bg:#2A1215; --amber-chip:#3B1A1E; --loss-bg:#3B1A1E; --loss-txt:#FCA5A5; --win:#4ADE80; --win-txt:#86EFAC; --win-bg:#0F2A1A;
   --head:'Space Grotesk', Inter, sans-serif; --body: Inter, system-ui, sans-serif; --ar:'Noto Sans Arabic', Inter, sans-serif;
 }
 *{box-sizing:border-box}
@@ -64,7 +64,7 @@ h2{margin:0;font-family:var(--head);font-size:20px;font-weight:600}
 .mstrip .ml{font-size:13px;color:var(--muted);text-decoration:underline dotted var(--edge);text-underline-offset:4px}
 .mstrip .mv{font-family:var(--head);font-size:24px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chg{font-size:12px;font-weight:600;display:inline-flex;gap:4px;align-items:center}
-.chg.up{color:var(--violet-txt)}.chg.down{color:var(--amber-txt)}.chg.flat{color:var(--dim)}
+.chg.up{color:var(--win)}.chg.down{color:var(--amber-txt)}.chg.flat{color:var(--dim)}
 .chartwrap{position:relative}
 .chartwrap svg{display:block;width:100%;height:auto;overflow:visible}
 .tip{position:absolute;pointer-events:none;background:#22222A;border:1px solid var(--edge);border-radius:10px;padding:10px 12px;font-size:13px;display:flex;flex-direction:column;gap:4px;min-width:170px;z-index:2;box-shadow:0 8px 24px rgba(0,0,0,.4)}
@@ -91,7 +91,7 @@ h2{margin:0;font-family:var(--head);font-size:20px;font-weight:600}
 .kpi .num small{font-size:16px;color:var(--muted);font-weight:500}
 .kpi .note{font-size:13px;color:var(--muted)}
 .badge{font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;white-space:nowrap}
-.b-measured{color:var(--violet-txt);background:var(--violet-chip)}
+.b-measured{color:var(--win-txt);background:var(--win-bg)}
 .b-est{color:var(--amber-txt);background:var(--amber-chip)}
 .b-neutral{color:#D2D0DB;background:var(--line)}
 .actions{margin:0;padding:0;list-style:none;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
@@ -104,7 +104,7 @@ th{text-align:left;color:var(--muted);font-weight:500;font-size:13px;padding:10p
 td{padding:12px 8px;border-bottom:1px solid var(--soft)}
 .scroll{overflow-x:auto}
 .pill-loss{color:var(--loss-txt);background:var(--loss-bg);padding:3px 8px;border-radius:6px;font-weight:600}
-.pill-gain{color:var(--violet-txt);background:var(--violet-chip);padding:3px 8px;border-radius:6px;font-weight:600}
+.pill-gain{color:var(--win-txt);background:var(--win-bg);padding:3px 8px;border-radius:6px;font-weight:600}
 .bar{height:10px;background:var(--soft);border-radius:999px;overflow:hidden}
 .bar>div{height:100%;background:var(--amber)}
 .months{display:flex;align-items:flex-end;gap:10px;height:160px;padding-top:8px}
@@ -695,6 +695,7 @@ main{background:transparent}
         h("div", { class: "kpi" }, h("span", { class: "label" }, "Connected Facebook"), h("span", { class: "num" }, fmt.format(t.with_facebook || 0)), h("span", { class: "note" }, fmt.format(t.live_campaigns || 0) + " live campaigns")),
         h("div", { class: "kpi" }, h("span", { class: "label" }, "Connected Shopify"), h("span", { class: "num" }, fmt.format(t.with_shopify)), h("span", { class: "note" }, fmt.format(t.with_whatsapp) + " using WhatsApp"))),
       linkBox,
+      addCompanyCard(),
       h("section", { class: "card", "aria-labelledby": "accts" },
         h("div", { class: "between" }, h("h2", { id: "accts" }, "Accounts"), h("span", { class: "badge " + (d.email_on ? "b-measured" : "b-neutral") }, d.email_on ? "Reset emails on" : "Reset emails off: use reset links")),
         d.accounts.length ? h("div", { class: "scroll" }, h("table", { style: "min-width:1040px" },
@@ -734,12 +735,42 @@ main{background:transparent}
       h("div", { style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap" }, btn, msg));
   }
 
+  function addCompanyCard() {
+    const f = (id, label, attrs) => { const i = h("input", Object.assign({ id }, attrs || {})); return [i, h("label", { class: "f", for: id }, label, i)]; };
+    const [name, nameL] = f("co-name", "Business name", { required: true, placeholder: "888 Clinic" });
+    const [email, emailL] = f("co-email", "Owner's email", { type: "email", required: true, placeholder: "owner@business.com" });
+    const [phone, phoneL] = f("co-phone", "Phone (optional)", { placeholder: "050…" });
+    const [site, siteL] = f("co-site", "Website (optional)", { placeholder: "https://…" });
+    const move = h("input", { type: "checkbox", id: "co-move", style: "width:20px;min-height:20px" });
+    const out = h("div", {});
+    const btn = h("button", { class: "btn btn-primary", type: "submit", style: "align-self:flex-start" }, "Add company");
+    const form = h("form", { style: "display:flex;flex-direction:column;gap:12px", onsubmit: async (e) => {
+      e.preventDefault(); btn.disabled = true; out.replaceChildren();
+      try {
+        const r = await api("/admin/" + cid() + "/companies", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ business: name.value, email: email.value, phone: phone.value, website: site.value, move_data: move.checked }) });
+        out.replaceChildren(h("div", { class: "result", style: "flex-direction:column;align-items:stretch;gap:10px" },
+          h("span", { class: "ok" }, name.value + " added" + (move.checked ? ": moved " + fmt.format(r.moved.sales) + " sales, " + fmt.format(r.moved.posts) + " posts and " + fmt.format(r.moved.codes) + " tracking codes" : "") + "."),
+          h("span", { class: "sub", style: "font-size:13px" }, "Send the owner this link so they set their password (works for 1 hour; you can make a new one from the list below):"),
+          h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, h("code", { class: "box" }, r.link), h("button", { class: "btn btn-ghost", type: "button", onclick: () => copy(r.link) }, "Copy"))));
+        status = await api("/status/" + cid());
+      } catch (err) { if (err.message !== "signed out") out.replaceChildren(errorCard(err.message)); }
+      btn.disabled = false;
+    } },
+      h("div", { class: "grid2" }, nameL, emailL), h("div", { class: "grid2" }, phoneL, siteL),
+      h("label", { for: "co-move", style: "display:flex;gap:10px;align-items:center;font-size:14px" }, move,
+        "Move the sales, posts and tracking codes in my ProAds account into this company"),
+      btn);
+    return h("section", { class: "card" }, h("h2", {}, "Add a company"),
+      h("p", { class: "sub", style: "margin:0" }, "For a business you already work with. They get their own dashboard, audit and campaigns."), form, out);
+  }
+
   // ---------- delete account ----------
   function deleteCard() {
     const pw = h("input", { id: "delpw", type: "password", autocomplete: "current-password", placeholder: "Your password" });
     const msg = h("p", { class: "sub", role: "alert", style: "margin:0;color: var(--amber-txt)" });
     let armed = false;
-    const btn = h("button", { class: "btn btn-ghost", type: "submit", style: "border-color:#7C4A1E;color: var(--loss-txt)" }, "Delete my account and data");
+    const btn = h("button", { class: "btn btn-ghost", type: "submit", style: "border-color:#7F1D1D;color: var(--loss-txt)" }, "Delete my account and data");
     const form = h("form", { style: "display:flex;gap:8px;flex-wrap:wrap;align-items:center", onsubmit: async (e) => {
       e.preventDefault(); msg.textContent = "";
       if (!pw.value) { msg.textContent = "Enter your password to confirm."; return; }
@@ -1464,7 +1495,7 @@ main{background:transparent}
     const extra = h("div", { style: "display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color: var(--muted)" },
       h("span", {}, "Refunds: ", h("b", { style: "color: var(--text)" }, pct(d.refund_rate)), " of sales"),
       d.returning_rate !== null ? h("span", {}, "Returning customers: ", h("b", { style: "color: var(--text)" }, pct(d.returning_rate))) : null,
-      d.live ? null : h("span", { style: "color: var(--amber-txt)" }, "Showing your latest history, up to " + new Date(d.as_of + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })));
+      d.live ? null : h("span", { style: "color: var(--muted)" }, "Showing your latest history, up to " + new Date(d.as_of + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })));
     body.replaceChildren(
       ...[adsBanner(d.ads_access)].filter(Boolean),
       strip,

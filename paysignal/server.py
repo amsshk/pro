@@ -949,6 +949,42 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                              "Remove PROADS_META_TEST_CODE once events show in Test events."))
         return {"items": [{"label": l, "done": bool(d), "how": h} for l, d, h in items]}
 
+    @flask.post("/admin/<admin_id>/companies")
+    def admin_add_company(admin_id):
+        """Add a client company by hand (e.g. one you already work with). Optionally move the sales,
+        posts and tracking codes sitting in your own account into it. The owner gets a link to set a password."""
+        require_admin(admin_id)
+        b = request.get_json(silent=True) or {}
+        clean, errors = validate_signup({**b, "password": secrets.token_urlsafe(18), "terms": True})
+        if errors:
+            abort(400, "; ".join(errors))
+        if state.accounts.by_email(clean["email"]):
+            abort(409, "An account with that email already exists")
+        moved = {"sales": 0, "posts": 0, "codes": 0}
+        with state.lock:
+            cid = state.accounts.create(clean, reserved=set(state.clients))
+            if b.get("move_data"):
+                db = state.store.db
+                rows = db.execute("SELECT source, external_id, kind, amount, currency, occurred_at, customer_key, refund_of,"
+                                  " data, sent_to_meta FROM payments WHERE client_id=?", (admin_id,)).fetchall()
+                for r in rows:
+                    d = json.loads(r[8]); d["client_id"] = cid
+                    db.execute("INSERT OR IGNORE INTO payments (client_id, source, external_id, kind, amount, currency,"
+                               " occurred_at, customer_key, refund_of, data, sent_to_meta) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                               (cid, *r[:8], json.dumps(d), r[9]))
+                db.execute("DELETE FROM payments WHERE client_id=?", (admin_id,))
+                moved["sales"] = len(rows)
+                moved["posts"] = db.execute("UPDATE posts SET client_id=? WHERE client_id=?", (cid, admin_id)).rowcount
+                moved["codes"] = db.execute("UPDATE promo_codes SET client_id=? WHERE client_id=?", (cid, admin_id)).rowcount
+                db.commit()
+                for cache in (state.engines, state.posts, state.trained_at):
+                    cache.pop(admin_id, None)
+                if moved["sales"] or moved["posts"]:
+                    state.accounts.mark_activated(cid)
+            token = state.accounts.new_reset(cid)
+        log.info("admin %s added company %s (moved %s)", admin_id, cid, moved)
+        return {"client_id": cid, "moved": moved, "link": reset_link(token), "expires_in_minutes": 60}
+
     @flask.post("/admin/<admin_id>/reset-link/<client_id>")
     def admin_reset_link(admin_id, client_id):
         """A one-hour reset link the admin can send by WhatsApp when email isn't set up."""

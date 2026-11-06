@@ -112,3 +112,20 @@ def test_setup_checklist_shows_state_without_secrets(app, monkeypatch):
     assert not items["Password reset emails"] and items["Website address set"]
     assert "very-secret-token" not in r.get_data(as_text=True)
     assert c.get("/admin/other/setup", headers={"X-API-Key": "other-key-0123456789abc"}).status_code == 403
+
+
+def test_admin_adds_a_company_and_moves_own_data_into_it(app):
+    c = app.test_client()
+    c.post("/import/pro", data="id,date,amount,currency\n1,2026-10-01,100,AED\n2,2026-10-02,50,AED\n", headers=ADMIN)
+    c.post("/tracking/pro", json={"post_name": "Laser reel", "platform": "instagram", "url": "https://888.ae"}, headers=ADMIN)
+    assert c.post("/admin/pro/companies", json={"business": "888 Clinic"}, headers=ADMIN).status_code == 400
+    r = c.post("/admin/pro/companies", json={"business": "888 Clinic", "email": "owner@888.ae", "move_data": True},
+               headers=ADMIN).json
+    assert r["client_id"] == "888-clinic" and r["moved"] == {"sales": 2, "posts": 0, "codes": 1}
+    assert c.post("/admin/pro/companies", json={"business": "Other", "email": "owner@888.ae"}, headers=ADMIN).status_code == 409
+    assert c.get("/dashboard/pro", headers=ADMIN).json["has_data"] is False
+    tok = c.post("/auth/reset", json={"token": link_token(r["link"]), "password": "clinic-password-1"}).json["token"]
+    d = c.get("/dashboard/888-clinic?period=365", headers={"X-API-Key": tok}).json
+    assert d["has_data"] and d["metrics"][0]["value"] == 150
+    acc = c.get("/admin/pro/accounts", headers=ADMIN).json["accounts"]
+    assert acc[0]["name"] == "888 Clinic" and acc[0]["orders"] == 2
