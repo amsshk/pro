@@ -24,9 +24,12 @@ class FakeStripe:
     def __init__(self):
         self.posts = []
 
-    def post(self, url, data, auth, timeout):
+    def post(self, url, data, auth, timeout, headers=None):
         assert auth == ("sk_test_x", "")
         self.posts.append((url.rsplit("/v1/", 1)[1], data))
+        self.headers = headers
+        if url.endswith("invoiceitems"):
+            return R(200, {"id": "ii_1"})
         if url.endswith("checkout/sessions"):
             return R(200, {"url": "https://checkout.stripe.com/c/pay/cs_1"})
         if url.endswith("billing_portal/sessions"):
@@ -104,3 +107,40 @@ def test_unknown_events_and_accounts_are_ignored(app):
         "id": "sub_9", "customer": "cus_9", "status": "active", "metadata": {"client_id": "ghost"}}}}).status_code == 200
     assert app.extensions["paysignal"].billing.get("ghost") is None
     assert signed(c, {"type": "charge.refunded", "data": {"object": {}}}).json == {"received": True}
+
+
+def test_renewal_invoice_gets_the_ad_spend_fee(app):
+    state = app.extensions["paysignal"]
+    state.billing_sync = True
+    state.ads_http = g = FakeGraph()
+    c = app.test_client()
+    tok = c.post("/auth/signup", json=ACCT).json["token"]
+    found = {"user": "Sara", "ad_accounts": [{"id": "act_11", "name": "Glow", "currency": "AED", "active": True}],
+             "pages": [{"id": "p1", "name": "Glow", "instagram_id": "", "instagram": ""}]}
+    monkey_key = "a-long-secret-key-for-tests"
+    import os
+    os.environ["PROADS_SECRET_KEY"] = monkey_key
+    try:
+        state.meta_conns.save("glow-clinic", {"access_token": "LONG", "expires_at": None}, found)
+        state.meta_conns.select("glow-clinic", "act_11", "p1", "px1", True)
+        state.launches.add("glow-clinic", {"campaign_id": "c1", "ad_sets": [], "ads": [], "status": "ACTIVE"})
+        signed(c, {"type": "customer.subscription.updated", "data": {"object": {
+            "id": "sub_1", "customer": "cus_1", "status": "active", "metadata": {"client_id": "glow-clinic"},
+            "items": {"data": [{"current_period_start": 1790000000, "current_period_end": 1792600000}]}}}})
+        inv = {"id": "in_1", "customer": "cus_1", "currency": "aed", "status": "draft", "billing_reason": "subscription_cycle",
+               "period_start": 1790000000, "period_end": 1792600000}
+        assert signed(c, {"type": "invoice.created", "data": {"object": inv}}).status_code == 200
+        url, data = state.stripe_http.posts[-1]
+        assert url == "invoiceitems" and data["invoice"] == "in_1" and data["amount"] == "18002"   # 3% of 6000.50 AED
+        assert "6,000.50" in data["description"] and state.stripe_http.headers == {"Idempotency-Key": "proads-fee-in_1"}
+        n = len(state.stripe_http.posts)
+        signed(c, {"type": "invoice.created", "data": {"object": inv}})                    # Stripe retries: no double fee
+        assert len(state.stripe_http.posts) == n
+        b = c.get("/billing/glow-clinic", headers={"X-API-Key": tok}).json
+        assert b["fees"][0]["fee"] == 180.02 and b["spend_so_far"]["fee"] == 180.02 and b["fee_percent"] == 3
+        # first invoice of a subscription and other currencies get no fee
+        signed(c, {"type": "invoice.created", "data": {"object": {**inv, "id": "in_2", "billing_reason": "subscription_create"}}})
+        signed(c, {"type": "invoice.created", "data": {"object": {**inv, "id": "in_3", "currency": "usd"}}})
+        assert len(state.stripe_http.posts) == n
+    finally:
+        os.environ.pop("PROADS_SECRET_KEY", None)

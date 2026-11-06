@@ -200,6 +200,20 @@ class Publisher:
                        created_at=int(time.time()))
         return created
 
+    def spend(self, campaign_ids: list[str], start: int, end: int) -> tuple[float, str]:
+        """Money spent by these campaigns between two times (whole days, ad account time zone)."""
+        since = time.strftime("%Y-%m-%d", time.gmtime(start))
+        until = time.strftime("%Y-%m-%d", time.gmtime(max(start, end - 1)))
+        total, currency = 0.0, ""
+        for cid in campaign_ids:
+            r = self.http.get(self._url(f"{cid}/insights"), params={
+                "fields": "spend,account_currency", "time_range": json.dumps({"since": since, "until": until}),
+                "access_token": self.s["token"]}, timeout=30)
+            for row in self._check(r, f"reading spend of campaign {cid}").get("data") or []:
+                total += float(row.get("spend") or 0)
+                currency = row.get("account_currency") or currency
+        return round(total, 2), currency
+
     def set_status(self, launch: dict, status: str) -> None:
         """ACTIVE or PAUSED for the campaign and everything in it."""
         for obj_id in [launch["campaign_id"], *launch["ad_sets"], *launch["ads"]]:

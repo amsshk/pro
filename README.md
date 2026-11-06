@@ -282,5 +282,6 @@ download invoices or cancel in Stripe's customer portal. Money goes to the Strip
 whose key is set. Settings: `PROADS_STRIPE_SECRET_KEY`, `PROADS_STRIPE_PRICE_ID`,
 `PROADS_STRIPE_WEBHOOK_SECRET` (endpoint `https://<domain>/webhooks/proads-billing`, events
 `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`,
-`customer.subscription.deleted`, `invoice.payment_failed`), optional `PROADS_TRIAL_DAYS`,
+`customer.subscription.deleted`, `invoice.payment_failed`, `invoice.created`), optional `PROADS_TRIAL_DAYS`,
+`PROADS_SPEND_FEE_PERCENT` (default 3: that % of ad spend published through ProAds is added to each renewal invoice),
 and `PROADS_REQUIRE_PLAN=1` to make publishing campaigns a paid feature.

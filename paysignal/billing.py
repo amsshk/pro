@@ -9,6 +9,9 @@ Settings:
                                 https://<domain>/webhooks/proads-billing
   PROADS_STRIPE_PRICE_ID        price_... of the monthly plan (made in the Stripe dashboard)
   PROADS_TRIAL_DAYS             optional free trial on the first subscription
+  PROADS_SPEND_FEE_PERCENT      fee on ad spend published through ProAds (default 3, 0 = off).
+                                Added to each renewal invoice for the period just ended
+                                (needs the invoice.created webhook event).
   PROADS_REQUIRE_PLAN           "1" = publishing campaigns needs an active plan
 """
 from __future__ import annotations
@@ -36,7 +39,14 @@ def settings() -> dict:
         trial = 0
     return {"key": env("PROADS_STRIPE_SECRET_KEY"), "webhook_secret": env("PROADS_STRIPE_WEBHOOK_SECRET"),
             "price": env("PROADS_STRIPE_PRICE_ID"), "trial_days": trial,
-            "require_plan": env("PROADS_REQUIRE_PLAN") == "1"}
+            "require_plan": env("PROADS_REQUIRE_PLAN") == "1", "fee_percent": fee_percent()}
+
+
+def fee_percent() -> float:
+    try:
+        return max(0.0, min(float(os.environ.get("PROADS_SPEND_FEE_PERCENT", "3") or 0), 50.0))
+    except ValueError:
+        return 3.0
 
 
 def available() -> bool:
@@ -60,8 +70,9 @@ class Stripe:
             raise BillingError((body.get("error") or {}).get("message") or f"Stripe HTTP {r.status_code}")
         return body
 
-    def post(self, path: str, data: dict) -> dict:
-        return self._check(self.http.post(f"{API}/{path}", data=data, auth=(self.key, ""), timeout=30))
+    def post(self, path: str, data: dict, idempotency_key: Optional[str] = None) -> dict:
+        kw = {"headers": {"Idempotency-Key": idempotency_key}} if idempotency_key else {}
+        return self._check(self.http.post(f"{API}/{path}", data=data, auth=(self.key, ""), timeout=30, **kw))
 
     def get(self, path: str, params: Optional[dict] = None) -> dict:
         return self._check(self.http.get(f"{API}/{path}", params=params or {}, auth=(self.key, ""), timeout=30))
@@ -107,6 +118,35 @@ def portal_session(stripe: Stripe, customer_id: str, return_url: str) -> str:
     return stripe.post("billing_portal/sessions", {"customer": customer_id, "return_url": return_url})["url"]
 
 
+def _period_start(sub: dict) -> Optional[int]:
+    if sub.get("current_period_start"):
+        return int(sub["current_period_start"])
+    items = (sub.get("items") or {}).get("data") or []
+    return int(items[0]["current_period_start"]) if items and items[0].get("current_period_start") else None
+
+
+def fee_amount(spend: float, percent: float) -> int:
+    """Fee in the currency's smallest unit (fils for AED)."""
+    return int(round(spend * percent / 100 * 100))
+
+
+def add_spend_fee(stripe: "Stripe", invoice: dict, spend: float, currency: str, percent: float) -> Optional[dict]:
+    """Add the ad-spend fee to a draft renewal invoice. Returns what was added, or None."""
+    if spend <= 0 or percent <= 0 or currency.lower() != (invoice.get("currency") or "").lower():
+        return None
+    amount = fee_amount(spend, percent)
+    if amount <= 0:
+        return None
+    fmt = lambda t: time.strftime("%d %b %Y", time.gmtime(t))
+    desc = (f"Ad spend fee: {percent:g}% of {currency.upper()} {spend:,.2f} spent on campaigns published "
+            f"through ProAds ({fmt(invoice['period_start'])} - {fmt(invoice['period_end'])})")
+    stripe.post("invoiceitems", {"customer": invoice["customer"], "invoice": invoice["id"], "amount": str(amount),
+                                 "currency": currency.lower(), "description": desc,
+                                 "metadata[kind]": "ad_spend_fee", "metadata[spend]": f"{spend:.2f}"},
+                idempotency_key=f"proads-fee-{invoice['id']}")
+    return {"amount": amount / 100, "spend": spend, "description": desc}
+
+
 def _period_end(sub: dict) -> Optional[int]:
     if sub.get("current_period_end"):
         return int(sub["current_period_end"])
@@ -119,18 +159,39 @@ class BillingStore:
         client_id TEXT PRIMARY KEY, customer_id TEXT, subscription_id TEXT, status TEXT,
         period_end INTEGER, cancel_at_period_end INTEGER NOT NULL DEFAULT 0,
         updated_at TEXT NOT NULL DEFAULT (datetime('now')))"""
+    FEES = """CREATE TABLE IF NOT EXISTS billing_fees (
+        invoice_id TEXT PRIMARY KEY, client_id TEXT NOT NULL, spend REAL, currency TEXT, fee REAL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')))"""
 
     def __init__(self, db):
         self.db = db
         self.db.execute(self.SCHEMA)
+        self.db.execute(self.FEES)
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(billing)").fetchall()}
+        if "period_start" not in cols:
+            self.db.execute("ALTER TABLE billing ADD COLUMN period_start INTEGER")
         self.db.commit()
 
+    def fee_logged(self, invoice_id: str) -> bool:
+        return self.db.execute("SELECT 1 FROM billing_fees WHERE invoice_id=?", (invoice_id,)).fetchone() is not None
+
+    def log_fee(self, invoice_id: str, client_id: str, spend: float, currency: str, fee: float) -> None:
+        self.db.execute("INSERT OR IGNORE INTO billing_fees (invoice_id, client_id, spend, currency, fee) VALUES (?,?,?,?,?)",
+                        (invoice_id, client_id, spend, currency, fee))
+        self.db.commit()
+
+    def fees(self, client_id: str) -> list[dict]:
+        rows = self.db.execute("SELECT invoice_id, spend, currency, fee, created_at FROM billing_fees WHERE client_id=?"
+                               " ORDER BY created_at DESC LIMIT 24", (client_id,)).fetchall()
+        return [dict(zip(("invoice_id", "spend", "currency", "fee", "created_at"), r)) for r in rows]
+
     def get(self, client_id: str) -> Optional[dict]:
-        row = self.db.execute("SELECT customer_id, subscription_id, status, period_end, cancel_at_period_end"
-                              " FROM billing WHERE client_id=?", (client_id,)).fetchone()
+        row = self.db.execute("SELECT customer_id, subscription_id, status, period_end, cancel_at_period_end,"
+                              " period_start FROM billing WHERE client_id=?", (client_id,)).fetchone()
         if not row:
             return None
-        return dict(zip(("customer_id", "subscription_id", "status", "period_end", "cancel_at_period_end"), row))
+        return dict(zip(("customer_id", "subscription_id", "status", "period_end", "cancel_at_period_end",
+                         "period_start"), row))
 
     def upsert(self, client_id: str, **fields) -> None:
         if not self.get(client_id):
@@ -164,7 +225,8 @@ class BillingStore:
             if cid and known(cid):
                 self.upsert(cid, customer_id=obj.get("customer"), subscription_id=obj.get("id"),
                             status="canceled" if etype.endswith("deleted") else obj.get("status"),
-                            period_end=_period_end(obj), cancel_at_period_end=1 if obj.get("cancel_at_period_end") else 0)
+                            period_end=_period_end(obj), period_start=_period_start(obj),
+                            cancel_at_period_end=1 if obj.get("cancel_at_period_end") else 0)
                 return cid
         if etype == "invoice.payment_failed":
             log.warning("payment failed for customer %s", obj.get("customer"))

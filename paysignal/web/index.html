@@ -1121,11 +1121,17 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
     const pro = h("section", { class: "card", style: "background: var(--violet-card); border-color: var(--violet-edge)" },
       h("div", { class: "between" }, h("h2", {}, (b.price && b.price.name) || "Pro"), b.active ? h("span", { class: "badge b-measured" }, "Your plan") : null),
       price ? h("b", { style: "font-family: var(--head); font-size:28px" }, price) : null,
-      proItems, h("span", { class: "sub", style: b.status === "past_due" ? "color: var(--amber-txt)" : "" }, line), action,
+      b.fee_percent > 0 ? h("span", { style: "font-weight:600;color: var(--violet-txt)" }, "+ " + b.fee_percent + "% of the ad spend you publish through ProAds, billed at each renewal") : null,
+      proItems,
+      b.spend_so_far ? h("div", { class: "result" }, h("span", {}, "This period: " + fmt.format(b.spend_so_far.spend) + " " + (b.spend_so_far.currency || "") + " ad spend"),
+        h("b", {}, "Fee so far " + fmt.format(b.spend_so_far.fee) + " " + (b.spend_so_far.currency || ""))) : null, h("span", { class: "sub", style: b.status === "past_due" ? "color: var(--amber-txt)" : "" }, line), action,
       b.active || !b.has_customer ? null : h("button", { class: "btn btn-ghost", type: "button", onclick: go("/portal") }, "Past invoices"));
     root.replaceChildren(layout("#/billing", [
       h("header", {}, h("h1", {}, "Plan & billing"), h("p", { class: "sub" }, "Payments are handled by Stripe. ProAds never sees your card.")),
-      h("div", { class: "row" }, free, pro)]));
+      h("div", { class: "row" }, free, pro),
+      b.fees && b.fees.length ? h("section", { class: "card" }, h("h2", {}, "Ad spend fees"),
+        h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Date", "Ad spend", "Fee"].map((t) => h("th", { scope: "col" }, t)))),
+          h("tbody", {}, b.fees.map((f) => h("tr", {}, h("td", {}, f.created_at.slice(0, 10)), h("td", {}, fmt.format(f.spend) + " " + (f.currency || "")), h("td", {}, fmt.format(f.fee) + " " + (f.currency || "")))))))) : null]));
   }
 
   // ---------- router ----------

@@ -114,6 +114,7 @@ class App:
         self.meta_http = None                  # set in tests
         self.billing = billing.BillingStore(self.store.db)
         self.stripe_http = None                # set in tests
+        self.billing_sync = False              # tests: add invoice fees inline
 
     def known(self, client_id: str) -> bool:
         return client_id in self.clients or self.accounts.get(client_id) is not None
@@ -825,7 +826,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             ("Clients can connect Facebook & Instagram", meta_connect.available(),
              "Set META_APP_ID, META_APP_SECRET, META_LOGIN_CONFIG_ID and PROADS_SECRET_KEY (Facebook Login for Business)."),
             ("Paid plans (Stripe)", billing.available(),
-             "Set PROADS_STRIPE_SECRET_KEY, PROADS_STRIPE_PRICE_ID and PROADS_STRIPE_WEBHOOK_SECRET."),
+             "Set PROADS_STRIPE_SECRET_KEY, PROADS_STRIPE_PRICE_ID and PROADS_STRIPE_WEBHOOK_SECRET (+ PROADS_SPEND_FEE_PERCENT)."),
             ("Connect Shopify button", shopify_app.available(),
              "Optional: SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET, PROADS_SECRET_KEY."),
         ]
@@ -923,7 +924,15 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         out = {"available": billing.available(), "status": b.get("status"), "active": b.get("status") in billing.ACTIVE,
                "period_end": b.get("period_end"), "cancel_at_period_end": bool(b.get("cancel_at_period_end")),
                "has_customer": bool(b.get("customer_id")), "trial_days": billing.settings()["trial_days"],
-               "require_plan": billing.settings()["require_plan"], "price": None}
+               "require_plan": billing.settings()["require_plan"], "price": None,
+               "fee_percent": billing.fee_percent(), "fees": state.billing.fees(client_id), "spend_so_far": None}
+        if b.get("status") in billing.ACTIVE and b.get("period_start") and billing.fee_percent() > 0:
+            try:
+                spend, cur = spend_between(client_id, int(b["period_start"]), int(time.time()) + 86400)
+                out["spend_so_far"] = {"spend": spend, "currency": cur,
+                                       "fee": billing.fee_amount(spend, billing.fee_percent()) / 100}
+            except Exception as e:
+                log.info("could not read ad spend for %s: %s", client_id, e)
         if out["available"]:
             try:
                 out["price"] = billing.price_info(billing.Stripe(state.stripe_http))
@@ -976,7 +985,43 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             cid = state.billing.handle(event, state.known)
         if cid:
             log.info("billing %s for %s", event.get("type"), cid)
+        inv = (event.get("data") or {}).get("object") or {}
+        if event.get("type") == "invoice.created" and inv.get("status") == "draft" \
+                and inv.get("billing_reason") == "subscription_cycle":
+            if state.billing_sync:
+                charge_spend_fee(inv)
+            else:
+                threading.Thread(target=charge_spend_fee, args=(inv,), daemon=True, name="spend-fee").start()
         return {"received": True}
+
+    def spend_between(client_id: str, start: int, end: int) -> tuple[float, str]:
+        """Ad spend of the campaigns this client published through ProAds."""
+        with state.lock:
+            ids = [l["campaign_id"] for l in state.launches.list(client_id)]
+        s = state.ads_settings(client_id, is_admin(client_id))
+        if not ids or not s:
+            return 0.0, ""
+        return meta_ads.Publisher(state.ads_http, s).spend(ids, start, end)
+
+    def charge_spend_fee(inv: dict) -> None:
+        """Renewal invoice: add the % of last period's ad spend before Stripe finalizes it (about 1 hour)."""
+        percent = billing.fee_percent()
+        with state.lock:
+            cid = state.billing.by_customer(inv.get("customer") or "")
+            done = state.billing.fee_logged(inv.get("id", ""))
+        if not cid or done or percent <= 0:
+            return
+        try:
+            spend, currency = spend_between(cid, int(inv["period_start"]), int(inv["period_end"]))
+            added = billing.add_spend_fee(billing.Stripe(state.stripe_http), inv, spend, currency, percent)
+        except Exception as e:
+            log.warning("ad spend fee for %s on %s failed: %s", cid, inv.get("id"), e)
+            return
+        if spend and not added:
+            log.warning("ad spend fee skipped for %s: spend in %s, invoice in %s", cid, currency, inv.get("currency"))
+        with state.lock:
+            state.billing.log_fee(inv["id"], cid, spend, currency, added["amount"] if added else 0.0)
+        log.info("ad spend fee for %s: %s", cid, added)
 
     # ---------------- Facebook & Instagram connection (each client's own) ----------------
     def meta_back(result, message=""):

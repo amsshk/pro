@@ -26,6 +26,9 @@ class FakeGraph:
         self.fail_on, self.currency = fail_on, currency
 
     def get(self, url, params, timeout):
+        if url.endswith("/insights"):
+            self.insights = getattr(self, "insights", []) + [(url, params)]
+            return R(200, {"data": [{"spend": "6000.50", "account_currency": self.currency}]})
         return R(200, {"name": "Mine", "currency": self.currency, "account_status": 1})
 
     def post(self, url, data, timeout):
