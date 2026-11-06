@@ -723,6 +723,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D2D0DB;
       const acct = h("select", { id: "fb-acct" }, opt(v.ad_accounts, v.ad_account, (a) => a.name + " · " + a.currency + (a.active ? "" : " (not active)")));
       const page = h("select", { id: "fb-page" }, opt(v.pages, v.page_id, (p) => p.name + (p.instagram ? " · @" + p.instagram : "")));
       const pixel = h("select", { id: "fb-pixel" }, h("option", { value: "" }, "Choose an ad account first"));
+      const pixelId = h("input", { id: "fb-pixel-id", inputmode: "numeric", placeholder: "Or type your Pixel ID, e.g. 1437834427873532", value: "", "aria-label": "Pixel ID" });
       const send = h("input", { type: "checkbox", id: "fb-send", checked: v.send_sales || null, style: "width:20px;min-height:20px" });
       const err = h("p", { class: "sub", role: "alert", style: "margin:0;color: var(--amber-txt)" });
       async function loadPixels() {
@@ -740,14 +741,15 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D2D0DB;
         e.preventDefault(); save.disabled = true; err.textContent = "";
         try {
           const r = await api("/meta/" + cid() + "/select", { method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ad_account: acct.value, page_id: page.value, pixel_id: pixel.value, send_sales: send.checked }) });
+            body: JSON.stringify({ ad_account: acct.value, page_id: page.value, pixel_id: pixelId.value.replace(/\D/g, "") || pixel.value, send_sales: send.checked }) });
           status = await api("/status/" + cid());
           if (r.ready) { toast("Saved"); drawReady(r); } else err.textContent = "Pick an ad account, a Page and a Pixel to publish ads.";
         } catch (e2) { if (e2.message !== "signed out") err.textContent = e2.message; }
         save.disabled = false;
       } },
         h("div", { class: "grid2" }, h("label", { class: "f", for: "fb-acct" }, "Ad account", acct), h("label", { class: "f", for: "fb-page" }, "Facebook Page (and its Instagram)", page)),
-        h("label", { class: "f", for: "fb-pixel" }, "Pixel (where your sales are sent)", pixel),
+        h("label", { class: "f", for: "fb-pixel" }, "Pixel (where your sales are sent)", pixel, pixelId,
+          h("span", { class: "sub", style: "font-size:12px" }, "Not in the list? Copy the ID from Business settings → Data sources → Datasets & pixels.")),
         h("label", { for: "fb-send", style: "display:flex;gap:10px;align-items:center;font-size:14px" }, send, "Send my sales to Meta so ads find people who pay"),
         save, err);
       card.replaceChildren(head("Facebook & Instagram", "Connected as " + v.user, true),
