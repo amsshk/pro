@@ -939,10 +939,11 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D2D0DB;
       h("button", { class: "chip", type: "button", dir: "auto", onclick: () => ask(t) }, t)));
 
     // campaign builder
-    const budget = h("input", { id: "budget", type: "number", min: 10, step: 5, value: status && status.admin ? 40 : 300, required: true });
+    const budget = h("input", { id: "budget", type: "number", min: 10, step: 5, value: status && status.admin ? (adsCurrency() === "THB" ? 350 : 35) : 300, required: true });
     const goals = (status && status.admin ? [["Sign-ups for ProAds", "signup"]] : []).concat([["Paying customers who stay", "purchase"], ["More bookings", "purchase"], ["Bring past customers back", "purchase"], ["Sign-ups or leads", "signup"]]);
     const goal = h("select", { id: "goal" }, goals.map(([label, conv], i) => h("option", { value: String(i) }, label)));
-    const notes = h("textarea", { id: "notes", placeholder: "What you sell, your offer, who to reach, what to avoid…", dir: "auto" });
+    const notes = h("textarea", { id: "notes", placeholder: "What you sell, your offer, who to reach, what to avoid…", dir: "auto" },
+      status && status.admin ? "Target business owners, shop owners, clinics, restaurants and marketing agencies in the UAE who already sell online or on Instagram. Main message: stop paying for likes and views, find the posts and ads that bring paying customers. Offer: free sales audit in the first week, free to start, test ads free for 3 days, no card needed. Tone: confident, short, direct. English only. Do not promise specific results or numbers. Avoid students and job seekers." : "");
     const out = h("div", { style: "display:flex;flex-direction:column;gap:12px" });
     const build = h("button", { class: "btn btn-primary", type: "submit" }, "Build campaign");
     const campForm = h("form", { style: "display:flex;flex-direction:column;gap:12px", onsubmit: async (e) => {
