@@ -48,6 +48,35 @@ h2{margin:0;font-family:var(--head);font-size:20px;font-weight:600}
 .row{display:flex;flex-wrap:wrap;gap:24px}
 .row>.card{flex:1 1 420px}
 .between{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.periods{display:flex;gap:6px;flex-wrap:wrap}
+.periods button{background:var(--card);border:1px solid var(--edge);border-radius:10px;min-height:38px;padding:0 14px;font-size:13px;font-weight:600;cursor:pointer}
+.periods button[aria-pressed="true"]{background:var(--violet);border-color:var(--violet);color:var(--ink)}
+.mstrip{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));background:var(--card);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+.mstrip button{background:none;border:0;border-right:1px solid var(--line);border-bottom:3px solid transparent;text-align:left;padding:16px 18px 12px;display:flex;flex-direction:column;gap:6px;cursor:pointer;min-width:0}
+.mstrip button:last-child{border-right:0}
+.mstrip button:hover{background:var(--soft)}
+.mstrip button[aria-pressed="true"]{border-bottom-color:var(--violet);background:#191624}
+.mstrip .ml{font-size:13px;color:var(--muted);text-decoration:underline dotted var(--edge);text-underline-offset:4px}
+.mstrip .mv{font-family:var(--head);font-size:24px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chg{font-size:12px;font-weight:600;display:inline-flex;gap:4px;align-items:center}
+.chg.up{color:var(--violet-txt)}.chg.down{color:var(--amber-txt)}.chg.flat{color:var(--dim)}
+.chartwrap{position:relative}
+.chartwrap svg{display:block;width:100%;height:auto;overflow:visible}
+.tip{position:absolute;pointer-events:none;background:#211E2B;border:1px solid var(--edge);border-radius:10px;padding:10px 12px;font-size:13px;display:flex;flex-direction:column;gap:4px;min-width:170px;z-index:2;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.tip .r{display:flex;justify-content:space-between;gap:14px}
+.key{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.key i{display:inline-block;width:16px;height:0;border-top:2px solid var(--violet)}
+.key i.prev{border-top:2px dashed #6E6880}
+.hbar{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;align-items:center;font-size:14px}
+.hbar .track{grid-column:1/-1;height:8px;border-radius:4px;background:var(--soft);overflow:hidden}
+.hbar .track div{height:100%;border-radius:4px;background:var(--violet)}
+.guide{display:flex;flex-direction:column;gap:2px}
+.guide a{display:flex;gap:12px;align-items:flex-start;padding:10px;border-radius:10px;text-decoration:none;color:var(--text)}
+.guide a:hover{background:var(--soft)}
+.guide .tick{flex:0 0 22px;height:22px;border-radius:50%;border:2px dashed var(--edge);display:flex;align-items:center;justify-content:center}
+.guide .done .tick{border:0;background:var(--violet)}
+.guide .done b{color:var(--muted);text-decoration:line-through}
+.progress{height:6px;border-radius:3px;background:var(--soft);overflow:hidden}.progress div{height:100%;background:var(--violet)}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
 .kpi{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:8px}
 .kpi.hi{background:var(--violet-card);border-color:var(--violet-edge)}
@@ -130,6 +159,12 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
   .navlinks{flex-basis:100%;flex-direction:row;overflow-x:auto;gap:6px;order:2}
   .navlinks a{white-space:nowrap;flex:0 0 auto}
   h1{font-size:28px}
+  .mstrip{grid-template-columns:1fr 1fr}
+  .mstrip button{padding:12px 14px 10px;border-bottom-width:3px}
+  .mstrip button:nth-child(2n){border-right:0}
+  .mstrip button:nth-child(-n+2){border-top:0}
+  .mstrip button:nth-child(n+3){border-top:1px solid var(--line)}
+  .mstrip .mv{font-size:19px}
 }
 </style>
 </head>
@@ -144,9 +179,10 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
   const pct = (x) => Math.round((x || 0) * 100) + "%";
   const signed = (x) => (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(Math.round(x * 100)) + "%";
 
+  const SVG_TAGS = new Set(["svg", "path", "rect", "line", "circle", "g", "polyline", "text"]);
   // Build DOM safely: all text goes in as text, never as HTML.
   function h(tag, props, ...kids) {
-    const el = document.createElementNS(tag === "svg" || tag === "path" || tag === "rect" ? "http://www.w3.org/2000/svg" : "http://www.w3.org/1999/xhtml", tag);
+    const el = document.createElementNS(SVG_TAGS.has(tag) ? "http://www.w3.org/2000/svg" : "http://www.w3.org/1999/xhtml", tag);
     for (const [k, v] of Object.entries(props || {})) {
       if (v === null || v === undefined || v === false) continue;
       if (k.startsWith("on")) el.addEventListener(k.slice(2).toLowerCase(), v);
@@ -221,7 +257,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
         session = { client: data.client_id, key: data.token };
         status = await api("/status/" + cid());
         try { sessionStorage.setItem(SKEY, JSON.stringify(session)); } catch (e2) {}
-        go(location.hash && location.hash !== "#" ? location.hash : "#/audit");
+        go(location.hash && location.hash !== "#" ? location.hash : "#/home");
       } catch (e2) {
         if (e2.message !== "signed out") err.textContent = /fetch/i.test(e2.message) ? "Cannot reach the server. Check your internet connection." : e2.message;
         session = null; btn.disabled = false;
@@ -275,7 +311,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
         if (!res.ok) throw new Error(d.error || "Please ask for a new reset link.");
         session = { client: d.client_id, key: d.token };
         try { sessionStorage.setItem(SKEY, JSON.stringify(session)); } catch (e2) {}
-        window.history.replaceState(null, "", "/app#/audit");
+        window.history.replaceState(null, "", "/app#/home");
         toast("Password changed");
         route();
       } catch (e2) { err.textContent = e2.message; btn.disabled = false; }
@@ -291,6 +327,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
 
   // ---------- layout ----------
   const NAV = [
+    ["#/home", "Home", "M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"],
     ["#/audit", "Audit", "M3 12h4l3 8 4-16 3 8h4"],
     ["#/upload", "Connect & upload", "M12 16V4M6 10l6-6 6 6M4 20h16"],
     ["#/whatsapp", "WhatsApp", "M12 3a9 9 0 0 0-7.8 13.5L3 21l4.6-1.2A9 9 0 1 0 12 3z"],
@@ -1134,8 +1171,149 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
           h("tbody", {}, b.fees.map((f) => h("tr", {}, h("td", {}, f.created_at.slice(0, 10)), h("td", {}, fmt.format(f.spend) + " " + (f.currency || "")), h("td", {}, fmt.format(f.fee) + " " + (f.currency || "")))))))) : null]));
   }
 
+  // ---------- home (Shopify-style) ----------
+  let homePeriod = "30", homeMetric = "sales";
+  try { homePeriod = localStorage.getItem("proads.period") || "30"; } catch (e) {}
+  const PERIOD_LABELS = [["today", "Today"], ["7", "7 days"], ["30", "30 days"], ["90", "90 days"], ["365", "12 months"]];
+  const money0 = (v, cur) => fmt.format(Math.round(v)) + " " + cur;
+  function changePill(ch) {
+    if (ch === null || ch === undefined) return h("span", { class: "chg flat" }, "—");
+    const up = ch > 0.0005, down = ch < -0.0005;
+    return h("span", { class: "chg " + (up ? "up" : down ? "down" : "flat"), "aria-label": (up ? "up " : down ? "down " : "no change ") + Math.abs(Math.round(ch * 100)) + "%" },
+      up ? "↗" : down ? "↘" : "→", Math.abs(Math.round(ch * 100)) + "%");
+  }
+  function sparkline(vals) {
+    const W = 120, H = 28, max = Math.max(...vals, 1);
+    const pts = vals.map((v, i) => (vals.length > 1 ? i * W / (vals.length - 1) : 0).toFixed(1) + "," + (H - 2 - (v / max) * (H - 4)).toFixed(1)).join(" ");
+    return h("svg", { viewBox: "0 0 " + W + " " + H, width: W, height: H, "aria-hidden": "true", style: "width:100%;max-width:120px;height:28px" },
+      h("polyline", { points: pts, fill: "none", stroke: "#A78BFA", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke" }));
+  }
+  function niceMax(v) { if (v <= 0) return 1; const p = Math.pow(10, Math.floor(Math.log10(v))); const n = v / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p; }
+  function lineChart(dates, cur, prev, fmtV, width) {
+    const W = Math.max(300, Math.round(width || 760)), H = W < 500 ? 220 : 260, L = 48, R = 10, T = 12, B = 28, n = dates.length;
+    const max = niceMax(Math.max(...cur, ...prev, 0));
+    const x = (i) => L + (n > 1 ? i * (W - L - R) / (n - 1) : (W - L - R) / 2);
+    const y = (v) => T + (H - T - B) * (1 - v / max);
+    const path = (vals) => vals.map((v, i) => (i ? "L" : "M") + x(i).toFixed(1) + " " + y(v).toFixed(1)).join(" ");
+    const day = (iso) => new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    const grid = [0, 0.25, 0.5, 0.75, 1].map((f) => h("g", {},
+      h("line", { x1: L, x2: W - R, y1: y(max * f), y2: y(max * f), stroke: "#26232F", "stroke-width": 1 }),
+      h("text", { x: L - 8, y: y(max * f) + 4, "text-anchor": "end", fill: "#8E8A9C", "font-size": 11 }, fmt.format(Math.round(max * f)))));
+    const ticks = n > 1 ? [0, Math.floor((n - 1) / 2), n - 1] : [0];
+    const xl = ticks.map((i) => h("text", { x: x(i), y: H - 8, "text-anchor": i === 0 && n > 1 ? "start" : i === n - 1 && n > 1 ? "end" : "middle", fill: "#8E8A9C", "font-size": 11 }, day(dates[i])));
+    const hair = h("line", { y1: T, y2: H - B, stroke: "#6E6880", "stroke-width": 1, style: "display:none" });
+    const dotC = h("circle", { r: 5, fill: "#A78BFA", stroke: "#15131D", "stroke-width": 2, style: "display:none" });
+    const dotP = h("circle", { r: 4, fill: "#6E6880", stroke: "#15131D", "stroke-width": 2, style: "display:none" });
+    const tip = h("div", { class: "tip", style: "display:none", role: "status" });
+    const hit = h("rect", { x: L, y: T, width: W - L - R, height: H - T - B, fill: "transparent", style: "cursor:crosshair" });
+    const svg = h("svg", { viewBox: "0 0 " + W + " " + H, role: "img", "aria-label": "Chart of this period against the previous period" },
+      grid, xl,
+      h("path", { d: path(prev), fill: "none", stroke: "#6E6880", "stroke-width": 2, "stroke-dasharray": "5 5", "stroke-linejoin": "round" }),
+      h("path", { d: path(cur), fill: "none", stroke: "#A78BFA", "stroke-width": 2.5, "stroke-linejoin": "round", "stroke-linecap": "round" }),
+      hair, dotP, dotC, hit);
+    const wrap = h("div", { class: "chartwrap" }, svg, tip);
+    function show(clientX) {
+      const r = svg.getBoundingClientRect(), sx = (clientX - r.left) * W / r.width;
+      const i = Math.max(0, Math.min(n - 1, Math.round((sx - L) / ((W - L - R) / Math.max(n - 1, 1)))));
+      hair.setAttribute("x1", x(i)); hair.setAttribute("x2", x(i)); hair.style.display = "";
+      dotC.setAttribute("cx", x(i)); dotC.setAttribute("cy", y(cur[i])); dotC.style.display = "";
+      dotP.setAttribute("cx", x(i)); dotP.setAttribute("cy", y(prev[i])); dotP.style.display = "";
+      tip.replaceChildren(h("b", {}, day(dates[i])),
+        h("div", { class: "r" }, h("span", { class: "key" }, h("i"), "This period"), h("b", {}, fmtV(cur[i]))),
+        h("div", { class: "r" }, h("span", { class: "key" }, h("i", { class: "prev" }), "Previous"), h("span", {}, fmtV(prev[i]))));
+      tip.style.display = "";
+      const px = x(i) * r.width / W, tw = tip.offsetWidth;
+      tip.style.left = Math.min(Math.max(px + 14, 0), r.width - tw) + (px + 14 + tw > r.width ? -0 : 0) + "px";
+      if (px + 14 + tw > r.width) tip.style.left = Math.max(px - tw - 14, 0) + "px";
+      tip.style.top = "8px";
+    }
+    function hide() { [hair, dotC, dotP, tip].forEach((e) => e.style.display = "none"); }
+    hit.addEventListener("pointermove", (e) => show(e.clientX));
+    hit.addEventListener("pointerdown", (e) => show(e.clientX));
+    hit.addEventListener("pointerleave", hide);
+    return wrap;
+  }
+
+  async function viewHome() {
+    const body = h("div", { style: "display:contents" }, loading());
+    const periods = h("div", { class: "periods", role: "group", "aria-label": "Time period" }, PERIOD_LABELS.map(([v, label]) =>
+      h("button", { type: "button", "aria-pressed": v === homePeriod ? "true" : "false", onclick: () => {
+        homePeriod = v; try { localStorage.setItem("proads.period", v); } catch (e) {} viewHome(); } }, label)));
+    root.replaceChildren(layout("#/home", [
+      h("header", { class: "between", style: "align-items:flex-end" },
+        h("div", {}, h("h1", {}, "Home"), h("p", { class: "sub" }, "Compared with the previous period")), periods),
+      body]));
+    let d;
+    try { d = await api("/dashboard/" + cid() + "?period=" + encodeURIComponent(homePeriod)); }
+    catch (e) { if (e.message !== "signed out") body.replaceChildren(errorCard(e.message)); return; }
+    const cur = d.currency;
+    const doneN = d.setup.filter((x) => x.done).length;
+    const guide = doneN === d.setup.length ? null : h("section", { class: "card", "aria-labelledby": "guide-h" },
+      h("div", { class: "between" }, h("h2", { id: "guide-h" }, "Setup guide"), h("span", { class: "sub", style: "font-size:13px" }, doneN + " of " + d.setup.length + " done")),
+      h("div", { class: "progress", role: "progressbar", "aria-valuemin": 0, "aria-valuemax": d.setup.length, "aria-valuenow": doneN }, h("div", { style: "width:" + Math.round(100 * doneN / d.setup.length) + "%" })),
+      h("div", { class: "guide" }, d.setup.map((x) => h("a", { href: x.href, class: x.done ? "done" : "" },
+        h("span", { class: "tick", "aria-hidden": "true" }, x.done ? h("svg", { width: 12, height: 12, viewBox: "0 0 24 24", fill: "none", stroke: "#0D0C12", "stroke-width": 4 }, h("path", { d: "M5 12l5 5 9-10" })) : null),
+        h("span", { style: "display:flex;flex-direction:column;gap:2px" }, h("b", { style: "font-size:14px" }, x.label), x.done ? null : h("span", { class: "sub", style: "font-size:13px" }, x.how)),
+        h("span", { class: "sr" }, x.done ? "done" : "to do")))));
+    if (!d.has_data) {
+      body.replaceChildren(...[guide].filter(Boolean), h("section", { class: "card empty" }, h("h2", {}, "Your sales will show here"),
+        h("p", { class: "sub" }, "Bring in your sales and this page fills with sales, real profit and orders, day by day."),
+        h("a", { class: "btn btn-primary", href: "#/upload" }, "Bring in your sales")));
+      return;
+    }
+    const fmtFor = (k) => k === "orders" ? (v) => fmt.format(v) : (v) => money0(v, cur);
+    const M = {}; d.metrics.forEach((m) => M[m.key] = m);
+    const chartHost = h("div", {});
+    const strip = h("div", { class: "mstrip", role: "group", "aria-label": "Key numbers" });
+    function draw() {
+      const s = d.series[homeMetric] || d.series.sales;
+      chartHost.replaceChildren(lineChart(d.dates, s.current, s.previous, fmtFor(homeMetric), chartHost.clientWidth));
+      strip.replaceChildren(...d.metrics.map((m) => {
+        const has = !!d.series[m.key];
+        return h("button", { type: "button", "aria-pressed": has && m.key === homeMetric ? "true" : "false", disabled: has ? null : true, style: has ? "" : "cursor:default",
+          onclick: has ? () => { homeMetric = m.key; draw(); } : null },
+          h("span", { class: "ml" }, m.label),
+          h("span", { class: "mv" }, m.key === "orders" ? fmt.format(m.value) : money0(m.value, cur)),
+          h("span", { class: "between", style: "gap:8px" }, changePill(m.change), has ? sparkline(d.series[m.key].current) : null));
+      }));
+    }
+    const label = (M[homeMetric] || M.sales).label;
+    const maxSrc = Math.max(...d.sources.map((x) => x.sales), 1), maxProd = Math.max(...d.products.map((x) => x.sales), 1);
+    const listCard = (title, rows, empty) => h("section", { class: "card" }, h("h2", {}, title),
+      rows.length ? h("div", { style: "display:flex;flex-direction:column;gap:14px" }, rows) : h("p", { class: "sub", style: "margin:0;font-size:14px" }, empty));
+    const sources = listCard("Sales by source", d.sources.map((x) => h("div", { class: "hbar" }, h("span", {}, x.source), h("b", {}, money0(x.sales, cur)),
+      h("div", { class: "track", role: "img", "aria-label": x.source + ": " + money0(x.sales, cur) }, h("div", { style: "width:" + Math.max(2, Math.round(100 * x.sales / maxSrc)) + "%" })))), "No sales in this period.");
+    const products = listCard("Top products", d.products.map((x) => h("div", { class: "hbar" }, h("span", {}, x.product, h("span", { class: "sub", style: "font-size:12px" }, " · " + fmt.format(x.units) + " sold")), h("b", {}, money0(x.sales, cur)),
+      h("div", { class: "track", "aria-hidden": "true" }, h("div", { style: "width:" + Math.max(2, Math.round(100 * x.sales / maxProd)) + "%" })))), "Product names appear when your sales include them (Shopify or a product column).");
+    const camps = d.campaigns.length ? h("section", { class: "card" }, h("div", { class: "between" }, h("h2", {}, "Campaigns"), h("a", { href: "#/assistant", style: "font-size:13px" }, "New campaign")),
+      d.campaigns.map((x) => h("div", { class: "between", style: "font-size:14px;gap:8px" }, h("span", {}, x.name || x.campaign_id),
+        h("span", { class: "badge " + (x.status === "ACTIVE" ? "b-measured" : "b-neutral") }, x.status === "ACTIVE" ? "Live" : "Paused")))) : null;
+    const extra = h("div", { style: "display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color: var(--muted)" },
+      h("span", {}, "Refunds: ", h("b", { style: "color: var(--text)" }, pct(d.refund_rate)), " of sales"),
+      d.returning_rate !== null ? h("span", {}, "Returning customers: ", h("b", { style: "color: var(--text)" }, pct(d.returning_rate))) : null,
+      d.live ? null : h("span", { style: "color: var(--amber-txt)" }, "Showing your latest history, up to " + new Date(d.as_of + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })));
+    body.replaceChildren(
+      strip,
+      h("section", { class: "card", "aria-label": "Chart" },
+        h("div", { class: "between" }, h("h2", {}, label + " over time"),
+          h("div", { style: "display:flex;gap:14px" }, h("span", { class: "key" }, h("i"), "This period"), h("span", { class: "key" }, h("i", { class: "prev" }), "Previous period"))),
+        chartHost, extra),
+      h("div", { class: "row", style: "align-items:flex-start" },
+        h("div", { style: "flex:3 1 420px;display:flex;flex-direction:column;gap:24px;min-width:0" }, sources, products),
+        h("div", { style: "flex:2 1 300px;display:flex;flex-direction:column;gap:24px;min-width:0" }, guide, camps)));
+    draw();
+    let lastW = chartHost.clientWidth, timer = null;
+    const onResize = () => {
+      if (!chartHost.isConnected) { window.removeEventListener("resize", onResize); return; }
+      clearTimeout(timer); timer = setTimeout(() => { if (Math.abs(chartHost.clientWidth - lastW) > 20) { lastW = chartHost.clientWidth; draw(); } }, 150);
+    };
+    window.addEventListener("resize", onResize);
+    // keep the chart title in sync with the chosen metric
+    strip.addEventListener("click", () => { const t = body.querySelector("section[aria-label=Chart] h2"); if (t) t.textContent = (M[homeMetric] || M.sales).label + " over time"; });
+  }
+
   // ---------- router ----------
-  const VIEWS = { "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling };
+  const VIEWS = { "#/home": viewHome, "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling };
   function go(hash) { if (location.hash !== hash) location.hash = hash; else route(); }
   async function route() {
     const [path, query] = location.hash.split("?");
@@ -1145,7 +1323,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
     if (!status || params.has("shopify")) {
       try { status = await api("/status/" + cid()); } catch (e) { if (e.message !== "signed out") root.replaceChildren(h("div", { class: "login" }, errorCard(e.message))); return; }
     }
-    (VIEWS[path] || viewAudit)(params);
+    (VIEWS[path] || viewHome)(params);
     window.scrollTo(0, 0);
   }
   window.addEventListener("hashchange", route);

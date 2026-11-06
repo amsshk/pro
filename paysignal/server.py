@@ -47,6 +47,7 @@ from .identity import hash_phone
 from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
 from .attribution import make_promo_code, tag_link
+from .dashboard import build_dashboard
 from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, business_context
 from . import billing, meta_ads, meta_connect
 from .connectors.stripe import verify_signature as stripe_signature_ok
@@ -457,6 +458,36 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                     out["summary_error"] = str(e)
             else:
                 out["summary_error"] = "AI is not set up: add MODEL_API_KEY from dev.meta.ai"
+        return out
+
+    @flask.get("/dashboard/<client_id>")
+    def dashboard_endpoint(client_id):
+        """Home: a period vs the one before (?period=today|7|30|90|365), plus a setup guide."""
+        state.require_key(client_id)
+        cfg = state.config(client_id)
+        with state.lock:
+            out = build_dashboard(state.engine(client_id), request.args.get("period", "30"),
+                                  currency=cfg.get("currency", "AED"))
+            codes = len(state.store.promos(client_id))
+            launches = state.launches.list(client_id)
+            conn = meta_connect.public_view(state.meta_conns.get(client_id))
+            shop = state.store.shop_for(client_id)
+            plan = state.billing.active(client_id)
+        out["campaigns"] = [{k: l.get(k) for k in ("campaign_id", "name", "status", "daily_budget", "currency",
+                                                   "manager_url")} for l in launches[:5]]
+        out["setup"] = [
+            {"label": "Bring in your sales", "done": out["has_data"] or bool(shop), "href": "#/upload",
+             "how": "Upload a sales list or connect Shopify"},
+            {"label": "Connect Facebook & Instagram", "done": bool(conn.get("ready")) or is_admin(client_id),
+             "href": "#/upload", "how": "Pick your ad account, Page and Pixel"},
+            {"label": "Track your next post", "done": codes > 0, "href": "#/upload",
+             "how": "Give each post its own link and code"},
+            {"label": "Launch your first campaign", "done": bool(launches), "href": "#/assistant",
+             "how": "ProAds builds it, you press Go live"},
+        ]
+        if not is_admin(client_id) and billing.available():
+            out["setup"].append({"label": "Choose your plan", "done": plan, "href": "#/billing",
+                                 "how": "Free trial, cancel any time"})
         return out
 
     @flask.get("/report/<client_id>")
