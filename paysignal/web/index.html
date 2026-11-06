@@ -786,17 +786,18 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
       h("button", { class: "chip", type: "button", dir: "auto", onclick: () => ask(t) }, t)));
 
     // campaign builder
-    const budget = h("input", { id: "budget", type: "number", min: 10, step: 10, value: 300, required: true });
-    const goal = h("select", { id: "goal" }, h("option", {}, "Paying customers who stay"), h("option", {}, "More bookings"), h("option", {}, "Bring past customers back"));
+    const budget = h("input", { id: "budget", type: "number", min: 10, step: 5, value: status && status.admin ? 40 : 300, required: true });
+    const goals = (status && status.admin ? [["Sign-ups for ProAds", "signup"]] : []).concat([["Paying customers who stay", "purchase"], ["More bookings", "purchase"], ["Bring past customers back", "purchase"], ["Sign-ups or leads", "signup"]]);
+    const goal = h("select", { id: "goal" }, goals.map(([label, conv], i) => h("option", { value: String(i) }, label)));
     const notes = h("textarea", { id: "notes", placeholder: "Optional: product to push, offer, audience to avoid…", dir: "auto" });
     const out = h("div", { style: "display:flex;flex-direction:column;gap:12px" });
-    const build = h("button", { class: "btn btn-primary", type: "submit" }, "Build campaign draft");
+    const build = h("button", { class: "btn btn-primary", type: "submit" }, "Build campaign");
     const campForm = h("form", { style: "display:flex;flex-direction:column;gap:12px", onsubmit: async (e) => {
       e.preventDefault(); build.disabled = true;
       out.replaceChildren(loading("Muse Wonder is planning your campaign. This can take up to a minute…"));
       try {
         const r = await api("/campaign/" + cid(), { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ daily_budget: Number(budget.value), goal: goal.value, notes: notes.value }) });
+          body: JSON.stringify({ daily_budget: Number(budget.value), goal: goals[Number(goal.value)][0], conversion: goals[Number(goal.value)][1], notes: notes.value }) });
         out.replaceChildren(renderPlan(r));
       } catch (err) {
         if (err.message !== "signed out") out.replaceChildren(errorCard(/billing/i.test(err.message) ? "Meta AI is blocked by a billing problem on your Meta Model API account. Fix it at dev.meta.ai, then try again." : err.message));
@@ -813,7 +814,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
       h("div", { class: "row", style: "align-items:flex-start" },
         h("section", { class: "card", "aria-labelledby": "chat" }, h("h2", { id: "chat" }, "Ask about your results"), chat, chips, chatForm),
         h("section", { class: "card", "aria-labelledby": "camp" },
-          h("div", { class: "between" }, h("h2", { id: "camp" }, "Campaign builder"), h("span", { class: "badge b-neutral" }, "Draft: nothing launches without you")),
+          h("div", { class: "between" }, h("h2", { id: "camp" }, "Campaign builder"), h("span", { class: "badge b-neutral" }, "Nothing spends until you press Go live")),
           campForm, out)),
     ]));
     chat.scrollTop = chat.scrollHeight;
@@ -841,7 +842,157 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
         r.problems && r.problems.length
           ? h("span", { style: "color: var(--amber-txt); font-size:13px; font-weight:600" }, "Check before using: " + r.problems.join("; "))
           : h("span", { style: "color: var(--violet-txt); font-size:13px; font-weight:600" }, "Checks passed: within budget, splits add up"),
-        h("span", { class: "sub", style: "font-size:12px" }, r.model + " · " + Number(r.cost_usd || 0).toFixed(3) + " USD")));
+        h("span", { class: "sub", style: "font-size:12px" }, r.model + " · " + Number(r.cost_usd || 0).toFixed(3) + " USD")),
+      organicSection(p.organic_plan, r.landing_url),
+      r.problems && r.problems.length ? null : publishSection(r, sets));
+  }
+
+  // ---------- organic plan: one tracking link + code per post ----------
+  function organicSection(posts, landing) {
+    if (!Array.isArray(posts) || !posts.length) return null;
+    const rows = posts.map((x) => ({ x, slot: h("div", { style: "display:flex;flex-direction:column;gap:6px" }) }));
+    const btn = h("button", { class: "btn btn-ghost", type: "button" }, "Create tracking links for these posts");
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        for (const [i, { x, slot }] of rows.entries()) {
+          const platform = ["instagram", "tiktok", "facebook"].includes(String(x.platform).toLowerCase()) ? String(x.platform).toLowerCase() : "instagram";
+          const r = await api("/tracking/" + cid(), { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ post_name: (x.day ? x.day + " " : "") + (x.hook || "post " + (i + 1)).slice(0, 40), platform, url: landing || "" }) });
+          slot.replaceChildren(h("div", { style: "display:flex;gap:8px;flex-wrap:wrap;align-items:center" },
+            h("span", { class: "badge b-measured" }, "Code " + r.code),
+            r.link ? h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => copy(r.link) }, "Copy link") : null,
+            h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => copy((x.caption || "") + (r.link ? "\n\n" + r.link : "")) }, "Copy caption + link")));
+        }
+        btn.replaceWith(h("p", { class: "sub", style: "margin:0;font-size:13px" }, "Done. Each post now has its own link and code, so sign-ups and sales show which post brought them. Find them all under Connect & upload."));
+      } catch (e) { if (e.message !== "signed out") { btn.disabled = false; toast(e.message); } }
+    });
+    return h("div", { class: "adset", style: "gap:10px" },
+      h("div", { class: "between" }, h("b", {}, "Organic plan: next 7 days"), h("span", { class: "sub", style: "font-size:13px" }, "Post these; the winners get boosted next")),
+      rows.map(({ x, slot }) => h("div", { class: "ad" },
+        h("span", { style: "font-size:12px;color: var(--muted)" }, [x.day, x.platform, x.format].filter(Boolean).join(" · ")),
+        x.hook ? h("b", {}, x.hook) : null,
+        x.caption ? h("span", { style: "white-space:pre-wrap" }, x.caption) : null,
+        x.why ? h("span", { class: "sub", style: "font-size:13px" }, "Why: " + x.why) : null, slot)),
+      btn);
+  }
+
+  // ---------- ad images, drawn in the browser ----------
+  const CTA_TEXT = { SIGN_UP: "Sign up", LEARN_MORE: "Learn more", SHOP_NOW: "Shop now", BOOK_NOW: "Book now", CONTACT_US: "Contact us", GET_OFFER: "Get offer", ORDER_NOW: "Order now", SUBSCRIBE: "Subscribe", GET_QUOTE: "Get quote", APPLY_NOW: "Apply now", DOWNLOAD: "Download" };
+  function wrapLines(ctx, text, maxW) {
+    const words = String(text || "").split(/\s+/).filter(Boolean), lines = [];
+    let line = "";
+    for (const w of words) { const t = line ? line + " " + w : w; if (ctx.measureText(t).width > maxW && line) { lines.push(line); line = w; } else line = t; }
+    if (line) lines.push(line);
+    return lines;
+  }
+  function makeAdImage(ad, brand, host) {
+    const S = 1080, c = h("canvas", { width: S, height: S }), x = c.getContext("2d");
+    x.fillStyle = "#0D0C12"; x.fillRect(0, 0, S, S);
+    const g = x.createRadialGradient(S * 0.85, S * 0.1, 40, S * 0.85, S * 0.1, S * 0.9);
+    g.addColorStop(0, "rgba(167,139,250,0.55)"); g.addColorStop(1, "rgba(167,139,250,0)");
+    x.fillStyle = g; x.fillRect(0, 0, S, S);
+    // rising line motif
+    x.strokeStyle = "rgba(167,139,250,0.35)"; x.lineWidth = 10; x.lineCap = "round"; x.lineJoin = "round";
+    x.beginPath(); x.moveTo(560, 900); x.lineTo(720, 760); x.lineTo(840, 830); x.lineTo(1010, 620); x.stroke();
+    // logo
+    x.fillStyle = "#A78BFA"; x.beginPath(); x.roundRect(80, 80, 96, 96, 26); x.fill();
+    x.strokeStyle = "#0D0C12"; x.lineWidth = 8; x.beginPath(); x.moveTo(101, 138); x.lineTo(115, 124); x.lineTo(129, 134); x.lineTo(154, 106); x.stroke();
+    x.fillStyle = "#F2EFE8"; x.font = "700 52px 'Space Grotesk', Inter, sans-serif"; x.textBaseline = "middle"; x.fillText(brand, 200, 130);
+    // headline, as big as fits
+    let size = 112, lines;
+    do { x.font = "700 " + size + "px 'Space Grotesk', Inter, sans-serif"; lines = wrapLines(x, ad.headline, S - 160); size -= 6; } while ((lines.length > 4 || lines.length * size * 1.12 > 470) && size > 48);
+    size += 6; x.textBaseline = "alphabetic"; x.fillStyle = "#F2EFE8";
+    lines.forEach((l, i) => x.fillText(l, 80, 330 + i * size * 1.12));
+    // short line from the ad text
+    const subText = String(ad.primary_text || "").split(/(?<=[.!?])\s/)[0];
+    x.font = "500 44px Inter, sans-serif"; x.fillStyle = "#C4B5FD";
+    wrapLines(x, subText, S - 160).slice(0, 2).forEach((l, i) => x.fillText(l, 80, 330 + lines.length * size * 1.12 + 44 + i * 58));
+    // button + address
+    const label = CTA_TEXT[ad.call_to_action] || "Learn more";
+    x.font = "600 40px Inter, sans-serif"; const bw = x.measureText(label).width + 96;
+    x.fillStyle = "#A78BFA"; x.beginPath(); x.roundRect(80, 880, bw, 96, 48); x.fill();
+    x.fillStyle = "#0D0C12"; x.textBaseline = "middle"; x.fillText(label, 128, 929);
+    x.fillStyle = "#A9A4B8"; x.font = "500 32px Inter, sans-serif"; x.fillText(host, 80 + bw + 32, 929);
+    return c.toDataURL("image/jpeg", 0.9);
+  }
+  function fileToAdImage(file) {
+    return new Promise((resolve, reject) => {
+      if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return reject(new Error("Use a JPG or PNG image"));
+      const url = URL.createObjectURL(file), img = new Image();
+      img.onload = () => {
+        const S = 1080, c = h("canvas", { width: S, height: S }), x = c.getContext("2d");
+        const k = Math.max(S / img.width, S / img.height), w = img.width * k, hh = img.height * k;
+        x.drawImage(img, (S - w) / 2, (S - hh) / 2, w, hh);
+        URL.revokeObjectURL(url); resolve(c.toDataURL("image/jpeg", 0.9));
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("That image could not be opened")); };
+      img.src = url;
+    });
+  }
+
+  // ---------- publish to Meta ----------
+  function publishSection(r, sets) {
+    if (!status || !status.admin) return null;
+    if (!r.can_publish) return h("div", { class: "result err" }, h("span", {}, "To publish this straight to Meta, finish ", h("b", {}, "Publish campaigns to Meta"), " in Admin → Setup."));
+    const images = {}, cards = [];
+    const brand = "ProAds";
+    let host = location.host;
+    try { host = new URL(r.landing_url).host; } catch (e) {}
+    sets.forEach((s, i) => (Array.isArray(s.ads) ? s.ads : []).forEach((ad, j) => {
+      const key = i + "-" + j;
+      images[key] = makeAdImage(ad, brand, host);
+      const img = h("img", { src: images[key], alt: "Ad image: " + (ad.headline || ""), style: "width:100%;max-width:260px;border-radius:10px;border:1px solid var(--line)" });
+      const pick = h("input", { type: "file", accept: "image/jpeg,image/png,image/webp", class: "sr", id: "img-" + key });
+      pick.addEventListener("change", async () => {
+        try { images[key] = await fileToAdImage(pick.files[0]); img.src = images[key]; } catch (e) { toast(e.message); }
+      });
+      cards.push(h("div", { style: "display:flex;flex-direction:column;gap:8px;flex:1 1 200px;max-width:260px" }, img,
+        h("span", { style: "font-size:13px;font-weight:600" }, ad.headline || "Ad " + (j + 1)),
+        h("label", { for: "img-" + key, class: "chip", style: "display:inline-flex;align-items:center;justify-content:center" }, "Use my own image"), pick));
+    }));
+    const box = h("div", { style: "display:flex;flex-direction:column;gap:10px" });
+    const btn = h("button", { class: "btn btn-primary", type: "button" }, "Create in Meta Ads Manager (paused)");
+    btn.addEventListener("click", async () => {
+      btn.disabled = true; box.replaceChildren(loading("Creating the campaign, ad set and ads in Meta…"));
+      try {
+        const launch = await api("/campaign/" + cid() + "/publish", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ plan: r.plan, images, landing_url: r.landing_url }) });
+        btn.remove(); box.replaceChildren(launchCard(launch));
+      } catch (e) { if (e.message !== "signed out") box.replaceChildren(errorCard(e.message)); btn.disabled = false; }
+    });
+    return h("div", { class: "adset", style: "gap:12px" },
+      h("div", { class: "between" }, h("b", {}, "Publish to Meta"), h("span", { class: "sub", style: "font-size:13px" }, "Ads open " + (r.landing_url || "your website"))),
+      h("p", { class: "sub", style: "margin:0;font-size:13px" }, "These images were made for each ad. Swap any of them for your own photo or design."),
+      h("div", { style: "display:flex;gap:14px;flex-wrap:wrap" }, cards), btn, box);
+  }
+
+  function launchCard(launch) {
+    const live = launch.status === "ACTIVE";
+    const money = fmt.format(launch.daily_budget) + " " + launch.currency + "/day";
+    const box = h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" });
+    async function setTo(action) {
+      try {
+        const r = await api("/campaign/" + cid() + "/launch/" + encodeURIComponent(launch.campaign_id), { method: "POST",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, confirm: action === "live" }) });
+        card.replaceWith(launchCard(r));
+      } catch (e) { if (e.message !== "signed out") toast(e.message); }
+    }
+    const goLive = h("button", { class: "btn btn-primary", type: "button" }, "Go live");
+    goLive.addEventListener("click", () => {
+      box.replaceChildren(
+        h("span", { style: "flex-basis:100%;font-size:14px" }, "Meta will start spending up to " + money + ". Start now?"),
+        h("button", { class: "btn btn-primary", type: "button", onclick: (e) => { e.target.disabled = true; setTo("live"); } }, "Yes, start spending"),
+        h("button", { class: "btn btn-ghost", type: "button", onclick: () => box.replaceChildren(goLive, open) }, "Not yet"));
+    });
+    const open = h("a", { class: "btn btn-ghost", href: launch.manager_url, target: "_blank", rel: "noopener" }, "Open in Ads Manager");
+    const pause = h("button", { class: "btn btn-ghost", type: "button", onclick: (e) => { e.target.disabled = true; setTo("pause"); } }, "Pause");
+    box.append(...(live ? [pause, open] : [goLive, open]));
+    const card = h("div", { class: "result", style: "flex-direction:column;align-items:stretch;gap:12px" },
+      h("span", { class: "ok" }, live ? "Live: Meta is spending up to " + money : "Created in Meta, paused. Nothing is spending yet."),
+      h("span", { class: "sub", style: "font-size:13px" }, launch.ads.length + " ads · campaign " + launch.campaign_id + (live ? " · give it 3–4 days before judging" : " · check it in Ads Manager, then go live")),
+      box);
+    return card;
   }
 
   // ---------- router ----------

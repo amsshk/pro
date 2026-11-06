@@ -250,3 +250,16 @@ python -m paysignal.server                # http://localhost:8000/health
 - TikTok Events API sender
 - Client onboarding (Meta login, connect store)
 - Dashboard
+
+## Publishing campaigns to Meta (your own ad account)
+
+"Ask & campaigns" builds a campaign plus a 7-day organic plan, makes an image for each ad,
+and creates everything in Meta Ads Manager **paused**. Nothing spends until you press
+**Go live** and confirm. Settings (Render → Environment):
+
+- `PROADS_AD_ACCOUNT_ID` – ad account ID (with or without `act_`)
+- `PROADS_PAGE_ID` – Facebook Page the ads run from
+- `PROADS_INSTAGRAM_ID` – optional, Instagram account the ads show as
+- `PROADS_ADS_TOKEN` – system user token with `ads_management`, `pages_manage_ads`,
+  `pages_read_engagement`, `business_management` (falls back to `PROADS_META_TOKEN`)
+- `PROADS_META_DATASET_ID` – the Pixel the ads optimise for (already set for tracking)

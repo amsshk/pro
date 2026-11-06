@@ -6,7 +6,8 @@
 
 Privacy: the AI only ever sees aggregated numbers (totals, per-post results,
 patterns). Customer names, emails, phones and individual payments are never sent.
-Campaign plans are drafts for a person to review; nothing is launched.
+Campaign plans are drafts; publishing to Meta (meta_ads.py) creates them paused, and only
+a person's explicit 'go live' starts spending.
 """
 from __future__ import annotations
 
@@ -48,21 +49,48 @@ SYSTEM_CHAT = (
     "numbers, and reply in the language the question was asked in."
 )
 
+CTAS = ("SIGN_UP", "LEARN_MORE", "SHOP_NOW", "BOOK_NOW", "CONTACT_US", "GET_OFFER", "ORDER_NOW",
+        "SUBSCRIBE", "GET_QUOTE", "APPLY_NOW", "DOWNLOAD", "WHATSAPP_MESSAGE")
+
 SYSTEM_CAMPAIGN = (
-    "You are a senior Meta ads strategist. Draft a Meta (Facebook/Instagram) campaign for this business, "
-    "built on what already made money organically. Rules:\n"
-    "- Optimise for Purchase with value (the business sends real profit values through the Conversions API).\n"
-    "- Prefer broad targeting and few ad sets: Meta's delivery system finds buyers when given good signals.\n"
-    "- Use the boost_candidates and the confident winning patterns for creatives. Never build on patterns "
-    "marked confident=false without labelling them as tests.\n"
+    "You are a senior Meta ads strategist. Plan a Meta (Facebook/Instagram) campaign for this business "
+    "AND the organic posts that go with it. The campaign will be published to Meta as written, so be exact.\n"
+    "Rules:\n"
+    "- Optimise for the brief's conversion: 'purchase' means objective OUTCOME_SALES, optimisation "
+    "'Purchase with value' (real profit values arrive through the Conversions API); 'signup' means objective "
+    "OUTCOME_LEADS, optimisation 'CompleteRegistration' (website sign-ups, the product is free).\n"
+    "- Prefer broad targeting and 1-2 ad sets: Meta's delivery system finds the right people when given good signals.\n"
+    "- Build ads on the boost_candidates and confident winning patterns. Anything not proven is labelled a test.\n"
     "- Avoid what lost money (high refunds, watchers-only hooks).\n"
-    "- Stay within the given budget. Respect Meta advertising policies; no sensitive-trait targeting.\n"
+    "- Ads are published as single-image ads with a link: format must be 'single image'. 2-3 ads per ad set, "
+    "each a different angle. headline max 40 characters, primary_text max 300 characters.\n"
+    "- Use the product description in the brief for what the business offers. Never invent prices, results, "
+    "reviews, discounts or numbers that are not in the data.\n"
+    "- Write every ad and post in English only.\n"
+    "- call_to_action must be one of: " + ", ".join(CTAS) + ".\n"
+    "- Stay within the daily budget. Respect Meta advertising policies; no sensitive-trait targeting.\n"
+    "- organic_plan: 5-7 posts for the next 7 days on Instagram and TikTok that feed the ads: if posts that made "
+    "money exist, repeat their winning pattern; otherwise test clearly different hooks so the winners can be "
+    "boosted later. Each post asks people to use its own link or code (ProAds creates them).\n"
     "Reply with only a JSON object in this shape:\n"
-    '{"name": str, "objective": "OUTCOME_SALES", "optimization": str, "daily_budget": number, '
-    '"currency": str, "rationale": str, "ad_sets": [{"name": str, "audience": str, "budget_share": number, '
-    '"placements": str, "ads": [{"source_post_id": str or null, "format": str, "hook": str, "offer": str, '
+    '{"name": str, "objective": "OUTCOME_SALES" or "OUTCOME_LEADS", "optimization": str, "daily_budget": number, '
+    '"currency": str, "rationale": str, "targeting": {"countries": [two-letter codes], "age_min": number}, '
+    '"ad_sets": [{"name": str, "audience": str, "budget_share": number, "placements": str, '
+    '"ads": [{"source_post_id": str or null, "format": "single image", "hook": str, "offer": str, '
     '"primary_text": str, "headline": str, "call_to_action": str, "why": str}]}], '
+    '"organic_plan": [{"day": str, "platform": "instagram" or "tiktok", "format": str, "hook": str, '
+    '"caption": str, "why": str}], '
     '"tests": [str], "kill_rules": [str], "what_to_watch": [str]}'
+)
+
+PROADS_PRODUCT = (
+    "ProAds (pro.ezdevsoft.net) is free software for UAE businesses and agencies that advertise on Instagram, "
+    "Facebook and TikTok. A business uploads its sales list (Excel/CSV) or connects Shopify and gets a free audit "
+    "in its first week: discount codes that lose money, products that get refunded most, posts that bring buyers "
+    "versus posts that only get likes, real profit after refunds, repeat customers, and a to-do list. Every post "
+    "gets its own tracking link or code (works for WhatsApp, cash and walk-in sales). ProAds sends Meta the real "
+    "value of each sale so ads find people who pay, not just viewers. Has an AI assistant for questions about "
+    "your own numbers. Free during early access, no card needed. Sign-up takes a minute."
 )
 
 
@@ -101,13 +129,45 @@ def validate_campaign(plan: dict, daily_budget: float) -> list[str]:
         problems.append(f"ad set budget shares add up to {sum(shares)}, not 100%")
     if not any(s.get("ads") for s in plan["ad_sets"]):
         problems.append("no ads in any ad set")
+    for s in plan["ad_sets"]:
+        for ad in s.get("ads") or []:
+            if not (ad.get("headline") and ad.get("primary_text")):
+                problems.append(f"an ad in '{s.get('name', 'ad set')}' has no headline or text")
     return problems
 
 
+def tidy_plan(plan: dict, conversion: str) -> dict:
+    """Make the plan safe to publish: known call-to-action buttons, the right objective, sane ages."""
+    plan["objective"] = "OUTCOME_LEADS" if conversion == "signup" else "OUTCOME_SALES"
+    plan["conversion"] = conversion
+    t = plan.get("targeting") if isinstance(plan.get("targeting"), dict) else {}
+    countries = [c.upper() for c in t.get("countries") or [] if isinstance(c, str) and len(c) == 2] or ["AE"]
+    try:
+        age_min = int(t.get("age_min") or 18)
+    except (TypeError, ValueError):
+        age_min = 18
+    plan["targeting"] = {"countries": countries[:25], "age_min": max(18, min(age_min, 25))}
+    default_cta = "SIGN_UP" if conversion == "signup" else "SHOP_NOW"
+    for s in plan.get("ad_sets") or []:
+        for ad in s.get("ads") or []:
+            cta = str(ad.get("call_to_action") or "").upper().replace(" ", "_")
+            ad["call_to_action"] = cta if cta in CTAS and cta != "WHATSAPP_MESSAGE" else default_cta
+            ad["format"] = "single image"
+            ad["headline"] = str(ad.get("headline") or "")[:40]
+            ad["primary_text"] = str(ad.get("primary_text") or "")[:600]
+    plan["organic_plan"] = [p for p in plan.get("organic_plan") or [] if isinstance(p, dict)][:10]
+    return plan
+
+
 def build_campaign(ai: MetaAI, context: dict, daily_budget: float, goal: str = "",
-                   extra_instructions: str = "") -> dict:
+                   extra_instructions: str = "", conversion: str = "purchase", product: str = "",
+                   landing_url: str = "") -> dict:
+    conversion = "signup" if conversion == "signup" else "purchase"
     brief = {"daily_budget": daily_budget, "currency": context.get("currency", "AED"),
-             "goal": goal or "more paying customers who keep what they buy", "notes": extra_instructions}
+             "conversion": conversion,
+             "goal": goal or ("sign-ups from businesses that go on to use the product" if conversion == "signup"
+                              else "more paying customers who keep what they buy"),
+             "product": product, "landing_page": landing_url, "notes": extra_instructions}
     reply = ai.chat("campaign_builder", [
         {"role": "developer", "content": SYSTEM_CAMPAIGN},
         {"role": "user", "content": "Brief:\n" + json.dumps(brief, ensure_ascii=False) +
@@ -117,5 +177,8 @@ def build_campaign(ai: MetaAI, context: dict, daily_budget: float, goal: str = "
         plan = _extract_json(reply.text)
     except (json.JSONDecodeError, CampaignError) as e:
         raise CampaignError(f"could not read the campaign the model returned: {e}") from e
-    return {"plan": plan, "problems": validate_campaign(plan, daily_budget), "model": reply.model,
+    problems = validate_campaign(plan, daily_budget)
+    if not problems:
+        plan = tidy_plan(plan, conversion)
+    return {"plan": plan, "problems": problems, "model": reply.model, "landing_url": landing_url,
             "cost_usd": reply.cost_usd, "status": "draft - review before launching"}

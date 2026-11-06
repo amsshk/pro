@@ -13,7 +13,9 @@ Endpoints (one set per agency client, chosen by <client_id>):
   POST /import/<client_id>             day one: Shopify/Stripe/posts history     [API key]
   GET  /audit/<client_id>              first-week audit (?summary=1 for Muse)    [API key]
   POST /ask/<client_id>                ask a question about the results (AI)    [API key]
-  POST /campaign/<client_id>           draft a Meta campaign (AI, best model)   [API key]
+  POST /campaign/<client_id>           draft a Meta campaign + organic plan (AI)  [API key]
+  POST /campaign/<client_id>/publish   create it in Meta Ads Manager, paused       [admin]
+  POST /campaign/<client_id>/launch/<campaign_id>  go live / pause             [admin]
   GET  /health
 
 Run locally:   python -m paysignal.server
@@ -45,7 +47,8 @@ from .identity import hash_phone
 from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
 from .attribution import make_promo_code, tag_link
-from .assistant import CampaignError, ask, build_campaign, business_context
+from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, business_context
+from . import meta_ads
 from .audit import audit_summary, audit_text, build_audit
 from .importers import import_auto
 from .labeler import label_posts, make_labeler
@@ -104,6 +107,8 @@ class App:
         self.growth_sent: list | None = None   # set in tests to capture sent events
         self.wa_http = None                    # set in tests
         self.wa_sync = False                   # tests: send WhatsApp events inline
+        self.launches = meta_ads.LaunchStore(self.store.db)
+        self.ads_http = None                   # set in tests
 
     def known(self, client_id: str) -> bool:
         return client_id in self.clients or self.accounts.get(client_id) is not None
@@ -489,13 +494,80 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             budget = 0
         if budget <= 0:
             abort(400, "send JSON with a positive 'daily_budget'")
+        cfg = state.config(client_id)
+        own = is_admin(client_id)                       # ProAds advertising itself: the result is a sign-up
+        conversion = body.get("conversion") or ("signup" if own else "purchase")
+        if own:
+            product, landing = PROADS_PRODUCT, public_base() + "/"
+        else:
+            product = " ".join(x for x in (cfg.get("name", ""), cfg.get("website", "")) if x)
+            landing = cfg.get("website", "")
+        if landing and not re.match(r"^https?://", landing):
+            landing = "https://" + landing
         ai = need_ai()
         try:
-            return build_campaign(ai, ai_context(client_id), budget, body.get("goal", ""), body.get("notes", ""))
+            out = build_campaign(ai, ai_context(client_id), budget, body.get("goal", ""), body.get("notes", ""),
+                                 conversion=conversion, product=product, landing_url=landing)
         except PermissionError as e:
             abort(503, str(e))
         except (RuntimeError, CampaignError) as e:
             abort(502, str(e))
+        out["can_publish"] = own and not meta_ads.missing()
+        return out
+
+    def publisher():
+        return meta_ads.Publisher(state.ads_http)
+
+    @flask.post("/campaign/<client_id>/publish")
+    def campaign_publish(client_id):
+        """Create the campaign in Meta Ads Manager, everything paused. Your own ad account only."""
+        require_admin(client_id)
+        if meta_ads.missing():
+            abort(503, "Publishing to Meta isn't set up: add " + ", ".join(meta_ads.missing()) + " in Render.")
+        body = request.get_json(silent=True) or {}
+        plan, images = body.get("plan"), body.get("images")
+        if not isinstance(plan, dict) or not isinstance(images, dict):
+            abort(400, "send JSON with the 'plan' and its 'images'")
+        landing = (body.get("landing_url") or public_base() + "/").strip()
+        currency = state.config(client_id).get("currency", "AED")
+        try:
+            launch = publisher().publish(plan, images, landing, currency)
+        except meta_ads.PublishError as e:
+            abort(502, str(e))
+        with state.lock:
+            state.launches.add(client_id, launch)
+        log.info("%s published campaign %s (paused)", client_id, launch["campaign_id"])
+        return launch
+
+    @flask.post("/campaign/<client_id>/launch/<campaign_id>")
+    def campaign_launch(client_id, campaign_id):
+        """Go live or pause. Going live needs {"confirm": true}: from then on Meta spends the budget."""
+        require_admin(client_id)
+        body = request.get_json(silent=True) or {}
+        action = body.get("action")
+        if action not in ("live", "pause"):
+            abort(400, "send {\"action\": \"live\"} or {\"action\": \"pause\"}")
+        if action == "live" and body.get("confirm") is not True:
+            abort(400, "going live spends money: send \"confirm\": true")
+        with state.lock:
+            launch = state.launches.get(client_id, campaign_id)
+        if not launch:
+            abort(404, "unknown campaign")
+        status = "ACTIVE" if action == "live" else "PAUSED"
+        try:
+            publisher().set_status(launch, status)
+        except meta_ads.PublishError as e:
+            abort(502, str(e))
+        with state.lock:
+            state.launches.set_status(client_id, campaign_id, status)
+        log.info("%s set campaign %s to %s", client_id, campaign_id, status)
+        return {**launch, "status": status}
+
+    @flask.get("/campaign/<client_id>/launches")
+    def campaign_launches(client_id):
+        require_admin(client_id)
+        with state.lock:
+            return {"launches": state.launches.list(client_id), "missing": meta_ads.missing()}
 
     def page(name: str, referrer: str = "no-referrer"):
         resp = send_from_directory(WEB_DIR, name)
@@ -707,6 +779,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
              "Set MODEL_API_KEY from dev.meta.ai (billing must be active)."),
             ("WhatsApp chats from ads", bool(wa["app_secret"] and wa["verify_token"]),
              "Set META_APP_SECRET and PROADS_WHATSAPP_VERIFY_TOKEN, then the webhook in Meta."),
+            ("Publish campaigns to Meta", not meta_ads.missing(),
+             "Set PROADS_AD_ACCOUNT_ID, PROADS_PAGE_ID and PROADS_ADS_TOKEN (system user token with ads_management)."),
             ("Connect Shopify button", shopify_app.available(),
              "Optional: SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET, PROADS_SECRET_KEY."),
         ]
@@ -782,6 +856,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 "meta_capi": {"configured": bool(meta.get("dataset_id") and meta.get("access_token")),
                               "live": bool(meta.get("live"))},
                 "ai": {"configured": ai.available},
+                "ads_publish": {"configured": is_admin(client_id) and not meta_ads.missing()},
             },
             "totals": totals, "posts": posts, "tracking_codes": codes,
             "webhooks": {"stripe": f"/webhooks/stripe/{client_id}", "shopify": f"/webhooks/shopify/{client_id}"},
