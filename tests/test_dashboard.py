@@ -69,3 +69,23 @@ def test_other_platform_exports_and_excel(tmp_path):
     assert r["kind"] == "sales" and r["new"] == 1
     m = {x["key"]: x for x in c.get("/dashboard/glow-clinic?period=365", headers=H).json["metrics"]}
     assert m["sales"]["value"] == 1250 + 90 + 300
+
+
+def test_proads_account_shows_real_numbers_and_example_data_is_removed_once(tmp_path):
+    db = str(tmp_path / "x.db")
+    ADMIN = {"X-API-Key": "admin-key-0123456789abc"}
+    app = create_app({"pro": {"api_key": "admin-key-0123456789abc"}}, db, start_worker=False)
+    c = app.test_client()
+    c.post("/import/pro", data="id,date,amount,currency\n1,2026-10-01,100,AED\n", headers=ADMIN)
+    c.post("/auth/signup", json=ACCT)
+    d = c.get("/dashboard/pro?period=7", headers=ADMIN).json
+    assert d["mode"] == "proads" and {m["key"]: m["value"] for m in d["metrics"]}["signups"] == 1
+    assert d["newest"][0]["name"] == "Glow Clinic" and "sales" not in str(d["metrics"])
+    app.extensions["paysignal"].store.db.execute("DELETE FROM migrations")                    # as on the first deploy
+    app.extensions["paysignal"].store.db.commit()
+    app2 = create_app({"pro": {"api_key": "admin-key-0123456789abc"}}, db, start_worker=False)  # restart: example sales gone
+    st = app2.extensions["paysignal"]
+    assert st.store.db.execute("SELECT COUNT(*) FROM payments WHERE client_id='pro'").fetchone()[0] == 0
+    app2.test_client().post("/import/pro", data="id,date,amount,currency\n2,2026-10-01,100,AED\n", headers=ADMIN)
+    create_app({"pro": {"api_key": "admin-key-0123456789abc"}}, db, start_worker=False)        # only runs once
+    assert st.store.db.execute("SELECT COUNT(*) FROM payments WHERE client_id='pro'").fetchone()[0] == 1

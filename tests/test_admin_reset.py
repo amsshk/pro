@@ -123,7 +123,8 @@ def test_admin_adds_a_company_and_moves_own_data_into_it(app):
                headers=ADMIN).json
     assert r["client_id"] == "888-clinic" and r["moved"] == {"sales": 2, "posts": 0, "codes": 1}
     assert c.post("/admin/pro/companies", json={"business": "Other", "email": "owner@888.ae"}, headers=ADMIN).status_code == 409
-    assert c.get("/dashboard/pro", headers=ADMIN).json["has_data"] is False
+    st = app.extensions["paysignal"]
+    assert st.store.db.execute("SELECT COUNT(*) FROM payments WHERE client_id='pro'").fetchone()[0] == 0
     tok = c.post("/auth/reset", json={"token": link_token(r["link"]), "password": "clinic-password-1"}).json["token"]
     d = c.get("/dashboard/888-clinic?period=365", headers={"X-API-Key": tok}).json
     assert d["has_data"] and d["metrics"][0]["value"] == 150

@@ -355,6 +355,27 @@ class App:
         return {"mode": "live" if live else "dry_run", "batches": len(results), "events": sent, "errors": errors}
 
 
+def _admins(state: "App") -> set[str]:
+    names = {x.strip() for x in os.environ.get("PROADS_ADMINS", "pro").split(",") if x.strip()}
+    return {cid for cid, cfg in state.clients.items() if cfg.get("admin") or cid in names}
+
+
+def _clear_admin_example_data(state: "App") -> None:
+    """Once: remove example sales and posts that were uploaded to the ProAds account itself while testing.
+    ProAds' own Home shows sign-ups and clients instead, so these were only ever made-up numbers."""
+    db = state.store.db
+    db.execute("CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY, done_at TEXT NOT NULL DEFAULT (datetime('now')))")
+    if db.execute("SELECT 1 FROM migrations WHERE name='clear_admin_example_data'").fetchone():
+        return
+    for cid in _admins(state):
+        n = db.execute("DELETE FROM payments WHERE client_id=?", (cid,)).rowcount
+        m = db.execute("DELETE FROM posts WHERE client_id=?", (cid,)).rowcount
+        if n or m:
+            log.info("removed %d example sales and %d posts from the %s account", n, m, cid)
+    db.execute("INSERT INTO migrations (name) VALUES ('clear_admin_example_data')")
+    db.commit()
+
+
 def create_app(clients: dict | None = None, db_path: str | None = None, start_worker: bool = None) -> Flask:
     clients = clients if clients is not None else load_clients(os.environ.get("PAYSIGNAL_CLIENTS_FILE", "clients.json"))
     db_path = db_path or os.environ.get("PAYSIGNAL_DB", "paysignal.db")
@@ -362,6 +383,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     flask = Flask(__name__)
     flask.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
     flask.extensions["paysignal"] = state
+    _clear_admin_example_data(state)
 
     @flask.get("/health")
     def health():
@@ -496,11 +518,51 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         log.info("%s cleared %d sales and %d posts", client_id, n, posts)
         return {"sales_deleted": n, "posts_deleted": posts, "lessons_kept": kept}
 
+    def proads_dashboard(period: str) -> dict:
+        """Home for the ProAds account itself: real sign-ups, active companies, paying clients, campaigns."""
+        from datetime import date as _date, timedelta as _td
+        days = {"today": 1, "7": 7, "30": 30, "90": 90, "365": 365}.get(period, 30)
+        end = datetime.now(timezone.utc).date()
+        start, prev_start = end - _td(days=days - 1), end - _td(days=2 * days - 1)
+        db = state.store.db
+        def per_day(sql):
+            cur, prev = [0] * days, [0] * days
+            for (d,) in db.execute(sql).fetchall():
+                if not d:
+                    continue
+                day = _date.fromisoformat(str(d)[:10])
+                if start <= day <= end:
+                    cur[(day - start).days] += 1
+                elif prev_start <= day < start:
+                    prev[(day - prev_start).days] += 1
+            return cur, prev
+        sign, sign_p = per_day("SELECT created_at FROM accounts")
+        act, act_p = per_day("SELECT activated_at FROM accounts")
+        camp, camp_p = per_day("SELECT created_at FROM ad_launches")
+        paying = sum(1 for r in db.execute("SELECT status FROM billing").fetchall() if r[0] in billing.ACTIVE)
+        chg = lambda a, b: round((a - b) / b, 3) if b else None
+        m = [("signups", "Sign-ups", sum(sign), sum(sign_p)), ("activated", "Became active", sum(act), sum(act_p)),
+             ("campaigns", "Campaigns published", sum(camp), sum(camp_p))]
+        newest = [{"name": r[0], "created_at": r[1], "active": bool(r[2])} for r in db.execute(
+            "SELECT name, created_at, activated_at FROM accounts ORDER BY created_at DESC LIMIT 6").fetchall()]
+        return {"mode": "proads", "period": period, "days": days,
+                "dates": [(start + _td(days=i)).isoformat() for i in range(days)],
+                "metrics": [{"key": k, "label": l, "value": v, "previous": pv, "change": chg(v, pv)} for k, l, v, pv in m]
+                           + [{"key": "paying", "label": "Paying clients", "value": paying, "previous": paying, "change": None}],
+                "series": {"signups": {"current": sign, "previous": sign_p}, "activated": {"current": act, "previous": act_p},
+                           "campaigns": {"current": camp, "previous": camp_p}},
+                "accounts_total": db.execute("SELECT COUNT(*) FROM accounts").fetchone()[0],
+                "newest": newest, "campaigns": [{k: l.get(k) for k in ("campaign_id", "name", "status")}
+                                                for l in state.launches.list(next(iter(_admins(state)), "pro"))[:5]]}
+
     @flask.get("/dashboard/<client_id>")
     def dashboard_endpoint(client_id):
         """Home: a period vs the one before (?period=today|7|30|90|365), plus a setup guide."""
         state.require_key(client_id)
         cfg = state.config(client_id)
+        if is_admin(client_id):
+            with state.lock:
+                return proads_dashboard(request.args.get("period", "30"))
         with state.lock:
             out = build_dashboard(state.engine(client_id), request.args.get("period", "30"),
                                   currency=cfg.get("currency", "AED"))

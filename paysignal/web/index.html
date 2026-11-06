@@ -1404,7 +1404,8 @@ main{background:transparent}
   function niceMax(v) { if (v <= 0) return 1; const p = Math.pow(10, Math.floor(Math.log10(v))); const n = v / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p; }
   function lineChart(dates, cur, prev, fmtV, width) {
     const W = Math.max(300, Math.round(width || 760)), H = W < 500 ? 220 : 260, L = 48, R = 10, T = 12, B = 28, n = dates.length;
-    const max = niceMax(Math.max(...cur, ...prev, 0));
+    let max = niceMax(Math.max(...cur, ...prev, 0));
+    if (max < 4 && cur.concat(prev).every(Number.isInteger)) max = 4;      // counts: whole-number ticks
     const x = (i) => L + (n > 1 ? i * (W - L - R) / (n - 1) : (W - L - R) / 2);
     const y = (v) => T + (H - T - B) * (1 - v / max);
     const path = (vals) => vals.map((v, i) => (i ? "L" : "M") + x(i).toFixed(1) + " " + y(v).toFixed(1)).join(" ");
@@ -1465,21 +1466,23 @@ main{background:transparent}
     try { d = await api("/dashboard/" + cid() + "?period=" + encodeURIComponent(homePeriod)); }
     catch (e) { if (e.message !== "signed out") body.replaceChildren(errorCard(e.message)); return; }
     const cur = d.currency;
-    const doneN = d.setup.filter((x) => x.done).length;
-    const guide = doneN === d.setup.length ? null : h("section", { class: "card", "aria-labelledby": "guide-h" },
+    const doneN = (d.setup || []).filter((x) => x.done).length;
+    const guide = !d.setup || doneN === d.setup.length ? null : h("section", { class: "card", "aria-labelledby": "guide-h" },
       h("div", { class: "between" }, h("h2", { id: "guide-h" }, "Setup guide"), h("span", { class: "sub", style: "font-size:13px" }, doneN + " of " + d.setup.length + " done")),
       h("div", { class: "progress", role: "progressbar", "aria-valuemin": 0, "aria-valuemax": d.setup.length, "aria-valuenow": doneN }, h("div", { style: "width:" + Math.round(100 * doneN / d.setup.length) + "%" })),
       h("div", { class: "guide" }, d.setup.map((x) => h("a", { href: x.href, class: x.done ? "done" : "" },
         h("span", { class: "tick", "aria-hidden": "true" }, x.done ? h("svg", { width: 12, height: 12, viewBox: "0 0 24 24", fill: "none", stroke: "#0A0A0A", "stroke-width": 4 }, h("path", { d: "M5 12l5 5 9-10" })) : null),
         h("span", { style: "display:flex;flex-direction:column;gap:2px" }, h("b", { style: "font-size:14px" }, x.label), x.done ? null : h("span", { class: "sub", style: "font-size:13px" }, x.how)),
         h("span", { class: "sr" }, x.done ? "done" : "to do")))));
-    if (!d.has_data) {
+    if (d.mode !== "proads" && !d.has_data) {
       body.replaceChildren(...[adsBanner(d.ads_access), guide].filter(Boolean), h("section", { class: "card empty" }, h("h2", {}, "Your sales will show here"),
         h("p", { class: "sub" }, "Bring in your sales and this page fills with sales, real profit and orders, day by day."),
         h("a", { class: "btn btn-primary", href: "#/upload" }, "Bring in your sales")));
       return;
     }
-    const fmtFor = (k) => k === "orders" ? (v) => fmt.format(v) : (v) => money0(v, cur);
+    const isMoney = (k) => ["sales", "profit", "aov"].includes(k);
+    const fmtFor = (k) => isMoney(k) ? (v) => money0(v, cur) : (v) => fmt.format(v);
+    if (!d.series[homeMetric]) homeMetric = (d.metrics.find((m) => d.series[m.key]) || d.metrics[0]).key;
     const M = {}; d.metrics.forEach((m) => M[m.key] = m);
     const chartHost = h("div", {});
     const strip = h("div", { class: "mstrip", role: "group", "aria-label": "Key numbers" });
@@ -1491,25 +1494,45 @@ main{background:transparent}
         return h("button", { type: "button", "aria-pressed": has && m.key === homeMetric ? "true" : "false", disabled: has ? null : true, style: has ? "" : "cursor:default",
           onclick: has ? () => { homeMetric = m.key; draw(); } : null },
           h("span", { class: "ml" }, m.label),
-          h("span", { class: "mv" }, m.key === "orders" ? fmt.format(m.value) : money0(m.value, cur)),
+          h("span", { class: "mv" }, isMoney(m.key) ? money0(m.value, cur) : fmt.format(m.value)),
           h("span", { class: "between", style: "gap:8px" }, changePill(m.change), has ? sparkline(d.series[m.key].current) : null));
       }));
     }
-    const label = (M[homeMetric] || M.sales).label;
-    const maxSrc = Math.max(...d.sources.map((x) => x.sales), 1), maxProd = Math.max(...d.products.map((x) => x.sales), 1);
+    const label = (M[homeMetric] || d.metrics[0]).label;
+    const maxSrc = Math.max(...(d.sources || []).map((x) => x.sales), 1), maxProd = Math.max(...(d.products || []).map((x) => x.sales), 1);
     const listCard = (title, rows, empty) => h("section", { class: "card" }, h("h2", {}, title),
       rows.length ? h("div", { style: "display:flex;flex-direction:column;gap:14px" }, rows) : h("p", { class: "sub", style: "margin:0;font-size:14px" }, empty));
-    const sources = listCard("Sales by source", d.sources.map((x) => h("div", { class: "hbar" }, h("span", {}, x.source), h("b", {}, money0(x.sales, cur)),
+    const sources = listCard("Sales by source", (d.sources || []).map((x) => h("div", { class: "hbar" }, h("span", {}, x.source), h("b", {}, money0(x.sales, cur)),
       h("div", { class: "track", role: "img", "aria-label": x.source + ": " + money0(x.sales, cur) }, h("div", { style: "width:" + Math.max(2, Math.round(100 * x.sales / maxSrc)) + "%" })))), "No sales in this period.");
-    const products = listCard("Top products", d.products.map((x) => h("div", { class: "hbar" }, h("span", {}, x.product, h("span", { class: "sub", style: "font-size:12px" }, " · " + fmt.format(x.units) + " sold")), h("b", {}, money0(x.sales, cur)),
+    const products = listCard("Top products", (d.products || []).map((x) => h("div", { class: "hbar" }, h("span", {}, x.product, h("span", { class: "sub", style: "font-size:12px" }, " · " + fmt.format(x.units) + " sold")), h("b", {}, money0(x.sales, cur)),
       h("div", { class: "track", "aria-hidden": "true" }, h("div", { style: "width:" + Math.max(2, Math.round(100 * x.sales / maxProd)) + "%" })))), "Product names appear when your sales include them (Shopify or a product column).");
-    const camps = d.campaigns.length ? h("section", { class: "card" }, h("div", { class: "between" }, h("h2", {}, "Campaigns"), h("a", { href: "#/assistant", style: "font-size:13px" }, "New campaign")),
+    const camps = (d.campaigns || []).length ? h("section", { class: "card" }, h("div", { class: "between" }, h("h2", {}, "Campaigns"), h("a", { href: "#/assistant", style: "font-size:13px" }, "New campaign")),
       d.campaigns.map((x) => h("div", { class: "between", style: "font-size:14px;gap:8px" }, h("span", {}, x.name || x.campaign_id),
         h("span", { class: "badge " + (x.status === "ACTIVE" ? "b-measured" : "b-neutral") }, x.status === "ACTIVE" ? "Live" : x.status === "PAUSED_BILLING" ? "Paused: add card" : "Paused")))) : null;
     const extra = h("div", { style: "display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color: var(--muted)" },
       h("span", {}, "Refunds: ", h("b", { style: "color: var(--text)" }, pct(d.refund_rate)), " of sales"),
       d.returning_rate !== null ? h("span", {}, "Returning customers: ", h("b", { style: "color: var(--text)" }, pct(d.returning_rate))) : null,
       d.live ? null : h("span", { style: "color: var(--muted)" }, "Showing your latest history, up to " + new Date(d.as_of + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })));
+    if (d.mode === "proads") {
+      draw();
+      const newest = h("section", { class: "card" }, h("div", { class: "between" }, h("h2", {}, "Newest companies"),
+          h("a", { href: "#/admin", style: "font-size:13px" }, fmt.format(d.accounts_total) + " in total")),
+        d.newest.length ? d.newest.map((x) => h("div", { class: "between", style: "font-size:14px" }, h("span", {}, x.name),
+          h("span", { class: "badge " + (x.active ? "b-measured" : "b-neutral") }, x.active ? "Active" : "Signed up"))) :
+          h("p", { class: "sub", style: "margin:0;font-size:14px" }, "No sign-ups yet. Launch your first ProAds campaign to bring them in."));
+      const camps = h("section", { class: "card" }, h("div", { class: "between" }, h("h2", {}, "Your campaigns"), h("a", { href: "#/assistant", style: "font-size:13px" }, "New campaign")),
+        d.campaigns.length ? d.campaigns.map((x) => h("div", { class: "between", style: "font-size:14px;gap:8px" }, h("span", {}, x.name || x.campaign_id),
+          h("span", { class: "badge " + (x.status === "ACTIVE" ? "b-measured" : "b-neutral") }, x.status === "ACTIVE" ? "Live" : "Paused"))) :
+          h("p", { class: "sub", style: "margin:0;font-size:14px" }, "None yet."));
+      body.replaceChildren(strip,
+        h("section", { class: "card", "aria-label": "Chart" }, h("div", { class: "between" }, h("h2", {}, label + " over time"),
+          h("div", { style: "display:flex;gap:14px" }, h("span", { class: "key" }, h("i"), "This period"), h("span", { class: "key" }, h("i", { class: "prev" }), "Previous period"))), chartHost),
+        h("div", { class: "row", style: "align-items:flex-start" }, h("div", { style: "flex:1 1 380px;display:flex;flex-direction:column;gap:24px;min-width:0" }, newest),
+          h("div", { style: "flex:1 1 380px;display:flex;flex-direction:column;gap:24px;min-width:0" }, camps)));
+      strip.addEventListener("click", () => { const t = body.querySelector("section[aria-label=Chart] h2"); if (t) t.textContent = (M[homeMetric] || d.metrics[0]).label + " over time"; });
+      draw();
+      return;
+    }
     body.replaceChildren(
       ...[adsBanner(d.ads_access)].filter(Boolean),
       strip,
