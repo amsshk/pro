@@ -299,14 +299,15 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
   function statusRows() {
     if (!status) return [];
     const c = status.connections;
-    const row = (on, text, warn) => h("span", { class: "srow", style: warn ? "color: var(--amber-txt)" : "" },
-      h("span", { class: "dot", "aria-hidden": "true", style: "background:" + (on ? "#A78BFA" : warn ? "#FBBF24" : "#34303F") }), text);
-    return [
-      row(c.shopify.configured, c.shopify.configured ? "Shopify connected" : "Shopify not connected"),
-      row(c.stripe.configured, c.stripe.configured ? "Stripe connected" : "Stripe not connected"),
-      c.meta_capi.live ? row(true, "Sending to Meta") : row(false, c.meta_capi.configured ? "Meta: practice mode" : "Meta not connected", c.meta_capi.configured),
-      row(c.ai.configured, c.ai.configured ? "AI ready" : "AI not set up"),
-    ];
+    const on = [
+      [c.shopify.configured || (c.shopify_app && c.shopify_app.connected), "Shopify"],
+      [c.stripe.configured, "Stripe"],
+      [c.meta_login && c.meta_login.ready, "Facebook & Instagram"],
+      [c.meta_capi.live, "Sending sales to Meta"],
+      [c.ai.configured, "AI"],
+    ].filter(([ok]) => ok);
+    return on.map(([, text]) => h("span", { class: "srow" },
+      h("span", { class: "dot", "aria-hidden": "true", style: "background:#22C55E;box-shadow:0 0 6px #22C55E" }), text));
   }
   function layout(active, content) {
     return h("div", { class: "shell" },
