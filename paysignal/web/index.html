@@ -7,7 +7,7 @@
 <title>ProAds</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&family=Noto+Sans+Arabic:wght@400;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Crect width='28' height='28' rx='5' fill='%2376B900'/%3E%3Cpath d='M5 19l6-6 4 3 8-9' stroke='%230A0A0A' stroke-width='2.4' fill='none' stroke-linecap='square' stroke-linejoin='miter'/%3E%3C/svg%3E">
 <style>
 :root{
@@ -477,7 +477,7 @@ main{background:transparent}
     const blocks = [
       h("div", { class: "between" },
         h("span", { class: "sub" }, a.period.from + " – " + a.period.to + " · " + a.period.days + " days of history"),
-        h("div", { style: "display:flex;gap:10px;flex-wrap:wrap" }, sumBtn("English", "AI summary"), sumBtn("Arabic", "ملخص بالعربي"),
+        h("div", { style: "display:flex;gap:10px;flex-wrap:wrap" }, sumBtn("English", "AI summary"),
           h("button", { class: "btn btn-primary", onclick: download }, "Download report"))),
       summaryBox,
       h("section", { class: "kpis", "aria-label": "Key numbers" },
@@ -1028,7 +1028,7 @@ main{background:transparent}
   const chatHistory = [];
   function viewAssistant() {
     const chat = h("div", { class: "chat", "aria-live": "polite" });
-    const q = h("input", { id: "q", placeholder: "Ask in English or Arabic…", autocomplete: "off", dir: "auto" });
+    const q = h("input", { id: "q", placeholder: "Ask anything about your numbers…", autocomplete: "off", dir: "auto" });
     const send = h("button", { class: "btn btn-primary", type: "submit", "aria-label": "Send question", style: "padding:0 16px" }, icon("M5 12h14M13 6l6 6-6 6"));
     const bubble = (role, text, meta) => h("div", { class: "msg " + role, dir: "auto", lang: isArabic(text) ? "ar" : null }, text, meta ? h("span", { class: "meta", dir: "ltr" }, meta) : null);
     for (const m of chatHistory) chat.appendChild(bubble(m.role === "user" ? "me" : "ai", m.content, m.meta));
@@ -1053,7 +1053,7 @@ main{background:transparent}
     }
     const chatForm = h("form", { style: "display:flex;gap:8px", onsubmit: (e) => { e.preventDefault(); ask(q.value); } },
       h("label", { for: "q", class: "sr" }, "Your question"), q, send);
-    const chips = h("div", { class: "chips" }, ["Where am I losing money?", "What should I post tomorrow?", "ليش الأرباح نزلت؟"].map((t) =>
+    const chips = h("div", { class: "chips" }, ["Where am I losing money?", "What should I post tomorrow?", "Why did profit drop?"].map((t) =>
       h("button", { class: "chip", type: "button", dir: "auto", onclick: () => ask(t) }, t)));
 
     // campaign builder
