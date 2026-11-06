@@ -91,10 +91,17 @@ def test_failure_deletes_the_half_built_campaign_and_explains():
     assert g.deleted == ["1001"]
 
 
+def test_budget_uses_the_ad_account_currency():
+    g = FakeGraph(currency="THB")
+    out = meta_ads.Publisher(g).publish(plan(), {"0-0": PNG, "0-1": PNG}, "https://pro.example.net/", "AED")
+    assert out["currency"] == "THB" and g.posts[0][1]["daily_budget"] == "4000"
+    g = FakeGraph(currency="JPY")
+    meta_ads.Publisher(g).publish(plan(), {"0-0": PNG, "0-1": PNG}, "https://pro.example.net/", "AED")
+    assert g.posts[0][1]["daily_budget"] == "40"                        # yen has no cents
+
+
 def test_refuses_before_spending_anything():
-    g = FakeGraph(currency="USD")
-    with pytest.raises(meta_ads.PublishError, match="bills in USD"):
-        meta_ads.Publisher(g).publish(plan(), {"0-0": PNG, "0-1": PNG}, "https://pro.example.net/", "AED")
+    g = FakeGraph()
     with pytest.raises(meta_ads.PublishError, match="has no image"):
         meta_ads.Publisher(FakeGraph()).publish(plan(), {"0-0": PNG}, "https://pro.example.net/", "AED")
     with pytest.raises(meta_ads.PublishError, match="JPEG or PNG"):

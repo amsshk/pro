@@ -37,6 +37,14 @@ class PublishError(RuntimeError):
     pass
 
 
+# currencies Meta counts without cents (offset 1); all others use 100
+ZERO_DECIMAL = {"CLP", "COP", "CRC", "HUF", "ISK", "IDR", "JPY", "KRW", "PYG", "TWD", "VND"}
+
+
+def minor_units(amount: float, currency: str) -> int:
+    return int(round(amount * (1 if currency.upper() in ZERO_DECIMAL else 100)))
+
+
 def settings() -> dict:
     env = lambda k: os.environ.get(k, "").strip()
     acct = env("PROADS_AD_ACCOUNT_ID")
@@ -120,7 +128,7 @@ class Publisher:
     def account(self) -> dict:
         return self._get(self.s["ad_account"], "name,currency,account_status", "reading the ad account")
 
-    def publish(self, plan: dict, images: dict[str, str], landing_url: str, currency: str) -> dict:
+    def publish(self, plan: dict, images: dict[str, str], landing_url: str, currency: str = "") -> dict:
         """Create the whole campaign PAUSED. images: "<adset index>-<ad index>" -> base64 JPEG/PNG."""
         if missing(self.s):
             raise PublishError("publishing is not set up: add " + ", ".join(missing(self.s)))
@@ -143,9 +151,8 @@ class Publisher:
         acct = self.account()
         if acct.get("account_status") not in (1, None):
             raise PublishError("the ad account is not active (check billing and status in Ads Manager)")
-        if acct.get("currency") and acct["currency"].upper() != currency.upper():
-            raise PublishError(f"the ad account bills in {acct['currency']} but the budget is in {currency}: "
-                               "change the budget currency or use an ad account in the same currency")
+        # the budget is in the ad account's own currency (any currency works)
+        currency = (acct.get("currency") or currency or "AED").upper()
 
         name = str(plan.get("name") or "ProAds campaign")[:200]
         campaign_slug = _slug(name, 30)
@@ -156,7 +163,7 @@ class Publisher:
 
         camp = self._post(f"{self.s['ad_account']}/campaigns", {
             "name": name, "objective": objective, "status": "PAUSED", "special_ad_categories": [],
-            "daily_budget": str(int(round(budget * 100))), "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
+            "daily_budget": str(minor_units(budget, currency)), "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
         }, "creating the campaign")
         campaign_id = camp["id"]
         created = {"campaign_id": campaign_id, "ad_sets": [], "ads": []}

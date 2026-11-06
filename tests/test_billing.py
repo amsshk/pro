@@ -176,7 +176,13 @@ def test_renewal_invoice_gets_the_ad_spend_fee(app):
         assert b["fees"][0]["fee"] == b["spend_so_far"]["fee"] == billing.fee_amount(6000.50, 5) / 100 and b["fee_percent"] == 5
         # first invoice of a subscription and other currencies get no fee
         signed(c, {"type": "invoice.created", "data": {"object": {**inv, "id": "in_2", "billing_reason": "subscription_create"}}})
-        signed(c, {"type": "invoice.created", "data": {"object": {**inv, "id": "in_3", "currency": "usd"}}})
         assert len(state.stripe_http.posts) == n
+        # an invoice in another currency: the spend is converted at today's rate
+        monkey_rates = {"AED": 0.27}
+        billing._fx_cache["AED"] = (time.time(), {"USD": monkey_rates["AED"]})
+        signed(c, {"type": "invoice.created", "data": {"object": {**inv, "id": "in_3", "currency": "usd"}}})
+        url, data = state.stripe_http.posts[-1]
+        assert data["currency"] == "usd" and data["amount"] == str(billing.fee_amount(round(6000.50 * 0.27, 2), 5))
+        assert "about USD" in data["description"]
     finally:
         os.environ.pop("PROADS_SECRET_KEY", None)

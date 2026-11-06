@@ -162,21 +162,49 @@ def fee_amount(spend: float, percent: float) -> int:
     return int(round(spend * percent / 100 * 100))
 
 
-def add_spend_fee(stripe: "Stripe", invoice: dict, spend: float, currency: str, percent: float) -> Optional[dict]:
-    """Add the ad-spend fee to a draft renewal invoice. Returns what was added, or None."""
-    if spend <= 0 or percent <= 0 or currency.lower() != (invoice.get("currency") or "").lower():
+_fx_cache: dict = {}
+
+
+def fx_rate(src: str, dst: str, http=None) -> float:
+    """Exchange rate src -> dst from a free daily feed (cached 6 hours)."""
+    src, dst = src.upper(), dst.upper()
+    if src == dst:
+        return 1.0
+    hit = _fx_cache.get(src)
+    if not hit or time.time() - hit[0] > 6 * 3600:
+        if http is None:
+            import requests as http
+        r = http.get(f"https://open.er-api.com/v6/latest/{src}", timeout=20)
+        body = r.json()
+        if body.get("result") != "success":
+            raise BillingError(f"no exchange rate for {src}")
+        hit = _fx_cache[src] = (time.time(), body["rates"])
+    if dst not in hit[1]:
+        raise BillingError(f"no exchange rate {src} to {dst}")
+    return float(hit[1][dst])
+
+
+def add_spend_fee(stripe: "Stripe", invoice: dict, spend: float, currency: str, percent: float,
+                  rate: Optional[float] = None) -> Optional[dict]:
+    """Add the ad-spend fee to a draft renewal invoice. Ad spend in another currency is converted
+    at today's rate (shown on the invoice). Returns what was added, or None."""
+    inv_cur = (invoice.get("currency") or "").upper()
+    if spend <= 0 or percent <= 0 or not currency:
         return None
-    amount = fee_amount(spend, percent)
+    rate = 1.0 if currency.upper() == inv_cur else (rate if rate is not None else fx_rate(currency, inv_cur))
+    converted = round(spend * rate, 2)
+    amount = fee_amount(converted, percent)
     if amount <= 0:
         return None
     fmt = lambda t: time.strftime("%d %b %Y", time.gmtime(t))
-    desc = (f"Ad spend fee: {percent:g}% of {currency.upper()} {spend:,.2f} spent on campaigns published "
+    spent = f"{currency.upper()} {spend:,.2f}" + (f" (about {inv_cur} {converted:,.2f})" if rate != 1.0 else "")
+    desc = (f"Ad spend fee: {percent:g}% of {spent} spent on campaigns published "
             f"through ProAds ({fmt(invoice['period_start'])} - {fmt(invoice['period_end'])})")
     stripe.post("invoiceitems", {"customer": invoice["customer"], "invoice": invoice["id"], "amount": str(amount),
-                                 "currency": currency.lower(), "description": desc,
+                                 "currency": inv_cur.lower(), "description": desc,
                                  "metadata[kind]": "ad_spend_fee", "metadata[spend]": f"{spend:.2f}"},
                 idempotency_key=f"proads-fee-{invoice['id']}")
-    return {"amount": amount / 100, "spend": spend, "description": desc}
+    return {"amount": amount / 100, "spend": spend, "currency": inv_cur, "description": desc}
 
 
 def _period_end(sub: dict) -> Optional[int]:
@@ -202,6 +230,9 @@ class BillingStore:
         cols = {r[1] for r in self.db.execute("PRAGMA table_info(billing)").fetchall()}
         if "period_start" not in cols:
             self.db.execute("ALTER TABLE billing ADD COLUMN period_start INTEGER")
+        fee_cols = {r[1] for r in self.db.execute("PRAGMA table_info(billing_fees)").fetchall()}
+        if "fee_currency" not in fee_cols:
+            self.db.execute("ALTER TABLE billing_fees ADD COLUMN fee_currency TEXT")
         if "ads_trial_started" not in cols:
             self.db.execute("ALTER TABLE billing ADD COLUMN ads_trial_started INTEGER")
         self.db.commit()
@@ -223,15 +254,16 @@ class BillingStore:
     def fee_logged(self, invoice_id: str) -> bool:
         return self.db.execute("SELECT 1 FROM billing_fees WHERE invoice_id=?", (invoice_id,)).fetchone() is not None
 
-    def log_fee(self, invoice_id: str, client_id: str, spend: float, currency: str, fee: float) -> None:
-        self.db.execute("INSERT OR IGNORE INTO billing_fees (invoice_id, client_id, spend, currency, fee) VALUES (?,?,?,?,?)",
-                        (invoice_id, client_id, spend, currency, fee))
+    def log_fee(self, invoice_id: str, client_id: str, spend: float, currency: str, fee: float,
+                fee_currency: str = "") -> None:
+        self.db.execute("INSERT OR IGNORE INTO billing_fees (invoice_id, client_id, spend, currency, fee, fee_currency)"
+                        " VALUES (?,?,?,?,?,?)", (invoice_id, client_id, spend, currency, fee, fee_currency or currency))
         self.db.commit()
 
     def fees(self, client_id: str) -> list[dict]:
-        rows = self.db.execute("SELECT invoice_id, spend, currency, fee, created_at FROM billing_fees WHERE client_id=?"
-                               " ORDER BY created_at DESC LIMIT 24", (client_id,)).fetchall()
-        return [dict(zip(("invoice_id", "spend", "currency", "fee", "created_at"), r)) for r in rows]
+        rows = self.db.execute("SELECT invoice_id, spend, currency, fee, created_at, COALESCE(fee_currency, currency)"
+                               " FROM billing_fees WHERE client_id=? ORDER BY created_at DESC LIMIT 24", (client_id,)).fetchall()
+        return [dict(zip(("invoice_id", "spend", "currency", "fee", "created_at", "fee_currency"), r)) for r in rows]
 
     def get(self, client_id: str) -> Optional[dict]:
         row = self.db.execute("SELECT customer_id, subscription_id, status, period_end, cancel_at_period_end,"

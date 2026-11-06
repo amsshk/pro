@@ -161,9 +161,9 @@ def tidy_plan(plan: dict, conversion: str) -> dict:
 
 def build_campaign(ai: MetaAI, context: dict, daily_budget: float, goal: str = "",
                    extra_instructions: str = "", conversion: str = "purchase", product: str = "",
-                   landing_url: str = "") -> dict:
+                   landing_url: str = "", budget_currency: str = "") -> dict:
     conversion = "signup" if conversion == "signup" else "purchase"
-    brief = {"daily_budget": daily_budget, "currency": context.get("currency", "AED"),
+    brief = {"daily_budget": daily_budget, "currency": budget_currency or context.get("currency", "AED"),
              "conversion": conversion,
              "goal": goal or ("sign-ups from businesses that go on to use the product" if conversion == "signup"
                               else "more paying customers who keep what they buy"),
@@ -180,5 +180,6 @@ def build_campaign(ai: MetaAI, context: dict, daily_budget: float, goal: str = "
     problems = validate_campaign(plan, daily_budget)
     if not problems:
         plan = tidy_plan(plan, conversion)
+        plan["currency"] = brief["currency"]
     return {"plan": plan, "problems": problems, "model": reply.model, "landing_url": landing_url,
             "cost_usd": reply.cost_usd, "status": "draft - review before launching"}

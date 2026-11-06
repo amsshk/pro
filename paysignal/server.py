@@ -568,15 +568,24 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if landing and not re.match(r"^https?://", landing):
             landing = "https://" + landing
         ai = need_ai()
+        budget_currency = ads_currency(client_id)
         try:
             out = build_campaign(ai, ai_context(client_id), budget, body.get("goal", ""), body.get("notes", ""),
-                                 conversion=conversion, product=product, landing_url=landing)
+                                 conversion=conversion, product=product, landing_url=landing,
+                                 budget_currency=budget_currency)
         except PermissionError as e:
             abort(503, str(e))
         except (RuntimeError, CampaignError) as e:
             abort(502, str(e))
         out["can_publish"] = state.ads_settings(client_id, own) is not None
         return out
+
+    def ads_currency(client_id) -> str:
+        """Budgets are in the currency the client's ad account bills in."""
+        with state.lock:
+            v = meta_connect.public_view(state.meta_conns.get(client_id))
+        return (v.get("currency") if v.get("connected") and v.get("currency") else
+                state.config(client_id).get("currency", "AED")).upper()
 
     def needs_payment(client_id) -> bool:
         """Ads are free to test for a few days; after that a plan is needed (organic stays free)."""
@@ -611,9 +620,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if landing and not re.match(r"^https?://", landing):
             landing = "https://" + landing
         landing = landing.replace("http://", "https://", 1) if landing.startswith("http://") else landing
-        currency = state.config(client_id).get("currency", "AED")
         try:
-            launch = pub.publish(plan, images, landing, currency)
+            launch = pub.publish(plan, images, landing, ads_currency(client_id))
         except meta_ads.PublishError as e:
             abort(502, str(e))
         with state.lock:
@@ -976,7 +984,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             try:
                 spend, cur = spend_between(client_id, int(b["period_start"]), int(time.time()) + 86400)
                 out["spend_so_far"] = {"spend": spend, "currency": cur,
-                                       "fee": billing.fee_amount(spend, billing.fee_percent()) / 100}
+                                       "fee": billing.fee_amount(spend, billing.fee_percent()) / 100, "fee_currency": cur}
             except Exception as e:
                 log.info("could not read ad spend for %s: %s", client_id, e)
         if out["available"]:
@@ -1101,7 +1109,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if spend and not added:
             log.warning("ad spend fee skipped for %s: spend in %s, invoice in %s", cid, currency, inv.get("currency"))
         with state.lock:
-            state.billing.log_fee(inv["id"], cid, spend, currency, added["amount"] if added else 0.0)
+            state.billing.log_fee(inv["id"], cid, spend, currency, added["amount"] if added else 0.0,
+                                  (inv.get("currency") or "").upper())
         log.info("ad spend fee for %s: %s", cid, added)
 
     # ---------------- Facebook & Instagram connection (each client's own) ----------------

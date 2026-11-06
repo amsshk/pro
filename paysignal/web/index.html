@@ -890,6 +890,11 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D2D0DB;
     loadCodes();
   }
 
+  function adsCurrency() {
+    const m = status && status.connections.meta_login;
+    return (m && m.connected && m.currency) || (status ? status.currency : "AED");
+  }
+
   // ---------- assistant ----------
   const chatHistory = [];
   function viewAssistant() {
@@ -941,7 +946,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D2D0DB;
       }
       build.disabled = false;
     } },
-      h("div", { class: "grid2" }, h("label", { class: "f", for: "budget" }, "Daily budget (" + (status ? status.currency : "AED") + ")", budget), h("label", { class: "f", for: "goal" }, "Goal", goal)),
+      h("div", { class: "grid2" }, h("label", { class: "f", for: "budget" }, "Daily budget (" + adsCurrency() + ")", budget), h("label", { class: "f", for: "goal" }, "Goal", goal)),
       h("label", { class: "f", for: "notes" }, "Notes", notes), build);
 
     root.replaceChildren(layout("#/assistant", [
@@ -1201,7 +1206,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D2D0DB;
       h("div", { class: "row" }, free, pro),
       b.fees && b.fees.length ? h("section", { class: "card" }, h("h2", {}, "Ad spend fees"),
         h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Date", "Ad spend", "Fee"].map((t) => h("th", { scope: "col" }, t)))),
-          h("tbody", {}, b.fees.map((f) => h("tr", {}, h("td", {}, f.created_at.slice(0, 10)), h("td", {}, fmt.format(f.spend) + " " + (f.currency || "")), h("td", {}, fmt.format(f.fee) + " " + (f.currency || "")))))))) : null]));
+          h("tbody", {}, b.fees.map((f) => h("tr", {}, h("td", {}, f.created_at.slice(0, 10)), h("td", {}, fmt.format(f.spend) + " " + (f.currency || "")), h("td", {}, fmt.format(f.fee) + " " + (f.fee_currency || f.currency || "")))))))) : null]));
   }
 
   // ---------- home (Shopify-style) ----------
