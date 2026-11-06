@@ -821,8 +821,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
              "Set MODEL_API_KEY from dev.meta.ai (billing must be active)."),
             ("WhatsApp chats from ads", bool(wa["app_secret"] and wa["verify_token"]),
              "Set META_APP_SECRET and PROADS_WHATSAPP_VERIFY_TOKEN, then the webhook in Meta."),
-            ("Publish campaigns to Meta", not meta_ads.missing(),
-             "Set PROADS_AD_ACCOUNT_ID, PROADS_PAGE_ID and PROADS_ADS_TOKEN (system user token with ads_management)."),
+            ("Your own ads can be published", state.ads_settings(admin_id, True) is not None,
+             "Connect your own Facebook in Connect & upload (easiest), or set PROADS_AD_ACCOUNT_ID, "
+             "PROADS_PAGE_ID and PROADS_ADS_TOKEN."),
             ("Clients can connect Facebook & Instagram", meta_connect.available(),
              "Set META_APP_ID, META_APP_SECRET, META_LOGIN_CONFIG_ID and PROADS_SECRET_KEY (Facebook Login for Business)."),
             ("Paid plans (Stripe)", billing.available(),
