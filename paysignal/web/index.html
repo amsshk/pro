@@ -693,7 +693,7 @@ main{background:transparent}
         h("div", { class: "kpi hi" }, h("span", { class: "label" }, "Active (brought in data)"), h("span", { class: "num" }, fmt.format(t.activated)), h("span", { class: "note" }, t.accounts ? pct(t.activated / t.accounts) + " of sign-ups" : "No sign-ups yet")),
         h("div", { class: "kpi" }, h("span", { class: "label" }, "Paying"), h("span", { class: "num" }, fmt.format(t.paying || 0)), h("span", { class: "note" }, "on a plan or trial")),
         h("div", { class: "kpi" }, h("span", { class: "label" }, "Connected Facebook"), h("span", { class: "num" }, fmt.format(t.with_facebook || 0)), h("span", { class: "note" }, fmt.format(t.live_campaigns || 0) + " live campaigns")),
-        h("div", { class: "kpi" }, h("span", { class: "label" }, "Connected Shopify"), h("span", { class: "num" }, fmt.format(t.with_shopify)), h("span", { class: "note" }, fmt.format(t.with_whatsapp) + " using WhatsApp"))),
+        h("div", { class: "kpi" }, h("span", { class: "label" }, "Engine lessons"), h("span", { class: "num" }, fmt.format(t.lessons_from || 0)), h("span", { class: "note" }, "businesses it has learned from (anonymous)"))),
       linkBox,
       addCompanyCard(),
       h("section", { class: "card", "aria-labelledby": "accts" },
@@ -720,18 +720,21 @@ main{background:transparent}
     let armed = false;
     const btn = h("button", { class: "btn btn-ghost", type: "button" }, "Remove all sales & posts");
     const msg = h("span", { class: "sub", style: "font-size:13px" });
+    const keep = h("input", { type: "checkbox", id: "keep-lessons", style: "width:20px;min-height:20px" });
     btn.addEventListener("click", async () => {
       if (!armed) { armed = true; btn.textContent = "Yes, remove them"; msg.textContent = "This can't be undone. Your account and connections stay."; return; }
       btn.disabled = true;
       try {
-        const r = await api("/data/" + cid() + "/clear-sales", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: "DELETE" }) });
+        const r = await api("/data/" + cid() + "/clear-sales", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: "DELETE", keep_lessons: keep.checked }) });
         status = await api("/status/" + cid());
-        msg.textContent = "Removed " + fmt.format(r.sales_deleted) + " sales and " + fmt.format(r.posts_deleted) + " posts.";
+        msg.textContent = "Removed " + fmt.format(r.sales_deleted) + " sales and " + fmt.format(r.posts_deleted) + " posts." + (r.lessons_kept ? " The anonymous lessons were kept." : "");
         btn.textContent = "Done";
       } catch (e) { if (e.message !== "signed out") { msg.textContent = e.message; btn.disabled = false; } }
     });
     return h("section", { class: "card" }, h("h2", {}, "Start fresh"),
       h("p", { class: "sub", style: "margin:0" }, "Uploaded example or test files? Remove every imported sale and post, then bring in your real ones."),
+      h("label", { for: "keep-lessons", style: "display:flex;gap:10px;align-items:center;font-size:14px" }, keep,
+        "Keep the anonymous lessons for ProAds' engine (only tick this if these were real sales, not examples)"),
       h("div", { style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap" }, btn, msg));
   }
 

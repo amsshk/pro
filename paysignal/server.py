@@ -49,7 +49,7 @@ from .ai import MetaAI
 from .attribution import make_promo_code, tag_link
 from .dashboard import build_dashboard
 from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, business_context
-from . import billing, meta_ads, meta_connect
+from . import billing, learning, meta_ads, meta_connect
 from .connectors.stripe import verify_signature as stripe_signature_ok
 from .audit import audit_summary, audit_text, build_audit
 from .importers import xlsx_to_csv, import_auto
@@ -111,6 +111,7 @@ class App:
         self.wa_sync = False                   # tests: send WhatsApp events inline
         self.launches = meta_ads.LaunchStore(self.store.db)
         self.drafts = meta_ads.DraftStore(self.store.db)
+        self.learnings = learning.LearningStore(self.store.db, os.environ.get("PROADS_SECRET_KEY", "proads"))
         self.ads_http = None                   # set in tests
         self.meta_conns = meta_connect.ConnectionStore(self.store.db)
         self.meta_http = None                  # set in tests
@@ -457,6 +458,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             state.trained_at[client_id] = time.time()
         if "error" in audit:
             return jsonify(audit), 400
+        if not is_admin(client_id):
+            with state.lock:
+                state.learnings.keep(client_id, audit)       # anonymous ratios only, see learning.py
         out = {"audit": audit, "text": audit_text(audit)}
         if request.args.get("summary") == "1":
             ai = state.ai or MetaAI()
@@ -473,16 +477,24 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     def clear_sales(client_id):
         """Remove every imported sale and post (e.g. example files), keeping the account and its connections."""
         state.require_key(client_id)
-        if (request.get_json(silent=True) or {}).get("confirm") != "DELETE":
+        body = request.get_json(silent=True) or {}
+        if body.get("confirm") != "DELETE":
             abort(400, 'send {"confirm": "DELETE"}')
+        kept = False
         with state.lock:
+            if body.get("keep_lessons"):
+                audit = build_audit(state.engine(client_id), (state.posts_for(client_id) or None),
+                                    currency=state.config(client_id).get("currency", "AED"))
+                kept = state.learnings.keep(client_id + ":archived", audit)
+            else:
+                state.learnings.forget(client_id)
             n = state.store.db.execute("DELETE FROM payments WHERE client_id=?", (client_id,)).rowcount
             posts = state.store.db.execute("DELETE FROM posts WHERE client_id=?", (client_id,)).rowcount
             state.store.db.commit()
             for cache in (state.engines, state.posts, state.trained_at):
                 cache.pop(client_id, None)
         log.info("%s cleared %d sales and %d posts", client_id, n, posts)
-        return {"sales_deleted": n, "posts_deleted": posts}
+        return {"sales_deleted": n, "posts_deleted": posts, "lessons_kept": kept}
 
     @flask.get("/dashboard/<client_id>")
     def dashboard_endpoint(client_id):
@@ -547,7 +559,11 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             eng = state.engine(client_id)
             posts = (state.posts_for(client_id) or None)
             org = OrganicEngine(eng, posts) if posts else None
-            return business_context(eng, org, state.config(client_id).get("currency", "AED"))
+            ctx = business_context(eng, org, state.config(client_id).get("currency", "AED"))
+            bench = state.learnings.benchmarks()
+            if bench:
+                ctx["benchmarks_from_other_businesses"] = bench
+            return ctx
 
     def need_ai() -> MetaAI:
         ai = state.ai or MetaAI()
@@ -823,6 +839,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             abort(401, "Wrong password")
         with state.lock:
             counts = state.accounts.delete_everything(client_id)
+            state.learnings.forget(client_id)
+            state.learnings.forget(client_id + ":archived")
             for cache in (state.engines, state.posts, state.trained_at):
                 cache.pop(client_id, None)
         log.info("account %s deleted by its owner: %s", client_id, counts)
@@ -906,7 +924,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             "with_shopify": sum(1 for r in rows if r["shopify"]), "with_whatsapp": sum(1 for r in rows if r["wa_chats"]),
             "with_facebook": sum(1 for r in rows if r["facebook"]),
             "paying": sum(1 for r in rows if r["plan"] in billing.ACTIVE),
-            "live_campaigns": sum(r["live_campaigns"] for r in rows)}}
+            "live_campaigns": sum(r["live_campaigns"] for r in rows),
+            "lessons_from": state.learnings.count()}}
 
     @flask.get("/admin/<admin_id>/setup")
     def admin_setup(admin_id):
@@ -1005,6 +1024,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             abort(404, "unknown account")
         with state.lock:
             state.accounts.delete_everything(client_id)
+            state.learnings.forget(client_id)
+            state.learnings.forget(client_id + ":archived")
             for cache in (state.engines, state.posts, state.trained_at):
                 cache.pop(client_id, None)
         log.info("admin %s deleted account %s", admin_id, client_id)
