@@ -103,8 +103,24 @@ def discover(http, token: str) -> dict:
     """What this person can advertise with: ad accounts, Pages (+ their Instagram), their name."""
     g = Graph(http)
     me = g.get("me", {"fields": "id,name", "access_token": token})
-    accounts = g.pages("me/adaccounts", {"fields": "id,name,currency,account_status", "access_token": token})
-    pages = g.pages("me/accounts", {"fields": "id,name,instagram_business_account{id,username}", "access_token": token})
+    acct_fields, page_fields = "id,name,currency,account_status", "id,name,instagram_business_account{id,username}"
+    accounts = g.pages("me/adaccounts", {"fields": acct_fields, "access_token": token})
+    pages = g.pages("me/accounts", {"fields": page_fields, "access_token": token})
+    # Pages and ad accounts owned by a Business portfolio often don't show up under /me: ask each business too
+    try:
+        businesses = g.pages("me/businesses", {"fields": "id,name", "access_token": token}, limit=20)
+    except ConnectError:
+        businesses = []
+    for b in businesses:
+        for edge, into, fields in (("owned_pages", pages, page_fields), ("client_pages", pages, page_fields),
+                                   ("owned_ad_accounts", accounts, acct_fields),
+                                   ("client_ad_accounts", accounts, acct_fields)):
+            try:
+                into += g.pages(f"{b['id']}/{edge}", {"fields": fields, "access_token": token}, limit=100)
+            except ConnectError:
+                continue
+    dedupe = lambda xs: list({x["id"]: x for x in xs}.values())
+    accounts, pages = dedupe(accounts), dedupe(pages)
     return {
         "user": me.get("name", ""),
         "ad_accounts": [{"id": a["id"], "name": a.get("name") or a["id"], "currency": a.get("currency", ""),

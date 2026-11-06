@@ -119,3 +119,22 @@ def test_deleting_the_account_removes_the_connection(app):
     assert state.meta_conns.get("glow-clinic")
     state.accounts.delete_everything("glow-clinic")
     assert state.meta_conns.get("glow-clinic") is None
+
+
+def test_finds_pages_and_ad_accounts_owned_by_a_business_portfolio():
+    from paysignal import meta_connect
+
+    class OnlyBusiness(FakeFacebook):
+        def get(self, url, params=None, timeout=None):
+            path = url.split("/v25.0/")[1]
+            data = {"me/adaccounts": [], "me/accounts": [], "me/businesses": [{"id": "b1", "name": "Glow LLC"}],
+                    "b1/owned_pages": [{"id": "p9", "name": "Glow Page", "instagram_business_account": {"id": "ig9", "username": "glow"}}],
+                    "b1/owned_ad_accounts": [{"id": "act_9", "name": "Glow ads", "currency": "AED", "account_status": 1}],
+                    "b1/client_pages": [{"id": "p9", "name": "Glow Page"}], "b1/client_ad_accounts": []}
+            if path in data:
+                return R(200, {"data": data[path]})
+            return super().get(url, params, timeout)
+
+    found = meta_connect.discover(OnlyBusiness(), "tok")
+    assert [p["id"] for p in found["pages"]] == ["p9"] and found["pages"][0]["instagram_id"] in ("ig9", "")
+    assert [a["id"] for a in found["ad_accounts"]] == ["act_9"]
