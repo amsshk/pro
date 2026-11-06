@@ -1169,7 +1169,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if not c or acct not in {a["id"] for a in c["assets"]["ad_accounts"]}:
             abort(400, "pick one of your connected ad accounts")
         try:
-            return {"pixels": meta_connect.pixels(state.meta_http, meta_connect.decrypt(c["token"]), acct)}
+            return {"pixels": meta_connect.pixels(state.meta_http, meta_connect.decrypt(c["token"]), acct,
+                                                  c["assets"].get("businesses") or [])}
         except meta_connect.ConnectError as e:
             abort(502, f"Meta: {e}")
 
@@ -1177,6 +1178,19 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     def meta_select(client_id):
         state.require_key(client_id)
         b = request.get_json(silent=True) or {}
+        page_id = re.sub(r"[^\w]", "", str(b.get("page_id") or ""))
+        with state.lock:
+            c = state.meta_conns.get(client_id)
+        if c and page_id and page_id not in {p["id"] for p in c["assets"]["pages"]}:
+            try:                                     # a Page typed by ID: check it's really theirs
+                page = meta_connect.lookup_page(state.meta_http, meta_connect.decrypt(c["token"]), page_id)
+            except meta_connect.ConnectError:
+                abort(400, "ProAds can't reach that Page. Make sure you're an admin of it, then Disconnect and "
+                           "Connect with Facebook again and tick the Page.")
+            with state.lock:
+                state.meta_conns.add_page(client_id, page)
+        b["page_id"] = page_id
+        b["pixel_id"] = re.sub(r"[^\w]", "", str(b.get("pixel_id") or ""))
         try:
             with state.lock:
                 state.meta_conns.select(client_id, b.get("ad_account") or "", b.get("page_id") or "",

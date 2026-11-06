@@ -36,6 +36,12 @@ class FakeFacebook:
         if path == "me/accounts":
             return R(200, {"data": [{"id": "p1", "name": "Glow Clinic", "instagram_business_account": {"id": "ig1", "username": "glow"}},
                                     {"id": "p2", "name": "Glow Spa"}]})
+        if path == "777":
+            return R(200, {"id": "777", "name": "Typed Page"})
+        if path == "me/permissions":
+            return R(200, {"data": [{"permission": p, "status": "granted"} for p in
+                                    ("ads_management", "ads_read", "business_management", "pages_show_list",
+                                     "pages_read_engagement")] + [{"permission": "pages_manage_ads", "status": "declined"}]})
         if path == "act_11/adspixels":
             return R(200, {"data": [{"id": "px1", "name": "Glow pixel"}]})
         return R(404, {"error": {"message": "unknown " + path}})
@@ -74,11 +80,13 @@ def test_client_connects_picks_assets_and_publishes_in_own_account(app):
     v = c.get("/meta/glow-clinic", headers=H).json
     assert v["connected"] and v["user"] == "Sara" and v["ad_account"] == "act_11" and v["page_id"] is None
     assert "token" not in v and "LONG" not in str(v)
-    assert not v["ready"]
+    assert not v["ready"] and v["missing_permissions"] == ["pages_manage_ads"]
     assert c.get("/meta/glow-clinic/pixels", query_string={"ad_account": "act_99"}, headers=H).status_code == 400
     px = c.get("/meta/glow-clinic/pixels", query_string={"ad_account": "act_11"}, headers=H).json["pixels"]
     assert px == [{"id": "px1", "name": "Glow pixel"}]
-    assert c.post("/meta/glow-clinic/select", json={"ad_account": "act_11", "page_id": "nope"}, headers=H).status_code == 400
+    assert c.post("/meta/glow-clinic/select", json={"ad_account": "act_11", "page_id": "999"}, headers=H).status_code == 400
+    v = c.post("/meta/glow-clinic/select", json={"ad_account": "act_11", "page_id": "777"}, headers=H).json  # typed Page ID
+    assert v["page_id"] == "777" and v["page_name"] == "Typed Page"
     v = c.post("/meta/glow-clinic/select", json={"ad_account": "act_11", "page_id": "p1", "pixel_id": "px1"}, headers=H).json
     assert v["ready"] and v["instagram_id"] == "ig1"
     st = c.get("/status/glow-clinic", headers=H).json

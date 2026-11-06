@@ -126,8 +126,15 @@ def discover(http, token: str) -> dict:
                 seen[x["id"]] = x
         return list(seen.values())
     accounts, pages = dedupe(accounts), dedupe(pages)
+    try:
+        perms = g.pages("me/permissions", {"access_token": token}, limit=100)
+        granted = {p["permission"] for p in perms if p.get("status") == "granted"}
+    except ConnectError:
+        granted = None
     return {
         "user": me.get("name", ""),
+        "businesses": [b["id"] for b in businesses],
+        "missing_permissions": sorted(set(SCOPES.split(",")) - granted) if granted is not None else [],
         "ad_accounts": [{"id": a["id"], "name": a.get("name") or a["id"], "currency": a.get("currency", ""),
                          "active": a.get("account_status") == 1} for a in accounts],
         "pages": [{"id": p["id"], "name": p.get("name") or p["id"],
@@ -136,9 +143,24 @@ def discover(http, token: str) -> dict:
     }
 
 
-def pixels(http, token: str, ad_account: str) -> list[dict]:
-    rows = Graph(http).pages(f"{ad_account}/adspixels", {"fields": "id,name", "access_token": token}, limit=50)
-    return [{"id": p["id"], "name": p.get("name") or p["id"]} for p in rows]
+def pixels(http, token: str, ad_account: str, businesses: Optional[list] = None) -> list[dict]:
+    """Pixels of the ad account, plus the ones owned by or shared with the person's businesses."""
+    g, rows, errors = Graph(http), [], []
+    for path in [f"{ad_account}/adspixels"] + [f"{b}/{e}" for b in businesses or [] for e in ("owned_pixels", "client_pixels")]:
+        try:
+            rows += g.pages(path, {"fields": "id,name", "access_token": token}, limit=50)
+        except ConnectError as e:
+            errors.append(str(e))
+    if not rows and errors and not businesses:
+        raise ConnectError(errors[0])
+    return list({p["id"]: {"id": p["id"], "name": p.get("name") or p["id"]} for p in rows}.values())
+
+
+def lookup_page(http, token: str, page_id: str) -> dict:
+    """A Page typed by ID: check this person can use it."""
+    p = Graph(http).get(page_id, {"fields": "id,name,instagram_business_account{id,username}", "access_token": token})
+    ig = p.get("instagram_business_account") or {}
+    return {"id": p["id"], "name": p.get("name") or p["id"], "instagram_id": ig.get("id", ""), "instagram": ig.get("username", "")}
 
 
 class ConnectionStore:
@@ -161,7 +183,9 @@ class ConnectionStore:
         self.db.execute("INSERT INTO meta_connections (client_id, token, expires_at, user_name, assets, ad_account,"
                         " page_id, instagram_id) VALUES (?,?,?,?,?,?,?,?)",
                         (client_id, encrypt(token["access_token"]), token.get("expires_at"), found["user"],
-                         json.dumps({"ad_accounts": found["ad_accounts"], "pages": found["pages"]}),
+                         json.dumps({"ad_accounts": found["ad_accounts"], "pages": found["pages"],
+                                     "businesses": found.get("businesses", []),
+                                     "missing_permissions": found.get("missing_permissions", [])}),
                          acct["id"] if acct else None, page["id"] if page else None,
                          (page or {}).get("instagram_id") or None))
         self.db.commit()
@@ -183,6 +207,13 @@ class ConnectionStore:
     def token(self, client_id: str) -> Optional[str]:
         c = self.get(client_id)
         return decrypt(c["token"]) if c else None
+
+    def add_page(self, client_id: str, page: dict) -> None:
+        c = self.get(client_id)
+        if c and page["id"] not in {p["id"] for p in c["assets"]["pages"]}:
+            c["assets"]["pages"].append(page)
+            self.db.execute("UPDATE meta_connections SET assets=? WHERE client_id=?", (json.dumps(c["assets"]), client_id))
+            self.db.commit()
 
     def select(self, client_id: str, ad_account: str, page_id: str, pixel_id: str, send_sales: bool) -> None:
         c = self.get(client_id)
@@ -218,6 +249,7 @@ def public_view(c: Optional[dict]) -> dict:
     return {"connected": True, "available": available(), "user": c["user_name"], "connected_at": c["connected_at"],
             "expires_at": c["expires_at"], "expired": expired,
             "ad_accounts": c["assets"]["ad_accounts"], "pages": c["assets"]["pages"],
+            "missing_permissions": c["assets"].get("missing_permissions", []),
             "ad_account": c["ad_account"], "page_id": c["page_id"], "instagram_id": c["instagram_id"],
             "pixel_id": c["pixel_id"], "send_sales": c["send_sales"],
             "ad_account_name": (accts.get(c["ad_account"]) or {}).get("name"),
