@@ -473,6 +473,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             conn = meta_connect.public_view(state.meta_conns.get(client_id))
             shop = state.store.shop_for(client_id)
             plan = state.billing.active(client_id)
+            out["ads_access"] = state.billing.ads_access(client_id) if billing.available() and not is_admin(client_id) else None
         out["campaigns"] = [{k: l.get(k) for k in ("campaign_id", "name", "status", "daily_budget", "currency",
                                                    "manager_url")} for l in launches[:5]]
         out["setup"] = [
@@ -577,10 +578,18 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         out["can_publish"] = state.ads_settings(client_id, own) is not None
         return out
 
-    def publisher(client_id):
-        if billing.settings()["require_plan"] and not is_admin(client_id) and not state.billing.active(client_id):
-            resp = jsonify({"error": "Publishing campaigns is part of the paid plan. Upgrade under Plan & billing.",
-                            "needs_plan": True})
+    def needs_payment(client_id) -> bool:
+        """Ads are free to test for a few days; after that a plan is needed (organic stays free)."""
+        if is_admin(client_id) or not billing.available():
+            return False
+        with state.lock:
+            return not state.billing.ads_access(client_id)["allowed"]
+
+    def publisher(client_id, gate: bool = True):
+        if gate and needs_payment(client_id):
+            days = billing.ads_trial_days()
+            resp = jsonify({"error": f"Your free {days:g}-day ad test has ended. Add your card on Plan & billing "
+                                     "to keep running ads. Organic tools stay free.", "needs_plan": True})
             resp.status_code = 402
             abort(resp)
         s = state.ads_settings(client_id, is_admin(client_id))
@@ -628,11 +637,13 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             abort(404, "unknown campaign")
         status = "ACTIVE" if action == "live" else "PAUSED"
         try:
-            publisher(client_id).set_status(launch, status)
+            publisher(client_id, gate=action == "live").set_status(launch, status)
         except meta_ads.PublishError as e:
             abort(502, str(e))
         with state.lock:
             state.launches.set_status(client_id, campaign_id, status)
+            if status == "ACTIVE" and not is_admin(client_id):
+                state.billing.start_ads_trial(client_id)
         log.info("%s set campaign %s to %s", client_id, campaign_id, status)
         return {**launch, "status": status}
 
@@ -959,7 +970,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         out = {"available": billing.available(), "status": b.get("status"), "active": b.get("status") in billing.ACTIVE,
                "period_end": b.get("period_end"), "cancel_at_period_end": bool(b.get("cancel_at_period_end")),
                "has_customer": bool(b.get("customer_id")), "trial_days": billing.settings()["trial_days"],
-               "require_plan": billing.settings()["require_plan"], "price": None,
+               "ads": state.billing.ads_access(client_id), "price": None,
                "fee_percent": billing.fee_percent(), "fees": state.billing.fees(client_id), "spend_so_far": None}
         if b.get("status") in billing.ACTIVE and b.get("period_start") and billing.fee_percent() > 0:
             try:
@@ -1020,6 +1031,10 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             cid = state.billing.handle(event, state.known)
         if cid:
             log.info("billing %s for %s", event.get("type"), cid)
+            if state.billing_sync:
+                enforce_ads_trials()
+            else:
+                threading.Thread(target=enforce_ads_trials, daemon=True, name="ads-access").start()
         inv = (event.get("data") or {}).get("object") or {}
         if event.get("type") == "invoice.created" and inv.get("status") == "draft" \
                 and inv.get("billing_reason") == "subscription_cycle":
@@ -1028,6 +1043,37 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             else:
                 threading.Thread(target=charge_spend_fee, args=(inv,), daemon=True, name="spend-fee").start()
         return {"received": True}
+
+    def enforce_ads_trials() -> list[str]:
+        """Pause live campaigns of clients whose free test ended without a plan; resume them once they pay."""
+        changed = []
+        if not billing.available():
+            return changed
+        with state.lock:
+            clients = {r[0] for r in state.store.db.execute(
+                "SELECT DISTINCT client_id FROM ad_launches WHERE status IN ('ACTIVE','PAUSED_BILLING')").fetchall()}
+        for cid in sorted(clients):
+            if is_admin(cid) or not state.known(cid):
+                continue
+            with state.lock:
+                allowed = state.billing.ads_access(cid)["allowed"]
+                launches = state.launches.list(cid)
+            want_from, want_to = ("PAUSED_BILLING", "ACTIVE") if allowed else ("ACTIVE", "PAUSED_BILLING")
+            for l in launches:
+                if l["status"] != want_from:
+                    continue
+                try:
+                    publisher(cid, gate=False).set_status(l, "ACTIVE" if want_to == "ACTIVE" else "PAUSED")
+                except Exception as e:
+                    log.warning("could not %s campaign %s of %s: %s", "resume" if allowed else "pause",
+                                l["campaign_id"], cid, e)
+                    continue
+                with state.lock:
+                    state.launches.set_status(cid, l["campaign_id"], want_to)
+                changed.append(f"{cid}:{l['campaign_id']}:{want_to}")
+                log.info("%s campaign %s of %s", "resumed" if allowed else "paused (test ended)", l["campaign_id"], cid)
+        return changed
+    state.enforce_ads_trials = enforce_ads_trials
 
     def spend_between(client_id: str, start: int, end: int) -> tuple[float, str]:
         """Ad spend of the campaigns this client published through ProAds."""
@@ -1403,6 +1449,11 @@ def _start_worker(state: App, every: int) -> None:
     def loop():
         while True:
             time.sleep(every)
+            try:
+                if getattr(state, "enforce_ads_trials", None):
+                    state.enforce_ads_trials()
+            except Exception:
+                log.exception("ad test check failed")
             for cid in sorted(set(state.clients) | set(state.meta_conns.all_clients())):
                 try:
                     if not state.known(cid):

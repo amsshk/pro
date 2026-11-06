@@ -51,7 +51,7 @@ def signed(c, event):
 @pytest.fixture
 def app(tmp_path, monkeypatch):
     for k, v in {"PROADS_STRIPE_SECRET_KEY": "sk_test_x", "PROADS_STRIPE_WEBHOOK_SECRET": "whsec_x",
-                 "PROADS_STRIPE_PRICE_ID": "price_1", "PROADS_TRIAL_DAYS": "14", "PROADS_REQUIRE_PLAN": "1",
+                 "PROADS_STRIPE_PRICE_ID": "price_1", "PROADS_TRIAL_DAYS": "14",
                  "PROADS_PUBLIC_URL": "https://pro.example.net"}.items():
         monkeypatch.setenv(k, v)
     billing._price_cache.clear()
@@ -94,11 +94,47 @@ def test_upgrade_webhooks_portal_and_cancel(app):
     assert data["customer"] == "cus_1" and "subscription_data[trial_period_days]" not in data
 
 
-def test_publishing_needs_a_plan_when_switched_on(app):
+def connect_meta(state, monkeypatch):
+    monkeypatch.setenv("PROADS_SECRET_KEY", "a-long-secret-key-for-tests")
+    found = {"user": "Sara", "ad_accounts": [{"id": "act_11", "name": "Glow", "currency": "AED", "active": True}],
+             "pages": [{"id": "p1", "name": "Glow", "instagram_id": "", "instagram": ""}]}
+    state.meta_conns.save("glow-clinic", {"access_token": "LONG", "expires_at": None}, found)
+    state.meta_conns.select("glow-clinic", "act_11", "p1", "px1", True)
+
+
+def test_free_ad_test_then_pause_then_resume_after_paying(app, monkeypatch):
+    state = app.extensions["paysignal"]
+    state.billing_sync = True
+    state.ads_http = g = FakeGraph()
     c = app.test_client()
     tok = c.post("/auth/signup", json=ACCT).json["token"]
-    r = c.post("/campaign/glow-clinic/publish", json={"plan": plan(), "images": {"0-0": PNG}}, headers={"X-API-Key": tok})
-    assert r.status_code == 402 and r.json["needs_plan"]
+    H = {"X-API-Key": tok}
+    connect_meta(state, monkeypatch)
+    body = {"plan": plan(), "images": {"0-0": PNG, "0-1": PNG}, "landing_url": "https://glow.ae"}
+    launch = c.post("/campaign/glow-clinic/publish", json=body, headers=H).json            # no card needed
+    assert launch["status"] == "PAUSED"
+    assert c.get("/billing/glow-clinic", headers=H).json["ads"]["trial_started"] is None
+    r = c.post(f"/campaign/glow-clinic/launch/{launch['campaign_id']}", json={"action": "live", "confirm": True}, headers=H)
+    assert r.status_code == 200
+    ads = c.get("/billing/glow-clinic", headers=H).json["ads"]
+    assert ads["in_trial"] and ads["trial_ends"] - ads["trial_started"] == 3 * 86400
+    assert state.enforce_ads_trials() == []                                                # still inside the test
+    # three days later, no plan
+    state.billing.upsert("glow-clinic", ads_trial_started=int(time.time()) - 3 * 86400 - 5)
+    r = c.post("/campaign/glow-clinic/publish", json=body, headers=H)
+    assert r.status_code == 402 and r.json["needs_plan"] and "3-day" in r.json["error"]
+    n = len(g.posts)
+    assert state.enforce_ads_trials() == [f"glow-clinic:{launch['campaign_id']}:PAUSED_BILLING"]
+    assert {d["status"] for _, d in g.posts[n:]} == {"PAUSED"}
+    assert c.post(f"/campaign/glow-clinic/launch/{launch['campaign_id']}", json={"action": "pause"}, headers=H).status_code == 200
+    state.launches.set_status("glow-clinic", launch["campaign_id"], "PAUSED_BILLING")
+    # they pay: the paused campaigns come back on their own
+    n = len(g.posts)
+    signed(c, {"type": "customer.subscription.created", "data": {"object": {
+        "id": "sub_1", "customer": "cus_1", "status": "active", "metadata": {"client_id": "glow-clinic"}}}})
+    assert {d["status"] for _, d in g.posts[n:]} == {"ACTIVE"}
+    assert state.launches.get("glow-clinic", launch["campaign_id"])["status"] == "ACTIVE"
+    assert c.post("/campaign/glow-clinic/publish", json=body, headers=H).status_code == 200
 
 
 def test_unknown_events_and_accounts_are_ignored(app):

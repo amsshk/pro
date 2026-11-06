@@ -12,7 +12,9 @@ Settings:
   PROADS_SPEND_FEE_PERCENT      fee on ad spend published through ProAds (default 5, 0 = off).
                                 Added to each renewal invoice for the period just ended
                                 (needs the invoice.created webhook event).
-  PROADS_REQUIRE_PLAN           "1" = publishing campaigns needs an active plan
+  PROADS_ADS_TRIAL_DAYS         free ad test before paying (default 3). Signing up and organic
+                                tools are always free; the test starts at a client's first Go live.
+                                When it ends without a plan, their live campaigns are paused.
 """
 from __future__ import annotations
 
@@ -39,7 +41,14 @@ def settings() -> dict:
         trial = 0
     return {"key": env("PROADS_STRIPE_SECRET_KEY"), "webhook_secret": env("PROADS_STRIPE_WEBHOOK_SECRET"),
             "price": env("PROADS_STRIPE_PRICE_ID"), "trial_days": trial,
-            "require_plan": env("PROADS_REQUIRE_PLAN") == "1", "fee_percent": fee_percent()}
+            "ads_trial_days": ads_trial_days(), "fee_percent": fee_percent()}
+
+
+def ads_trial_days() -> float:
+    try:
+        return max(0.0, min(float(os.environ.get("PROADS_ADS_TRIAL_DAYS", "3") or 0), 60.0))
+    except ValueError:
+        return 3.0
 
 
 def fee_percent() -> float:
@@ -193,7 +202,23 @@ class BillingStore:
         cols = {r[1] for r in self.db.execute("PRAGMA table_info(billing)").fetchall()}
         if "period_start" not in cols:
             self.db.execute("ALTER TABLE billing ADD COLUMN period_start INTEGER")
+        if "ads_trial_started" not in cols:
+            self.db.execute("ALTER TABLE billing ADD COLUMN ads_trial_started INTEGER")
         self.db.commit()
+
+    def start_ads_trial(self, client_id: str) -> None:
+        """The free ad test starts at the first Go live (once)."""
+        if not (self.get(client_id) or {}).get("ads_trial_started"):
+            self.upsert(client_id, ads_trial_started=int(time.time()))
+
+    def ads_access(self, client_id: str) -> dict:
+        b = self.get(client_id) or {}
+        plan = b.get("status") in ACTIVE
+        started = b.get("ads_trial_started")
+        ends = started + int(ads_trial_days() * 86400) if started else None
+        in_trial = bool(started) and time.time() < ends
+        return {"plan": plan, "trial_days": ads_trial_days(), "trial_started": started, "trial_ends": ends,
+                "in_trial": in_trial and not plan, "allowed": plan or not started or in_trial}
 
     def fee_logged(self, invoice_id: str) -> bool:
         return self.db.execute("SELECT 1 FROM billing_fees WHERE invoice_id=?", (invoice_id,)).fetchone() is not None
@@ -210,11 +235,11 @@ class BillingStore:
 
     def get(self, client_id: str) -> Optional[dict]:
         row = self.db.execute("SELECT customer_id, subscription_id, status, period_end, cancel_at_period_end,"
-                              " period_start FROM billing WHERE client_id=?", (client_id,)).fetchone()
+                              " period_start, ads_trial_started FROM billing WHERE client_id=?", (client_id,)).fetchone()
         if not row:
             return None
         return dict(zip(("customer_id", "subscription_id", "status", "period_end", "cancel_at_period_end",
-                         "period_start"), row))
+                         "period_start", "ads_trial_started"), row))
 
     def upsert(self, client_id: str, **fields) -> None:
         if not self.get(client_id):

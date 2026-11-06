@@ -284,4 +284,4 @@ whose key is set. Settings: `PROADS_STRIPE_SECRET_KEY`, `PROADS_STRIPE_PRICE_ID`
 `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`,
 `customer.subscription.deleted`, `invoice.payment_failed`, `invoice.created`), optional `PROADS_TRIAL_DAYS`,
 `PROADS_SPEND_FEE_PERCENT` (default 5: that % of ad spend published through ProAds is added to each renewal invoice),
-and `PROADS_REQUIRE_PLAN=1` to make publishing campaigns a paid feature.
+and `PROADS_ADS_TRIAL_DAYS` (default 3): signing up and organic tools are free; ads run free for that many days from the first Go live, then live campaigns pause until the client adds a card (and resume by themselves once they pay).

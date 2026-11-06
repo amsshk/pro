@@ -1101,12 +1101,15 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
     return h("div", { class: "adset", style: "gap:12px" },
       h("b", {}, "Publish to Meta"),
       h("label", { class: "f", for: "pub-url" }, "Page the ads open", landing),
-      h("p", { class: "sub", style: "margin:0;font-size:13px" }, "These images were made for each ad. Swap any of them for your own photo or design."),
+      h("p", { class: "sub", style: "margin:0;font-size:13px" }, "These images were made for each ad. Swap any of them for your own photo or design." + (status.admin ? "" : " Your first days of ads are a free test: no card needed.")),
       h("div", { style: "display:flex;gap:14px;flex-wrap:wrap" }, cards), btn, box);
   }
 
   function launchCard(launch) {
     const live = launch.status === "ACTIVE";
+    if (launch.status === "PAUSED_BILLING") return h("div", { class: "result err", style: "flex-direction:column;align-items:stretch;gap:12px" },
+      h("span", { class: "ok" }, "Paused: your free ad test ended"), h("span", { class: "sub", style: "font-size:13px" }, "Add your card and this campaign starts again by itself."),
+      h("a", { class: "btn btn-primary", href: "#/billing", style: "align-self:flex-start" }, "Add card"));
     const money = fmt.format(launch.daily_budget) + " " + launch.currency + "/day";
     const box = h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" });
     async function setTo(action) {
@@ -1133,6 +1136,18 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
     return card;
   }
 
+  function timeLeft(ms) {
+    const hrs = Math.round(ms / 3600000);
+    return hrs >= 48 ? Math.round(hrs / 24) + " days" : hrs >= 1 ? hrs + " hours" : "less than an hour";
+  }
+  function adsBanner(a) {
+    if (!a || a.plan || !a.trial_started) return null;
+    const left = a.trial_ends * 1000 - Date.now();
+    return h("div", { class: "result" + (a.in_trial ? "" : " err") },
+      h("span", {}, a.in_trial ? "Free ad test: " + timeLeft(left) + " left. Add your card so your ads keep running." : "Your free ad test has ended and your ads are paused. Add your card and they start again automatically."),
+      h("a", { class: "btn btn-primary", href: "#/billing" }, "Add card"));
+  }
+
   // ---------- plan & billing ----------
   async function viewBilling(params) {
     root.replaceChildren(layout("#/billing", [h("header", {}, h("h1", {}, "Plan & billing")), loading()]));
@@ -1149,8 +1164,9 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
     };
     const free = h("section", { class: "card" },
       h("div", { class: "between" }, h("h2", {}, "Free"), b.active ? null : h("span", { class: "badge b-neutral" }, "Your plan")),
-      h("ul", { class: "list" }, h("li", {}, "Sales audit and money leaks"), h("li", {}, "Posts that bring buyers"), h("li", {}, "Tracking links and codes"), h("li", {}, "AI questions about your numbers")));
-    const proItems = h("ul", { class: "list" }, h("li", {}, "Everything in Free"), h("li", {}, "Campaigns built and published to your ad account"), h("li", {}, "7-day organic plan with tracking"), h("li", {}, "Real sale values sent to your Pixel"));
+      h("ul", { class: "list" }, h("li", {}, "Sales audit and money leaks"), h("li", {}, "Posts that bring buyers"), h("li", {}, "7-day organic plans with tracking links and codes"), h("li", {}, "AI questions about your numbers"),
+        h("li", {}, "Test ads free for " + (b.ads ? b.ads.trial_days : 3) + " days, no card needed")));
+    const proItems = h("ul", { class: "list" }, h("li", {}, "Everything in Free"), h("li", {}, "Keep your ads running after the free test"), h("li", {}, "Unlimited campaigns built and published to your ad account"), h("li", {}, "Real sale values sent to your Pixel"));
     let action, line;
     if (!b.available) { line = "Paid plans are coming soon."; action = null; }
     else if (b.active) {
@@ -1159,8 +1175,12 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
         : b.cancel_at_period_end ? "Cancelled: active until " + date(b.period_end) : "Renews on " + date(b.period_end);
       action = h("button", { class: "btn btn-primary", type: "button", onclick: go("/portal") }, "Manage billing & invoices");
     } else {
-      line = b.trial_days && !b.has_customer ? b.trial_days + "-day free trial, cancel any time" : "Cancel any time";
-      action = h("button", { class: "btn btn-primary", type: "button", onclick: go("/checkout") }, b.trial_days && !b.has_customer ? "Start free trial" : "Upgrade");
+      const ads = b.ads || {};
+      const left = ads.trial_ends ? Math.max(0, ads.trial_ends * 1000 - Date.now()) : 0;
+      line = ads.in_trial ? "Your free ad test ends in " + timeLeft(left) + ". Add your card so your ads keep running."
+        : ads.trial_started ? "Your free ad test has ended, so your ads are paused. Add your card and they start again."
+        : "Test your ads free for " + (ads.trial_days || 3) + " days first. No card needed until then. Cancel any time.";
+      action = h("button", { class: "btn btn-primary", type: "button", onclick: go("/checkout") }, ads.trial_started ? "Add card & keep ads running" : "Upgrade now");
     }
     const pro = h("section", { class: "card", style: "background: var(--violet-card); border-color: var(--violet-edge)" },
       h("div", { class: "between" }, h("h2", {}, (b.price && b.price.name) || "Pro"), b.active ? h("span", { class: "badge b-measured" }, "Your plan") : null),
@@ -1263,7 +1283,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
         h("span", { style: "display:flex;flex-direction:column;gap:2px" }, h("b", { style: "font-size:14px" }, x.label), x.done ? null : h("span", { class: "sub", style: "font-size:13px" }, x.how)),
         h("span", { class: "sr" }, x.done ? "done" : "to do")))));
     if (!d.has_data) {
-      body.replaceChildren(...[guide].filter(Boolean), h("section", { class: "card empty" }, h("h2", {}, "Your sales will show here"),
+      body.replaceChildren(...[adsBanner(d.ads_access), guide].filter(Boolean), h("section", { class: "card empty" }, h("h2", {}, "Your sales will show here"),
         h("p", { class: "sub" }, "Bring in your sales and this page fills with sales, real profit and orders, day by day."),
         h("a", { class: "btn btn-primary", href: "#/upload" }, "Bring in your sales")));
       return;
@@ -1294,12 +1314,13 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#CFCADB;
       h("div", { class: "track", "aria-hidden": "true" }, h("div", { style: "width:" + Math.max(2, Math.round(100 * x.sales / maxProd)) + "%" })))), "Product names appear when your sales include them (Shopify or a product column).");
     const camps = d.campaigns.length ? h("section", { class: "card" }, h("div", { class: "between" }, h("h2", {}, "Campaigns"), h("a", { href: "#/assistant", style: "font-size:13px" }, "New campaign")),
       d.campaigns.map((x) => h("div", { class: "between", style: "font-size:14px;gap:8px" }, h("span", {}, x.name || x.campaign_id),
-        h("span", { class: "badge " + (x.status === "ACTIVE" ? "b-measured" : "b-neutral") }, x.status === "ACTIVE" ? "Live" : "Paused")))) : null;
+        h("span", { class: "badge " + (x.status === "ACTIVE" ? "b-measured" : "b-neutral") }, x.status === "ACTIVE" ? "Live" : x.status === "PAUSED_BILLING" ? "Paused: add card" : "Paused")))) : null;
     const extra = h("div", { style: "display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color: var(--muted)" },
       h("span", {}, "Refunds: ", h("b", { style: "color: var(--text)" }, pct(d.refund_rate)), " of sales"),
       d.returning_rate !== null ? h("span", {}, "Returning customers: ", h("b", { style: "color: var(--text)" }, pct(d.returning_rate))) : null,
       d.live ? null : h("span", { style: "color: var(--amber-txt)" }, "Showing your latest history, up to " + new Date(d.as_of + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })));
     body.replaceChildren(
+      ...[adsBanner(d.ads_access)].filter(Boolean),
       strip,
       h("section", { class: "card", "aria-label": "Chart" },
         h("div", { class: "between" }, h("h2", {}, label + " over time"),
