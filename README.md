@@ -274,3 +274,13 @@ Business configuration), `PROADS_SECRET_KEY`. Redirect URI: `https://<domain>/me
 Until Meta grants Advanced Access (App Review + Business Verification) for ads_management,
 ads_read, business_management, pages_show_list, pages_read_engagement and pages_manage_ads,
 only people with a role on the Meta app can connect.
+
+## Paid plans (Stripe Billing)
+
+Clients upgrade on **Plan & billing** through Stripe's hosted checkout; they change card,
+download invoices or cancel in Stripe's customer portal. Money goes to the Stripe account
+whose key is set. Settings: `PROADS_STRIPE_SECRET_KEY`, `PROADS_STRIPE_PRICE_ID`,
+`PROADS_STRIPE_WEBHOOK_SECRET` (endpoint `https://<domain>/webhooks/proads-billing`, events
+`checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`,
+`customer.subscription.deleted`, `invoice.payment_failed`), optional `PROADS_TRIAL_DAYS`,
+and `PROADS_REQUIRE_PLAN=1` to make publishing campaigns a paid feature.

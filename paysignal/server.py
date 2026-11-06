@@ -48,7 +48,8 @@ from .accounts import AccountStore, Limiter, check_password, hash_password, vali
 from .ai import MetaAI
 from .attribution import make_promo_code, tag_link
 from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, business_context
-from . import meta_ads, meta_connect
+from . import billing, meta_ads, meta_connect
+from .connectors.stripe import verify_signature as stripe_signature_ok
 from .audit import audit_summary, audit_text, build_audit
 from .importers import import_auto
 from .labeler import label_posts, make_labeler
@@ -111,6 +112,8 @@ class App:
         self.ads_http = None                   # set in tests
         self.meta_conns = meta_connect.ConnectionStore(self.store.db)
         self.meta_http = None                  # set in tests
+        self.billing = billing.BillingStore(self.store.db)
+        self.stripe_http = None                # set in tests
 
     def known(self, client_id: str) -> bool:
         return client_id in self.clients or self.accounts.get(client_id) is not None
@@ -543,6 +546,11 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         return out
 
     def publisher(client_id):
+        if billing.settings()["require_plan"] and not is_admin(client_id) and not state.billing.active(client_id):
+            resp = jsonify({"error": "Publishing campaigns is part of the paid plan. Upgrade under Plan & billing.",
+                            "needs_plan": True})
+            resp.status_code = 402
+            abort(resp)
         s = state.ads_settings(client_id, is_admin(client_id))
         if s is None:
             abort(409, "Connect your Facebook & Instagram first (Connect & upload), and pick an ad account, Page and Pixel.")
@@ -816,6 +824,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
              "Set PROADS_AD_ACCOUNT_ID, PROADS_PAGE_ID and PROADS_ADS_TOKEN (system user token with ads_management)."),
             ("Clients can connect Facebook & Instagram", meta_connect.available(),
              "Set META_APP_ID, META_APP_SECRET, META_LOGIN_CONFIG_ID and PROADS_SECRET_KEY (Facebook Login for Business)."),
+            ("Paid plans (Stripe)", billing.available(),
+             "Set PROADS_STRIPE_SECRET_KEY, PROADS_STRIPE_PRICE_ID and PROADS_STRIPE_WEBHOOK_SECRET."),
             ("Connect Shopify button", shopify_app.available(),
              "Optional: SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET, PROADS_SECRET_KEY."),
         ]
@@ -898,6 +908,75 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             "totals": totals, "posts": posts, "tracking_codes": codes,
             "webhooks": {"stripe": f"/webhooks/stripe/{client_id}", "shopify": f"/webhooks/shopify/{client_id}"},
         }
+
+    # ---------------- ProAds subscriptions (Stripe Billing) ----------------
+    def stripe_api():
+        if not billing.available():
+            abort(503, "Paid plans aren't switched on yet.")
+        return billing.Stripe(state.stripe_http)
+
+    @flask.get("/billing/<client_id>")
+    def billing_status(client_id):
+        state.require_key(client_id)
+        with state.lock:
+            b = state.billing.get(client_id) or {}
+        out = {"available": billing.available(), "status": b.get("status"), "active": b.get("status") in billing.ACTIVE,
+               "period_end": b.get("period_end"), "cancel_at_period_end": bool(b.get("cancel_at_period_end")),
+               "has_customer": bool(b.get("customer_id")), "trial_days": billing.settings()["trial_days"],
+               "require_plan": billing.settings()["require_plan"], "price": None}
+        if out["available"]:
+            try:
+                out["price"] = billing.price_info(billing.Stripe(state.stripe_http))
+            except billing.BillingError as e:
+                log.warning("could not read the Stripe price: %s", e)
+        return out
+
+    @flask.post("/billing/<client_id>/checkout")
+    def billing_checkout(client_id):
+        """Stripe's hosted payment page for the monthly plan. The browser goes there next."""
+        state.require_key(client_id)
+        stripe = stripe_api()
+        with state.lock:
+            b = state.billing.get(client_id) or {}
+        if b.get("status") in billing.ACTIVE:
+            abort(409, "You already have an active plan. Use Manage billing to change it.")
+        acct = state.accounts.get(client_id) or {}
+        try:
+            url = billing.checkout_session(stripe, client_id, acct.get("email", ""), b.get("customer_id"),
+                                           public_base(), first_time=not b.get("subscription_id"))
+        except billing.BillingError as e:
+            abort(502, f"Stripe: {e}")
+        return {"url": url}
+
+    @flask.post("/billing/<client_id>/portal")
+    def billing_portal(client_id):
+        """Stripe's page to change card, download invoices or cancel."""
+        state.require_key(client_id)
+        stripe = stripe_api()
+        with state.lock:
+            b = state.billing.get(client_id) or {}
+        if not b.get("customer_id"):
+            abort(400, "No billing account yet. Upgrade first.")
+        try:
+            return {"url": billing.portal_session(stripe, b["customer_id"], public_base() + "/app#/billing")}
+        except billing.BillingError as e:
+            abort(502, f"Stripe: {e}")
+
+    @flask.post("/webhooks/proads-billing")
+    def billing_webhook():
+        secret = billing.settings()["webhook_secret"]
+        payload = request.get_data()
+        if not secret or not stripe_signature_ok(payload, request.headers.get("Stripe-Signature", ""), secret):
+            abort(400, "bad signature")
+        try:
+            event = json.loads(payload)
+        except ValueError:
+            abort(400, "bad JSON")
+        with state.lock:
+            cid = state.billing.handle(event, state.known)
+        if cid:
+            log.info("billing %s for %s", event.get("type"), cid)
+        return {"received": True}
 
     # ---------------- Facebook & Instagram connection (each client's own) ----------------
     def meta_back(result, message=""):
