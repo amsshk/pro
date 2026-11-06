@@ -136,5 +136,5 @@ def test_finds_pages_and_ad_accounts_owned_by_a_business_portfolio():
             return super().get(url, params, timeout)
 
     found = meta_connect.discover(OnlyBusiness(), "tok")
-    assert [p["id"] for p in found["pages"]] == ["p9"] and found["pages"][0]["instagram_id"] in ("ig9", "")
+    assert [p["id"] for p in found["pages"]] == ["p9"] and found["pages"][0]["instagram_id"] == "ig9"
     assert [a["id"] for a in found["ad_accounts"]] == ["act_9"]

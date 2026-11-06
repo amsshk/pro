@@ -119,7 +119,12 @@ def discover(http, token: str) -> dict:
                 into += g.pages(f"{b['id']}/{edge}", {"fields": fields, "access_token": token}, limit=100)
             except ConnectError:
                 continue
-    dedupe = lambda xs: list({x["id"]: x for x in xs}.values())
+    def dedupe(xs):
+        seen = {}
+        for x in xs:                     # keep the most complete copy (e.g. the one with its Instagram)
+            if x["id"] not in seen or (x.get("instagram_business_account") and not seen[x["id"]].get("instagram_business_account")):
+                seen[x["id"]] = x
+        return list(seen.values())
     accounts, pages = dedupe(accounts), dedupe(pages)
     return {
         "user": me.get("name", ""),
