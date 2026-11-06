@@ -60,7 +60,7 @@ h2{margin:0;font-family:var(--head);font-size:20px;font-weight:600}
 .mstrip button{background:none;border:0;border-right:1px solid var(--line);border-bottom:3px solid transparent;text-align:left;padding:16px 18px 12px;display:flex;flex-direction:column;gap:6px;cursor:pointer;min-width:0}
 .mstrip button:last-child{border-right:0}
 .mstrip button:hover{background:var(--soft)}
-.mstrip button[aria-pressed="true"]{border-image:linear-gradient(90deg,#D9B26A,#B8B04A 35%,#8DBB1E 65%,#76B900) 1;background:#171A12}
+.mstrip button[aria-pressed="true"]{border-image:linear-gradient(90deg,#F2F2F2,#E0EFC6 35%,#A6D45A 65%,#76B900) 1;background:#171A12}
 .mstrip .ml{font-size:13px;color:var(--muted);text-decoration:underline dotted var(--edge);text-underline-offset:4px}
 .mstrip .mv{font-family:var(--head);font-size:24px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chg{font-size:12px;font-weight:600;display:inline-flex;gap:4px;align-items:center}
@@ -74,14 +74,14 @@ h2{margin:0;font-family:var(--head);font-size:20px;font-weight:600}
 .key i.prev{border-top:2px dashed #6B6B6B}
 .hbar{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;align-items:center;font-size:14px}
 .hbar .track{grid-column:1/-1;height:8px;border-radius:4px;background:var(--soft);overflow:hidden}
-.hbar .track div{height:100%;border-radius:4px;background:linear-gradient(90deg,#D9B26A,#B8B04A 35%,#8DBB1E 65%,#76B900)}
+.hbar .track div{height:100%;border-radius:4px;background:linear-gradient(90deg,#F2F2F2,#E0EFC6 35%,#A6D45A 65%,#76B900)}
 .guide{display:flex;flex-direction:column;gap:2px}
 .guide a{display:flex;gap:12px;align-items:flex-start;padding:10px;border-radius:10px;text-decoration:none;color:var(--text)}
 .guide a:hover{background:var(--soft)}
 .guide .tick{flex:0 0 22px;height:22px;border-radius:50%;border:2px dashed var(--edge);display:flex;align-items:center;justify-content:center}
 .guide .done .tick{border:0;background:var(--violet)}
 .guide .done b{color:var(--muted);text-decoration:line-through}
-.progress{height:6px;border-radius:3px;background:var(--soft);overflow:hidden}.progress div{height:100%;background:linear-gradient(90deg,#D9B26A,#B8B04A 35%,#8DBB1E 65%,#76B900)}
+.progress{height:6px;border-radius:3px;background:var(--soft);overflow:hidden}.progress div{height:100%;background:linear-gradient(90deg,#F2F2F2,#E0EFC6 35%,#A6D45A 65%,#76B900)}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
 .kpi{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:8px}
 .kpi.hi{background:var(--violet-card);border-color:var(--violet-edge)}
@@ -174,9 +174,9 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D0D0D0;
 
 /* glowing pearl frames */
 @property --ga{syntax:"<angle>";inherits:false;initial-value:0deg}
-.card,.mstrip{position:relative;isolation:isolate;box-shadow:0 0 22px -6px rgba(184,176,74,.22),0 0 46px -14px rgba(118,185,0,.14)}
+.card,.mstrip{position:relative;isolation:isolate;box-shadow:0 0 22px -6px rgba(224,239,198,.22),0 0 46px -14px rgba(118,185,0,.14)}
 .card::before,.mstrip::before{content:"";position:absolute;inset:-1px;border-radius:inherit;padding:1px;pointer-events:none;z-index:1;
-  background:conic-gradient(from var(--ga),rgba(217,178,106,.75),rgba(184,176,74,.08) 22%,rgba(141,187,30,.65) 45%,rgba(118,185,0,.08) 70%,rgba(118,185,0,.7) 85%,rgba(217,178,106,.75));
+  background:conic-gradient(from var(--ga),rgba(242,242,242,.75),rgba(224,239,198,.08) 22%,rgba(166,212,90,.65) 45%,rgba(118,185,0,.08) 70%,rgba(118,185,0,.7) 85%,rgba(242,242,242,.75));
   -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;
   animation:glowspin 14s linear infinite}
 .mstrip::before{inset:0}
@@ -201,7 +201,7 @@ main{background:transparent}
     c.width = W * dpr; c.height = H * dpr;
     const x = c.getContext("2d"); x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, W, H);
     let seed = 11; const r = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-    const cols = ["217,178,106", "196,176,90", "141,187,30", "118,185,0"];
+    const cols = ["242,242,242", "224,239,198", "166,212,90", "118,185,0"];
     const col = (px) => cols[Math.min(3, Math.floor(px / W * 4))];
     const pts = Array.from({ length: Math.round(W * H / 6500) }, () => ({ x: r() * W, y: r() * H, s: .8 + r() * 1.6 }));
     x.lineWidth = 1;
@@ -220,16 +220,16 @@ main{background:transparent}
     if (W > 720) {
       const L = [40, 125, 210].map((lx, i) => Array.from({ length: 9 - i % 2 }, (_, j, a) => ({ x: lx, y: 140 + j * ((H - 260) / ((9 - i % 2) - 1)) })));
       x.shadowBlur = 0; x.lineWidth = 1;
-      for (let k = 0; k < 2; k++) for (const a of L[k]) for (const b of L[k + 1]) { x.strokeStyle = "rgba(217,178,106,.07)"; x.beginPath(); x.moveTo(a.x, a.y); x.lineTo(b.x, b.y); x.stroke(); }
+      for (let k = 0; k < 2; k++) for (const a of L[k]) for (const b of L[k + 1]) { x.strokeStyle = "rgba(242,242,242,.07)"; x.beginPath(); x.moveTo(a.x, a.y); x.lineTo(b.x, b.y); x.stroke(); }
       x.lineWidth = 1.6; x.shadowBlur = 12;
       for (const path of [[1, 3, 2], [4, 5, 6], [7, 6, 7]]) {
-        const C = path[0] < 4 ? "217,178,106" : "118,185,0";
+        const C = path[0] < 4 ? "242,242,242" : "118,185,0";
         x.strokeStyle = `rgba(${C},.5)`; x.shadowColor = `rgb(${C})`; x.beginPath();
         path.forEach((j, k) => { const q = L[k][Math.min(j, L[k].length - 1)]; k ? x.lineTo(q.x, q.y) : x.moveTo(q.x, q.y); }); x.stroke();
         path.forEach((j, k) => { const q = L[k][Math.min(j, L[k].length - 1)]; x.fillStyle = `rgba(${C},.85)`; x.beginPath(); x.arc(q.x, q.y, 3, 0, 7); x.fill(); });
       }
       x.shadowBlur = 0;
-      for (const col of L) for (const q of col) { x.strokeStyle = "rgba(217,178,106,.28)"; x.lineWidth = 1.2; x.beginPath(); x.arc(q.x, q.y, 4, 0, 7); x.stroke(); }
+      for (const col of L) for (const q of col) { x.strokeStyle = "rgba(242,242,242,.28)"; x.lineWidth = 1.2; x.beginPath(); x.arc(q.x, q.y, 4, 0, 7); x.stroke(); }
     }
     x.shadowBlur = 0; x.font = "12px 'DejaVu Sans Mono', ui-monospace, monospace"; x.fillStyle = "rgba(118,185,0,.1)";
     const f = ["value = margin × (1 − refund_risk)", "P(buy | ad, post, hook)", "θ ~ Beta(α + sales, β + views)", "lift > 1.96σ → boost",
@@ -1422,8 +1422,8 @@ main{background:transparent}
     const gid = "pl" + Math.random().toString(36).slice(2, 8);
     const svg = h("svg", { viewBox: "0 0 " + W + " " + H, role: "img", "aria-label": "Chart of this period against the previous period" },
       h("defs", {}, h("linearGradient", { id: gid, x1: "0", x2: "1", y1: "0", y2: "0" },
-        h("stop", { offset: "0", "stop-color": "#D9B26A" }), h("stop", { offset: "0.4", "stop-color": "#C2B154" }),
-        h("stop", { offset: "0.7", "stop-color": "#97BC2A" }), h("stop", { offset: "1", "stop-color": "#76B900" }))),
+        h("stop", { offset: "0", "stop-color": "#F2F2F2" }), h("stop", { offset: "0.4", "stop-color": "#E0EFC6" }),
+        h("stop", { offset: "0.7", "stop-color": "#A6D45A" }), h("stop", { offset: "1", "stop-color": "#76B900" }))),
       grid, xl,
       h("path", { d: path(prev), fill: "none", stroke: "#6B6B6B", "stroke-width": 2, "stroke-dasharray": "5 5", "stroke-linejoin": "round" }),
       h("path", { d: path(cur), fill: "none", stroke: "url(#" + gid + ")", "stroke-width": 2.5, "stroke-linejoin": "round", "stroke-linecap": "round" }),
