@@ -796,6 +796,22 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             return meta_ads.settings()["token"] or None
         return None
 
+    def library_tokens(client_id) -> list[str]:
+        """The Ad Library is public data, but Meta only answers people who confirmed their identity.
+        ProAds' own (verified) connection is tried first, so clients don't have to verify themselves."""
+        out = []
+        env_tok = os.environ.get("PROADS_LIBRARY_TOKEN", "").strip()
+        if env_tok:
+            out.append(env_tok)
+        for admin in sorted(_admins(state)):
+            t = meta_token(admin)
+            if t and t not in out:
+                out.append(t)
+        own = meta_token(client_id)
+        if own and own not in out:
+            out.append(own)
+        return out
+
     @flask.post("/competitors/<client_id>/scan")
     def competitors_scan(client_id):
         """A competitor's live ads from Meta's Ad Library, plus what the numbers say."""
@@ -805,17 +821,23 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if (body.get("pasted") or "").strip():
             ads = competitors.from_pasted(body["pasted"])
         else:
-            token = meta_token(client_id)
-            if not token:
+            tokens = library_tokens(client_id)
+            if not tokens:
                 abort(409, "Connect your Facebook & Instagram first (Connect & upload), or paste the competitor's ads.")
             q = (body.get("query") or "").strip()
             page_ids = re.findall(r"\d{6,}", q) if re.search(r"facebook\.com|^\d{6,}$", q) else []
             country = (body.get("country") or "AE").strip().upper()[:2]
-            try:
-                ads = competitors.scan(state.ads_http, token, meta_ads.settings()["version"], query=q,
-                                       page_ids=page_ids or None, country=country)
-            except competitors.ScanError as e:
-                abort(502, str(e))
+            ads, err = None, None
+            for token in tokens:
+                try:
+                    ads = competitors.scan(state.ads_http, token, meta_ads.settings()["version"], query=q,
+                                           page_ids=page_ids or None, country=country)
+                    break
+                except competitors.ScanError as e:
+                    err = e
+                    log.info("Ad Library scan failed with one token: %s", e)
+            if ads is None:
+                abort(502, str(err))
         return {"ads": ads, "summary": competitors.summarize(ads)}
 
     @flask.post("/competitors/<client_id>/counter")

@@ -54,7 +54,7 @@ def test_identity_error_is_explained():
         competitors.scan(lib, "tok", "v25.0", query="rival")
         assert False
     except competitors.ScanError as e:
-        assert "confirm your identity" in str(e)
+        assert "Ad Library to this account" in str(e)
 
 
 def test_pasted_ads_and_browser_input_are_cleaned():

@@ -49,8 +49,8 @@ def scan(http, token: str, version: str, query: str = "", page_ids: Optional[lis
         e = body.get("error") or {}
         msg = e.get("error_user_msg") or e.get("message") or f"HTTP {r.status_code}"
         if "identity" in msg.lower() or e.get("code") in (10, 2332002):
-            msg = ("Meta needs you to confirm your identity once before ProAds can read the Ad Library "
-                   "(facebook.com/ID). Or paste your competitor's ad texts below instead.")
+            msg = ("Meta hasn't opened its Ad Library to this account yet (Meta says: " + msg[:160] + "). "
+                   "Paste your competitor's ad texts below instead for now.")
         raise ScanError(msg)
     return [normalize(a) for a in body.get("data") or []]
 
