@@ -39,6 +39,13 @@ class FakeStripe:
         return R(400, {"error": {"message": "nope"}})
 
     def get(self, url, params, auth, timeout):
+        if url.endswith("/invoiceitems"):
+            items = [{"id": f"ii_{i}", "amount": int(d["amount"]), "description": d.get("description"),
+                      "invoice": d.get("invoice"), "metadata": {"proads_ref": d.get("metadata[proads_ref]")}}
+                     for i, (u, d) in enumerate(self.posts) if u == "invoiceitems" and not getattr(self, "forget_items", False)]
+            return R(200, {"data": items, "has_more": False})
+        if "/subscriptions/" in url:
+            return R(200, {"id": "sub_1", "default_payment_method": "pm_card"})
         return R(200, {"unit_amount": 19900, "currency": "aed", "recurring": {"interval": "month"},
                        "product": {"name": "ProAds Pro"}})
 
@@ -188,6 +195,7 @@ def test_renewal_invoice_gets_the_ad_spend_fee(app):
         assert data["currency"] == "usd" and data["amount"] == str(billing.fee_amount(round(6000.50 * 0.27, 2), 5))
         assert "about USD" in data["description"]
         # Meta can't be reached: the invoice is held as a draft (no fee lost), then charged on retry
+        state.ledger.db.execute("DELETE FROM spend_sync")                      # pretend it was never synced
         ok_get = g.get
         g.get = lambda url, params, timeout: (_ for _ in ()).throw(ConnectionError("down")) if url.endswith("/insights") else ok_get(url, params, timeout)
         signed(c, {"type": "invoice.created", "data": {"object": {**inv, "id": "in_4"}}})

@@ -228,12 +228,34 @@ def add_spend_fee(stripe: "Stripe", invoice: dict, spend: float, currency: str, 
     spent = f"{currency.upper()} {spend:,.2f}" + (f" (about {inv_cur} {converted:,.2f})" if rate != 1.0 else "")
     desc = (f"{label}: {percent:g}% of {spent} spent on campaigns published "
             f"through ProAds ({fmt(invoice['period_start'])} - {fmt(invoice['period_end'])})")
+    ref = key or f"proads-fee-{invoice['id']}"
+    found = existing_item(stripe, invoice["customer"], ref)
+    if found:                                   # already charged (e.g. we crashed before writing it down)
+        return {"amount": found["amount"] / 100, "spend": spend, "currency": inv_cur, "description": found.get("description", desc),
+                "item": found["id"], "invoice": found.get("invoice"), "existing": True}
     item = {"customer": invoice["customer"], "amount": str(amount), "currency": inv_cur.lower(), "description": desc,
-            "metadata[kind]": "ad_spend_fee", "metadata[spend]": f"{spend:.2f}"}
+            "metadata[kind]": "ad_spend_fee", "metadata[spend]": f"{spend:.2f}", "metadata[proads_ref]": ref}
     if invoice.get("id"):
         item["invoice"] = invoice["id"]
-    stripe.post("invoiceitems", item, idempotency_key=key or f"proads-fee-{invoice['id']}")
-    return {"amount": amount / 100, "spend": spend, "currency": inv_cur, "description": desc}
+    made = stripe.post("invoiceitems", item, idempotency_key=ref)
+    return {"amount": amount / 100, "spend": spend, "currency": inv_cur, "description": desc,
+            "item": (made or {}).get("id"), "invoice": invoice.get("id")}
+
+
+def existing_item(stripe: "Stripe", customer: str, ref: str) -> Optional[dict]:
+    """A fee item ProAds already created with this reference. Stripe's idempotency keys only last 24 hours,
+    so this check is what stops a second charge for the same period later on."""
+    after = None
+    for _ in range(10):
+        params = {"customer": customer, "limit": 100, **({"starting_after": after} if after else {})}
+        page = stripe.get("invoiceitems", params)
+        for it in page.get("data") or []:
+            if (it.get("metadata") or {}).get("proads_ref") == ref:
+                return it
+        if not page.get("has_more") or not page.get("data"):
+            return None
+        after = page["data"][-1]["id"]
+    return None
 
 
 def _period_end(sub: dict) -> Optional[int]:

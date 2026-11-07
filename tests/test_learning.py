@@ -64,3 +64,15 @@ def test_lessons_switch_endpoint(tmp_path):
     assert c.post("/lessons/glow", json={"share": False}, headers=h).json["share"] is False
     assert app.extensions["paysignal"].learnings.count() == 0 and c.get("/lessons/glow", headers=h).json["share"] is False
     assert c.post("/lessons/glow", json={"share": "no"}, headers=h).status_code == 400
+
+
+def test_benchmarks_carry_no_identifiers_and_drop_a_business_at_once(tmp_path):
+    import sqlite3
+    st = LearningStore(sqlite3.connect(":memory:"))
+    for x in "abcde":
+        st.keep(x, AUDIT)
+    b = st.benchmarks()
+    hashes = [r[0] for r in st.db.execute("SELECT source_hash FROM learnings")]
+    assert not any(hh in str(b) for hh in hashes) and not any(x in str(b).split("'") for x in "abcde")
+    st.set_sharing("a", False)                                    # opt-out: fewer than 5 left, nothing shared
+    assert st.benchmarks() is None

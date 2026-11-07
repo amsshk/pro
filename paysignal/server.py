@@ -50,7 +50,7 @@ from .attribution import make_promo_code, tag_link
 from .dashboard import build_dashboard, _realized
 from .ads_report import build_report
 from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, business_context
-from . import billing, competitors, learning, meta_ads, meta_connect
+from . import billing, competitors, learning, ledger, meta_ads, meta_connect
 from .connectors.stripe import verify_signature as stripe_signature_ok
 from .audit import audit_summary, audit_text, build_audit
 from .importers import xlsx_to_csv, import_auto
@@ -117,6 +117,7 @@ class App:
         self.meta_conns = meta_connect.ConnectionStore(self.store.db)
         self.meta_http = None                  # set in tests
         self.billing = billing.BillingStore(self.store.db)
+        self.ledger = ledger.SpendLedger(self.store.db)
         self.stripe_http = None                # set in tests
         self.billing_sync = False              # tests: add invoice fees inline
         self.ads_cache: dict = {}              # (client, period) -> (time, report)
@@ -696,8 +697,10 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             org = OrganicEngine(eng, posts) if posts else None
             ctx = business_context(eng, org, state.config(client_id).get("currency", "AED"))
             bench = state.learnings.benchmarks()
-            if bench:
-                ctx["benchmarks_from_other_businesses"] = bench
+            if bench:      # rebuilt from the table on every request, so opt-outs and deletions apply at once
+                ctx["benchmarks_from_other_businesses"] = {
+                    **bench, "note": "Rounded medians across several anonymous businesses. Never describe or guess any "
+                                     "single business behind them, and never say how one business differs from them."}
             return ctx
 
     def need_ai() -> MetaAI:
@@ -1342,7 +1345,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                "fee_percent": billing.fee_percent(), "fees": state.billing.fees(client_id), "spend_so_far": None}
         if b.get("status") in billing.ACTIVE and b.get("period_start") and billing.fee_percent() > 0:
             try:
-                spend, cur = spend_between(client_id, int(b["period_start"]), int(time.time()) + 86400)
+                spend, cur = spend_between(client_id, int(b["period_start"]), int(time.time()))
                 out["spend_so_far"] = {"spend": spend, "currency": cur,
                                        "fee": billing.fee_amount(spend, billing.fee_percent()) / 100, "fee_currency": cur}
             except Exception as e:
@@ -1477,17 +1480,46 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         return changed
     state.enforce_ads_trials = enforce_ads_trials
 
+    def sync_spend(client_id: str, force: bool = False) -> Optional[dict]:
+        """Copy new daily spend of every ProAds campaign (however it was switched on) into the ledger."""
+        with state.lock:
+            launches = state.launches.list(client_id)
+        s = state.ads_settings(client_id, is_admin(client_id))
+        if not launches or not s:
+            return None
+        out = ledger.sync(meta_ads.Publisher(state.ads_http, s), state.ledger, client_id, launches,
+                          s.get("ad_account", ""), force=force, error_cls=Exception)
+        if out["failed"]:
+            log.warning("spend sync for %s: %d campaign(s) failed", client_id, len(out["failed"]))
+        return out
+
+    def sync_all_spend() -> None:
+        with state.lock:
+            clients = state.launches.clients()
+        for cid in clients:
+            try:
+                sync_spend(cid)
+            except Exception as e:
+                log.warning("spend sync for %s failed: %s", cid, e)
+    state.sync_all_spend = sync_all_spend
+
     def spend_between(client_id: str, start: int, end: int) -> tuple[float, str]:
-        """Ad spend of the campaigns this client published through ProAds."""
+        """Ad spend of every ProAds campaign of this client, from the ledger. Raises SpendUnavailable when
+        any campaign isn't known through the last day (a gap is never treated as zero)."""
         with state.lock:
             ids = [l["campaign_id"] for l in state.launches.list(client_id)]
-            went_live = bool((state.billing.get(client_id) or {}).get("ads_trial_started"))
-        if not ids or not (went_live or is_admin(client_id)):
-            return 0.0, ""                                   # nothing was ever switched on through ProAds
-        s = state.ads_settings(client_id, is_admin(client_id))
-        if not s:
-            raise billing.SpendUnavailable("Facebook isn't connected, so the ad spend can't be read")
-        return meta_ads.Publisher(state.ads_http, s).spend(ids, start, end)
+        if not ids:
+            return 0.0, ""
+        sync_spend(client_id, force=True)
+        since, until = ledger.day(start), ledger.day(max(start, end - 1))
+        with state.lock:
+            missing = state.ledger.uncovered(ids, until)
+            if missing:
+                n = f"{len(missing)} campaign{'s' if len(missing) > 1 else ''}"
+                if state.ads_settings(client_id, is_admin(client_id)) is not None:
+                    raise RuntimeError(f"Meta didn't report the spend of {n} yet")       # temporary: hold and retry
+                raise billing.SpendUnavailable(f"Facebook isn't connected, so ProAds can't read the spend of {n}")
+            return state.ledger.total(ids, since, until)
 
     def retry_held_fees() -> None:
         """Invoices held because Meta's spend couldn't be read: try again; after a day, send them without the fee."""
@@ -1520,6 +1552,18 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 log.warning("held invoice %s still waiting: %s", h_["invoice_id"], e)
     state.retry_held_fees = retry_held_fees
 
+    def default_payment_method(stripe, client_id: str) -> Optional[str]:
+        """The card on their subscription (Checkout saves it there, not on the customer), even if it was cancelled."""
+        with state.lock:
+            sub = (state.billing.get(client_id) or {}).get("subscription_id")
+        if not sub:
+            return None
+        try:
+            return (stripe.get(f"subscriptions/{sub}") or {}).get("default_payment_method")
+        except Exception as e:
+            log.info("no card on subscription %s: %s", sub, e)
+            return None
+
     def reconcile_pending_fees() -> None:
         """Periods whose spend couldn't be read: once it can, bill the fee on its own invoice, clearly labelled."""
         with state.lock:
@@ -1535,13 +1579,15 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 stripe = billing.Stripe(state.stripe_http)
                 added = billing.add_spend_fee(stripe, {**inv, "id": None}, spend, currency, percent,
                                               key=f"proads-fee-pending-{p['id']}", label="Ad spend fee (catch-up)")
-                if added:
-                    stripe.post("invoices", {"customer": inv["customer"], "auto_advance": "true",
-                                             "collection_method": "charge_automatically",
-                                             "pending_invoice_items_behavior": "include",
-                                             "description": "ProAds ad spend fee for a period whose spend couldn't be read at the time",
-                                             "metadata[kind]": "ad_spend_fee_catch_up"},
-                                idempotency_key=f"proads-fee-pending-invoice-{p['id']}")
+                if added and not added.get("invoice"):          # the item isn't on an invoice yet
+                    data = {"customer": inv["customer"], "auto_advance": "true",
+                            "collection_method": "charge_automatically", "pending_invoice_items_behavior": "include",
+                            "description": "ProAds ad spend fee for a period whose spend couldn't be read at the time",
+                            "metadata[kind]": "ad_spend_fee_catch_up", "metadata[proads_ref]": f"proads-fee-pending-{p['id']}"}
+                    pm = default_payment_method(stripe, p["client_id"])
+                    if pm:
+                        data["default_payment_method"] = pm
+                    stripe.post("invoices", data, idempotency_key=f"proads-fee-pending-invoice-{p['id']}")
             except Exception as e:
                 log.warning("catch-up fee for %s failed, will retry: %s", p["client_id"], e)
                 continue
@@ -1703,7 +1749,14 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                             "not_paused": not_paused, "can_force": True})
             resp.status_code = 409
             abort(resp)
+        try:
+            sync_spend(client_id, force=True)                 # last reading before access goes away
+        except Exception as e:
+            log.warning("final spend sync for %s failed: %s", client_id, e)
         with state.lock:
+            for l in state.launches.list(client_id):            # verified paused: no spend after this moment
+                if l["status"] != "ACTIVE" and l["campaign_id"] not in {x["campaign_id"] for x in not_paused}:
+                    state.ledger.mark(client_id, l["campaign_id"], closed=True)
             token = state.meta_conns.token(client_id)
             state.meta_conns.delete(client_id)
         if token:
@@ -1978,7 +2031,7 @@ def _start_worker(state: App, every: int) -> None:
                     state.enforce_ads_trials()
             except Exception:
                 log.exception("ad test check failed")
-            for job in ("retry_held_fees", "reconcile_pending_fees"):
+            for job in ("sync_all_spend", "retry_held_fees", "reconcile_pending_fees"):
                 try:
                     if getattr(state, job, None):
                         getattr(state, job)()

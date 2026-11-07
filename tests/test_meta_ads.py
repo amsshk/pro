@@ -30,7 +30,10 @@ class FakeGraph:
             return R(200, {"data": [{"id": p} for p in getattr(self, "pixels", ["777", "px1"])]})
         if url.endswith("/insights"):
             self.insights = getattr(self, "insights", []) + [(url, params)]
-            return R(200, {"data": [{"spend": "6000.50", "account_currency": self.currency}]})
+            row = {"spend": "6000.50", "account_currency": self.currency}
+            if params.get("time_increment"):
+                row["date_start"] = "2026-10-01"          # one day inside the test billing period
+            return R(200, {"data": [row]})
         return R(200, {"name": "Mine", "currency": self.currency, "account_status": 1})
 
     def post(self, url, data, timeout):

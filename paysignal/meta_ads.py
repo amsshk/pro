@@ -106,7 +106,9 @@ class Publisher:
             e = body.get("error") or {}
             msg = e.get("error_user_msg") or e.get("message") or f"HTTP {r.status_code}"
             title = e.get("error_user_title")
-            raise PublishError(f"Meta refused {step}: {title + ' - ' if title else ''}{msg}")
+            err = PublishError(f"Meta refused {step}: {title + ' - ' if title else ''}{msg}")
+            err.code = e.get("code")
+            raise err
         return body
 
     def _post(self, path: str, data: dict, step: str) -> dict:
@@ -284,9 +286,12 @@ class LaunchStore:
         self.db.commit()
 
     def list(self, client_id: str) -> list[dict]:
-        rows = self.db.execute("SELECT data, status FROM ad_launches WHERE client_id=? ORDER BY created_at DESC, rowid DESC",
-                               (client_id,)).fetchall()
-        return [{**json.loads(d), "status": st} for d, st in rows]
+        rows = self.db.execute("SELECT data, status, created_at FROM ad_launches WHERE client_id=?"
+                               " ORDER BY created_at DESC, rowid DESC", (client_id,)).fetchall()
+        return [{**json.loads(d), "status": st, "created_day": (ca or "")[:10]} for d, st, ca in rows]
+
+    def clients(self) -> list[str]:
+        return [r[0] for r in self.db.execute("SELECT DISTINCT client_id FROM ad_launches").fetchall()]
 
 
 class DraftStore:
