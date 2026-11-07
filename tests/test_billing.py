@@ -32,7 +32,7 @@ class FakeStripe:
             return R(200, {"id": "ii_1"})
         if url.endswith("checkout/sessions"):
             return R(200, {"url": "https://checkout.stripe.com/c/pay/cs_1"})
-        if "/invoices/" in url:
+        if "/invoices/" in url or url.endswith("/invoices"):
             return R(200, {"id": url.rsplit("/", 1)[1]})
         if url.endswith("billing_portal/sessions"):
             return R(200, {"url": "https://billing.stripe.com/p/session/1"})
@@ -162,6 +162,7 @@ def test_renewal_invoice_gets_the_ad_spend_fee(app):
         state.meta_conns.save("glow-clinic", {"access_token": "LONG", "expires_at": None}, found)
         state.meta_conns.select("glow-clinic", "act_11", "p1", "px1", True)
         state.launches.add("glow-clinic", {"campaign_id": "c1", "ad_sets": [], "ads": [], "status": "ACTIVE"})
+        state.billing.start_ads_trial("glow-clinic")
         signed(c, {"type": "customer.subscription.updated", "data": {"object": {
             "id": "sub_1", "customer": "cus_1", "status": "active", "metadata": {"client_id": "glow-clinic"},
             "items": {"data": [{"current_period_start": 1790000000, "current_period_end": 1792600000}]}}}})

@@ -497,6 +497,23 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 out["summary_error"] = "AI is not set up: add MODEL_API_KEY from dev.meta.ai"
         return out
 
+    @flask.get("/lessons/<client_id>")
+    def lessons_get(client_id):
+        state.require_key(client_id)
+        with state.lock:
+            return {"share": state.learnings.sharing(client_id)}
+
+    @flask.post("/lessons/<client_id>")
+    def lessons_set(client_id):
+        """Share anonymous lessons or not. Turning it off also deletes what this business contributed."""
+        state.require_key(client_id)
+        share = (request.get_json(silent=True) or {}).get("share")
+        if not isinstance(share, bool):
+            abort(400, "send JSON with 'share': true or false")
+        with state.lock:
+            state.learnings.set_sharing(client_id, share)
+        return {"share": share}
+
     @flask.post("/data/<client_id>/clear-sales")
     def clear_sales(client_id):
         """Remove every imported sale and post (e.g. example files), keeping the account and its connections."""
@@ -1332,6 +1349,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 log.info("could not read ad spend for %s: %s", client_id, e)
         with state.lock:
             out["tier"] = "premium" if is_admin(client_id) else state.billing.tier(client_id)
+            out["fees_pending"] = [{"period_start": p["invoice"].get("period_start"), "period_end": p["invoice"].get("period_end"),
+                                    "reason": p["reason"]} for p in state.billing.pending(client_id)]
         out["premium_available"] = billing.premium_available()
         out["premium_price"] = None
         if out["available"]:
@@ -1462,9 +1481,12 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         """Ad spend of the campaigns this client published through ProAds."""
         with state.lock:
             ids = [l["campaign_id"] for l in state.launches.list(client_id)]
+            went_live = bool((state.billing.get(client_id) or {}).get("ads_trial_started"))
+        if not ids or not (went_live or is_admin(client_id)):
+            return 0.0, ""                                   # nothing was ever switched on through ProAds
         s = state.ads_settings(client_id, is_admin(client_id))
-        if not ids or not s:
-            return 0.0, ""
+        if not s:
+            raise billing.SpendUnavailable("Facebook isn't connected, so the ad spend can't be read")
         return meta_ads.Publisher(state.ads_http, s).spend(ids, start, end)
 
     def retry_held_fees() -> None:
@@ -1484,14 +1506,51 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                         state.billing.log_fee(h_["invoice_id"], h_["client_id"], spend, currency,
                                               added["amount"] if added else 0.0, (h_["invoice"].get("currency") or "").upper())
                 else:
-                    log.error("ad spend fee for %s on %s given up after a day: invoice sent without it",
-                              h_["client_id"], h_["invoice_id"])
+                    log.warning("ad spend fee for %s on %s: Meta unreadable for a day, sending the invoice and "
+                                "billing the fee separately once the spend can be read", h_["client_id"], h_["invoice_id"])
+                    with state.lock:
+                        state.billing.add_pending(h_["client_id"], {**h_["invoice"], "id": h_["invoice_id"]},
+                                                  "Meta's ad spend couldn't be read for a day")
+                        state.billing.log_fee(h_["invoice_id"], h_["client_id"], 0.0, "", 0.0,
+                                              (h_["invoice"].get("currency") or "").upper())
                 stripe.post(f"invoices/{h_['invoice_id']}", {"auto_advance": "true"})
                 with state.lock:
                     state.billing.release_fee(h_["invoice_id"])
             except Exception as e:
                 log.warning("held invoice %s still waiting: %s", h_["invoice_id"], e)
     state.retry_held_fees = retry_held_fees
+
+    def reconcile_pending_fees() -> None:
+        """Periods whose spend couldn't be read: once it can, bill the fee on its own invoice, clearly labelled."""
+        with state.lock:
+            waiting = state.billing.pending()
+        percent = billing.fee_percent()
+        for p in waiting:
+            inv = p["invoice"]
+            try:
+                spend, currency = spend_between(p["client_id"], int(inv["period_start"]), int(inv["period_end"]))
+            except Exception:
+                continue                                        # still not readable; stays pending and visible
+            try:
+                stripe = billing.Stripe(state.stripe_http)
+                added = billing.add_spend_fee(stripe, {**inv, "id": None}, spend, currency, percent,
+                                              key=f"proads-fee-pending-{p['id']}", label="Ad spend fee (catch-up)")
+                if added:
+                    stripe.post("invoices", {"customer": inv["customer"], "auto_advance": "true",
+                                             "collection_method": "charge_automatically",
+                                             "pending_invoice_items_behavior": "include",
+                                             "description": "ProAds ad spend fee for a period whose spend couldn't be read at the time",
+                                             "metadata[kind]": "ad_spend_fee_catch_up"},
+                                idempotency_key=f"proads-fee-pending-invoice-{p['id']}")
+            except Exception as e:
+                log.warning("catch-up fee for %s failed, will retry: %s", p["client_id"], e)
+                continue
+            with state.lock:
+                state.billing.log_fee(f"catch-up-{p['id']}", p["client_id"], spend, currency,
+                                      added["amount"] if added else 0.0, (inv.get("currency") or "").upper())
+                state.billing.resolve_pending(p["id"])
+            log.info("catch-up fee for %s: %s", p["client_id"], added)
+    state.reconcile_pending_fees = reconcile_pending_fees
 
     def charge_spend_fee(inv: dict) -> None:
         """Renewal invoice: add the % of last period's ad spend before Stripe finalizes it (about 1 hour)."""
@@ -1505,6 +1564,13 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         try:
             spend, currency = spend_between(cid, int(inv["period_start"]), int(inv["period_end"]))
             added = billing.add_spend_fee(stripe, inv, spend, currency, percent)
+        except billing.SpendUnavailable as e:
+            # not readable until Facebook is connected again: send this invoice, bill the fee separately later
+            log.warning("ad spend fee for %s on %s pending: %s", cid, inv.get("id"), e)
+            with state.lock:
+                state.billing.add_pending(cid, inv, str(e))
+                state.billing.log_fee(inv["id"], cid, 0.0, "", 0.0, (inv.get("currency") or "").upper())
+            return
         except Exception as e:
             # never finalize without the fee by accident: keep the invoice as a draft and retry
             log.warning("ad spend fee for %s on %s failed, holding the invoice: %s", cid, inv.get("id"), e)
@@ -1613,6 +1679,30 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     def meta_disconnect(client_id):
         """Forget the access and ask Facebook to remove ProAds' permission."""
         state.require_key(client_id)
+        force = bool((request.get_json(silent=True) or {}).get("force"))
+        with state.lock:
+            live = [l for l in state.launches.list(client_id) if l["status"] == "ACTIVE"]
+        s = state.ads_settings(client_id, is_admin(client_id))
+        not_paused = []
+        for l in live:
+            try:
+                if not s:
+                    raise RuntimeError("no ad account selected")
+                pub = meta_ads.Publisher(state.ads_http, s)
+                pub.set_status(l, "PAUSED")
+                if pub.status_of(l["campaign_id"]) not in ("PAUSED", "DELETED", "ARCHIVED"):
+                    raise RuntimeError("Meta still shows it running")
+                with state.lock:
+                    state.launches.set_status(client_id, l["campaign_id"], "PAUSED")
+            except Exception as e:
+                log.warning("could not pause %s before disconnecting %s: %s", l["campaign_id"], client_id, e)
+                not_paused.append({"campaign_id": l["campaign_id"], "name": l.get("name", ""), "error": str(e)[:200]})
+        if not_paused and not force:
+            resp = jsonify({"error": "Some campaigns are still running and couldn't be paused. Pause them in Ads Manager "
+                                     "first: Meta keeps spending from your ad account even after you disconnect.",
+                            "not_paused": not_paused, "can_force": True})
+            resp.status_code = 409
+            abort(resp)
         with state.lock:
             token = state.meta_conns.token(client_id)
             state.meta_conns.delete(client_id)
@@ -1627,7 +1717,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 except Exception as e:
                     log.warning("could not revoke Facebook permission for %s: %s", client_id, e)
             threading.Thread(target=revoke, daemon=True).start()
-        return {"connected": False}
+        return {"connected": False, "paused": [l["campaign_id"] for l in live if l["campaign_id"] not in {x["campaign_id"] for x in not_paused}],
+                "still_running": not_paused}
 
     # ---------------- Shopify app connection ----------------
     def public_url() -> str:
@@ -1887,11 +1978,12 @@ def _start_worker(state: App, every: int) -> None:
                     state.enforce_ads_trials()
             except Exception:
                 log.exception("ad test check failed")
-            try:
-                if getattr(state, "retry_held_fees", None):
-                    state.retry_held_fees()
-            except Exception:
-                log.exception("held fee retry failed")
+            for job in ("retry_held_fees", "reconcile_pending_fees"):
+                try:
+                    if getattr(state, job, None):
+                        getattr(state, job)()
+                except Exception:
+                    log.exception("%s failed", job)
             for cid in sorted(set(state.clients) | set(state.meta_conns.all_clients())):
                 try:
                     if not state.known(cid):

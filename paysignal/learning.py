@@ -44,21 +44,45 @@ def lesson_from_audit(audit: dict) -> Optional[dict]:
     return lesson
 
 
+def _coarse(x: Optional[float], step: float) -> Optional[float]:
+    """Round to a coarse step so one business joining or leaving rarely moves a benchmark (no differencing)."""
+    return None if x is None else round(round(x / step) * step, 3)
+
+
 class LearningStore:
     SCHEMA = """CREATE TABLE IF NOT EXISTS learnings (
         source_hash TEXT PRIMARY KEY, data TEXT NOT NULL,
         updated_at TEXT NOT NULL DEFAULT (datetime('now')))"""
+    OPTOUT = "CREATE TABLE IF NOT EXISTS learning_optout (source_hash TEXT PRIMARY KEY)"
 
     def __init__(self, db, salt: str = "proads"):
         self.db, self.salt = db, salt
         self.db.execute(self.SCHEMA)
+        self.db.execute(self.OPTOUT)
         self.db.commit()
 
     def _key(self, client_id: str) -> str:
         return hashlib.sha256(f"{self.salt}:{client_id}".encode()).hexdigest()[:24]
 
+    def sharing(self, client_id: str) -> bool:
+        return self.db.execute("SELECT 1 FROM learning_optout WHERE source_hash=?", (self._key(client_id),)).fetchone() is None
+
+    def set_sharing(self, client_id: str, share: bool) -> None:
+        """Opting out also removes everything this business already contributed."""
+        if share:
+            self.db.execute("DELETE FROM learning_optout WHERE source_hash=?", (self._key(client_id),))
+            self.db.commit()
+        else:
+            self.db.execute("INSERT OR IGNORE INTO learning_optout (source_hash) VALUES (?)", (self._key(client_id),))
+            self.db.commit()
+            self.forget(client_id)
+            self.forget(client_id + ":archived")
+
     def keep(self, client_id: str, audit: dict) -> bool:
         """Save (or refresh) one business's anonymous lesson."""
+        base = client_id.split(":archived")[0]
+        if not self.sharing(base):
+            return False
         lesson = lesson_from_audit(audit)
         if not lesson:
             return False
@@ -75,17 +99,19 @@ class LearningStore:
         return self.db.execute("SELECT COUNT(*) FROM learnings").fetchone()[0]
 
     def benchmarks(self) -> Optional[dict]:
+        """Only what at least MIN_BUSINESSES businesses share, coarsely rounded. Rare values are left out."""
         rows = [json.loads(r[0]) for r in self.db.execute("SELECT data FROM learnings").fetchall()]
         if len(rows) < MIN_BUSINESSES:
             return None
-        med = lambda xs: round(statistics.median(xs), 3) if xs else None
+        enough = lambda xs: len(xs) >= MIN_BUSINESSES
+        med = lambda xs, step=0.05: _coarse(statistics.median(xs), step) if enough(xs) else None
         vals = lambda k: [r[k] for r in rows if isinstance(r.get(k), (int, float))]
         hours = defaultdict(int)
         days = defaultdict(int)
         for r in rows:
             if r.get("peak_sales_hours"):
                 hours[r["peak_sales_hours"]] += 1
-            for d in r.get("best_sales_days") or []:
+            for d in set(r.get("best_sales_days") or []):
                 days[d] += 1
         lifts = defaultdict(list)
         for r in rows:
@@ -94,16 +120,18 @@ class LearningStore:
                     lifts[(attr, k)].append(lift)
         patterns = defaultdict(dict)
         for (attr, k), xs in lifts.items():
-            if len(xs) >= MIN_BUSINESSES:                         # only patterns seen in several businesses
-                patterns[attr][k] = {"median_lift": med(xs), "businesses": len(xs)}
-        disc = [x for r in rows for x in r.get("discount_effect") or []]
+            if enough(xs):                                        # only patterns seen in several businesses
+                patterns[attr][k] = {"median_lift": med(xs, 0.1)}
+        disc_rows = [r["discount_effect"] for r in rows if r.get("discount_effect")]
+        disc = [x for xs in disc_rows for x in xs]
+        common = lambda d: [k for k, n in sorted(d.items(), key=lambda kv: -kv[1]) if n >= MIN_BUSINESSES]
         return {
-            "businesses": len(rows),
+            "businesses": "5+" if len(rows) < 10 else "10+" if len(rows) < 50 else "50+",
             "median_refund_rate": med(vals("refund_rate")),
             "median_repeat_rate": med(vals("repeat_rate")),
             "median_repeat_profit_share": med(vals("repeat_profit_share")),
-            "discount_codes_losing_profit": round(sum(1 for x in disc if x < 0) / len(disc), 2) if disc else None,
-            "common_peak_hours": [h for h, _ in sorted(hours.items(), key=lambda kv: -kv[1])[:2]],
-            "common_best_days": [d for d, _ in sorted(days.items(), key=lambda kv: -kv[1])[:3]],
+            "discount_codes_losing_profit": _coarse(sum(1 for x in disc if x < 0) / len(disc), 0.1) if enough(disc_rows) else None,
+            "common_peak_hours": common(hours)[:2],
+            "common_best_days": common(days)[:3],
             "post_patterns": dict(patterns),
         }

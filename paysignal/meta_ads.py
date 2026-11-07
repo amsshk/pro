@@ -253,6 +253,10 @@ class Publisher:
         for obj_id in [launch["campaign_id"], *launch["ad_sets"], *launch["ads"]]:
             self._post(obj_id, {"status": status}, f"switching {obj_id} to {status.lower()}")
 
+    def status_of(self, campaign_id: str) -> str:
+        """What Meta says the campaign's own switch is (ACTIVE, PAUSED, DELETED, ARCHIVED)."""
+        return (self._get(campaign_id, "status", f"checking campaign {campaign_id}").get("status") or "").upper()
+
 
 class LaunchStore:
     SCHEMA = """CREATE TABLE IF NOT EXISTS ad_launches (

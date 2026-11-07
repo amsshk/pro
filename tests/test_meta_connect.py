@@ -103,7 +103,7 @@ def test_client_connects_picks_assets_and_publishes_in_own_account(app):
     story = g.posts[3][1]["object_story_spec"]
     assert '"page_id": "p1"' in story and '"instagram_user_id": "ig1"' in story and "https://glow.ae" in story
     # disconnect forgets everything and asks Facebook to remove the permission
-    assert c.post("/meta/glow-clinic/disconnect", headers=H).json == {"connected": False}
+    assert c.post("/meta/glow-clinic/disconnect", headers=H).json["connected"] is False
     assert not c.get("/meta/glow-clinic", headers=H).json["connected"]
     assert not c.get("/status/glow-clinic", headers=H).json["connections"]["meta_capi"]["live"]
 

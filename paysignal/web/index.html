@@ -761,11 +761,23 @@ main{background:transparent}
         btn.textContent = "Done";
       } catch (e) { if (e.message !== "signed out") { msg.textContent = e.message; btn.disabled = false; } }
     });
-    return h("section", { class: "card" }, h("h2", {}, "Start fresh"),
+    const share = h("input", { type: "checkbox", id: "share-lessons", style: "width:20px;min-height:20px" });
+    const shareMsg = h("span", { class: "sub", style: "font-size:13px" });
+    api("/lessons/" + cid()).then((r) => { share.checked = r.share; }).catch(() => {});
+    share.addEventListener("change", async () => {
+      try {
+        await api("/lessons/" + cid(), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ share: share.checked }) });
+        shareMsg.textContent = share.checked ? "Thanks. Only anonymous ratios are shared, combined with at least 5 businesses." : "Off. Everything your business contributed was deleted.";
+      } catch (e) { if (e.message !== "signed out") { shareMsg.textContent = e.message; share.checked = !share.checked; } }
+    });
+    const lessons = h("section", { class: "card" }, h("h2", {}, "Anonymous lessons"),
+      h("p", { class: "sub", style: "margin:0" }, "ProAds learns from businesses like yours: only ratios such as refund rate and which post styles sell, combined with at least 5 other businesses. Never names, customers, amounts or posts."),
+      h("label", { for: "share-lessons", style: "display:flex;gap:10px;align-items:center;font-size:14px" }, share, "Share my anonymous lessons"), shareMsg);
+    return [lessons, h("section", { class: "card" }, h("h2", {}, "Start fresh"),
       h("p", { class: "sub", style: "margin:0" }, "Uploaded example or test files? Remove every imported sale and post, then bring in your real ones."),
       h("label", { for: "keep-lessons", style: "display:flex;gap:10px;align-items:center;font-size:14px" }, keep,
         "Keep the anonymous lessons for ProAds' engine (only tick this if these were real sales, not examples)"),
-      h("div", { style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap" }, btn, msg));
+      h("div", { style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap" }, btn, msg))];
   }
 
   function addCompanyCard() {
@@ -854,12 +866,21 @@ main{background:transparent}
         btn, ...(notice ? [notice] : []));
     }
     function disconnectBtn() {
-      let armed = false;
+      let armed = false, force = false;
       const b = h("button", { class: "btn btn-ghost", type: "button" }, "Disconnect");
       b.addEventListener("click", async () => {
-        if (!armed) { armed = true; b.textContent = "Click again to disconnect"; return; }
-        try { await api("/meta/" + cid() + "/disconnect", { method: "POST" }); status = await api("/status/" + cid()); drawConnect(false); }
-        catch (e) { if (e.message !== "signed out") toast(e.message); }
+        if (!armed) { armed = true; b.textContent = "Click again: your running ProAds campaigns get paused first"; return; }
+        b.disabled = true;
+        try {
+          const r = await api("/meta/" + cid() + "/disconnect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ force }) });
+          if (r.paused && r.paused.length) toast("Paused " + r.paused.length + " running campaign" + (r.paused.length > 1 ? "s" : "") + ", then disconnected.");
+          status = await api("/status/" + cid()); drawConnect(false);
+        } catch (e) {
+          if (e.message === "signed out") return;
+          toast(e.message);
+          if (/couldn't be paused/.test(e.message)) { force = true; b.textContent = "Disconnect anyway (they keep running and spending)"; b.style.color = "#F87171"; }
+          b.disabled = false;
+        }
       });
       return b;
     }
@@ -1599,9 +1620,12 @@ main{background:transparent}
       tier === "free" && b.has_customer ? h("button", { class: "btn btn-ghost", type: "button", style: "align-self:flex-start", onclick: go("/portal") }, "Past invoices") : null,
       b.spend_so_far ? h("div", { class: "result" }, h("span", {}, "This period: " + fmt.format(b.spend_so_far.spend) + " " + (b.spend_so_far.currency || "") + " ad spend"),
         h("b", {}, "Fee so far " + fmt.format(b.spend_so_far.fee) + " " + (b.spend_so_far.currency || ""))) : null,
+      (b.fees_pending || []).map((p) => h("div", { class: "result err" },
+        h("span", {}, "Ad spend for " + date(p.period_start) + " – " + date(p.period_end) + " couldn't be read (" + p.reason + ")."),
+        h("span", { class: "ok" }, "The " + b.fee_percent + "% for that period will be billed on its own invoice once Facebook is connected again."))),
       b.fees && b.fees.length ? h("section", { class: "card" }, h("h2", {}, "Ad spend fees"),
         h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Date", "Ad spend", "Fee"].map((t) => h("th", { scope: "col" }, t)))),
-          h("tbody", {}, b.fees.map((f) => h("tr", {}, h("td", {}, f.created_at.slice(0, 10)), h("td", {}, fmt.format(f.spend) + " " + (f.currency || "")), h("td", {}, fmt.format(f.fee) + " " + (f.fee_currency || f.currency || "")))))))) : null]));
+          h("tbody", {}, b.fees.map((f) => h("tr", {}, h("td", {}, f.created_at.slice(0, 10)), h("td", {}, f.currency ? fmt.format(f.spend) + " " + f.currency + (f.invoice_id.startsWith("catch-up-") ? " (catch-up)" : "") : "Couldn't be read yet"), h("td", {}, f.currency ? fmt.format(f.fee) + " " + (f.fee_currency || f.currency) : "Billed later"))))))) : null]));
   }
 
   // ---------- home (Shopify-style) ----------
