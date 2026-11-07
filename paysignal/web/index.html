@@ -1137,10 +1137,10 @@ main{background:transparent}
       h("a", { href: "#/platforms", style: "font-size:13px;align-self:flex-start" }, "Don't see yours? More platforms by country"));
     const NAME = Object.fromEntries(SOCIAL.concat(SHOPS));
     const socialCard = (k) => h("section", { class: "card" },
-      h("div", { class: "between" }, h("h2", {}, NAME[k]), h("span", { class: "badge b-neutral" }, "Links & codes")),
+      h("div", { class: "between" }, h("h2", {}, NAME[k]), h("span", { class: "badge b-neutral" }, k === "whatsapp" ? "Chats" : "Direct connection coming soon")),
       h("p", { class: "sub", style: "margin:0" }, k === "whatsapp"
         ? "Read your WhatsApp chats to see which posts brought people who paid, and give each post its own code."
-        : "Give each " + NAME[k] + " post its own tracking link (for the bio, sticker or caption) and a code for people who message you. ProAds then shows which " + NAME[k] + " posts bring buyers, not just views."),
+        : "ProAds can't log in to " + NAME[k] + " yet, so nothing to connect here. You don't need to: to see which " + NAME[k] + " posts bring buyers, put a ProAds link in the post (bio, sticker or caption). Sales that come through it are counted automatically."),
       h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" },
         k === "whatsapp" ? h("a", { class: "btn btn-primary", href: "#/whatsapp" }, "Open WhatsApp") :
           h("button", { class: "btn btn-primary", type: "button", onclick: () => { tPlat.value = ["tiktok", "snapchat", "youtube"].includes(k) ? k : "instagram"; document.getElementById("s3").scrollIntoView({ behavior: "smooth" }); tName.focus(); } }, "Create " + (/^[AEIOU]/.test(NAME[k]) ? "an " : "a ") + NAME[k] + " link"),
