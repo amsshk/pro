@@ -218,6 +218,44 @@ main{background:transparent}
 .truth .side{display:flex;flex-direction:column;gap:4px}.truth .big{font-family:var(--head);font-size:30px;font-weight:700}
 .truth .vs{font-size:12px;color:var(--muted);text-align:center}
 @media (max-width:560px){.truth{grid-template-columns:1fr}.truth .vs{text-align:left}}
+
+/* day / night switch */
+.themetog{display:flex;gap:4px;padding:4px;border-radius:999px;background:var(--line);margin-top:4px}
+.themetog button{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;min-height:34px;border:0;border-radius:999px;background:transparent;color:var(--muted);font-size:13px;font-weight:600;cursor:pointer}
+.themetog button svg{width:16px;height:16px}
+.themetog button[aria-pressed="true"]{background:var(--card);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+
+/* ---------- night mode: charcoal glass ---------- */
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --ink:#0E0E0E; --nav:#121212; --card:#1C1C1C; --line:#2A2A2A; --soft:#242424; --field:#161616; --edge:#333333;
+  --text:#F2F2F2; --muted:#A0A0A0; --dim:#7E7E7E; --violet:#5E9400; --violet-hi:#8CC63F; --violet-txt:#9ACD4F;
+  --violet-chip:#1E2614; --violet-card:#1A1F14; --violet-edge:#33421F; --bubble:#262626;
+  --amber:#F87171; --amber-txt:#FCA5A5; --amber-bg:#2A1617; --amber-chip:#3A1D1F; --loss-bg:#3A1D1F; --loss-txt:#FCA5A5;
+  --win:#4ADE80; --win-txt:#86EFAC; --win-bg:#13261A;
+}
+:root[data-theme="dark"]{background:radial-gradient(120% 80% at 60% -10%,#2B2B2B 0%,#161616 45%,#0B0B0B 100%) fixed}
+:root[data-theme="dark"] #bgnet{opacity:.45}
+:root[data-theme="dark"] nav.side{background:rgba(20,20,20,.55);border-right:1px solid rgba(255,255,255,.05)}
+:root[data-theme="dark"] .navlinks a{color:#B5B5B5}
+:root[data-theme="dark"] .navlinks a:not([aria-current="page"]):hover{background:rgba(255,255,255,.05)}
+:root[data-theme="dark"] .navlinks a[aria-current="page"]{background:linear-gradient(180deg,rgba(255,255,255,.12),rgba(255,255,255,.06));color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+:root[data-theme="dark"] .navlinks a[aria-current="page"] svg{color:#8CC63F;stroke:#8CC63F}
+:root[data-theme="dark"] .biz,:root[data-theme="dark"] .statusbox{background:linear-gradient(180deg,#232323,#1A1A1A);box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
+:root[data-theme="dark"] .card,:root[data-theme="dark"] .mstrip{background:linear-gradient(180deg,rgba(40,40,40,.88),rgba(26,26,26,.88))!important;
+  border-color:rgba(255,255,255,.06);box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 12px 32px -12px rgba(0,0,0,.6)}
+:root[data-theme="dark"] .card::before,:root[data-theme="dark"] .mstrip::before{opacity:.35}
+:root[data-theme="dark"] .btn-primary{background:linear-gradient(180deg,#6CA60A,#4F7F00);color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.18)}
+:root[data-theme="dark"] .btn-ghost{background:rgba(255,255,255,.03)}
+:root[data-theme="dark"] label.f,:root[data-theme="dark"] .list{color:#CFCFCF}
+:root[data-theme="dark"] .b-neutral{color:#C9C9C9;background:rgba(255,255,255,.07)}
+:root[data-theme="dark"] .tip{background:#222}
+:root[data-theme="dark"] .drop{border-color:#4A4A4A}
+:root[data-theme="dark"] .adset,:root[data-theme="dark"] .adkpis div,:root[data-theme="dark"] .truth{background:rgba(255,255,255,.04)}
+:root[data-theme="dark"] .themetog{background:rgba(255,255,255,.06)}
+:root[data-theme="dark"] .themetog button[aria-pressed="true"]{background:#2E2E2E;color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+:root[data-theme="dark"] .uchip[aria-pressed=true]{color:#fff}
+:root[data-theme="dark"] .navtag{background:#5E9400;color:#fff}
 </style>
 </head>
 <body>
@@ -227,6 +265,19 @@ main{background:transparent}
 <script>
 "use strict";
 (function () {
+  // theme: light by default, night mode remembered per browser
+  let theme = "light";
+  try { theme = localStorage.getItem("proads.theme") || "light"; } catch (e) {}
+  document.documentElement.dataset.theme = theme;
+  const K = () => theme === "dark"
+    ? { text: "#F2F2F2", grid: "#2E2E2E", axis: "#8C8C8C", label: "#C9C9C9", bg: "#1E1E1E", dash: "#555555", body: "#CFCFCF", dim: "#B0B0B0" }
+    : { text: "#141414", grid: "#E8E9E3", axis: "#6B6B6B", label: "#3D3D3D", bg: "#FFFFFF", dash: "#B5B8AE", body: "#333333", dim: "#4A4A4A" };
+  function setTheme(t) {
+    theme = t; document.documentElement.dataset.theme = t;
+    try { localStorage.setItem("proads.theme", t); } catch (e) {}
+    if (typeof drawNet === "function") drawNet();
+    route();
+  }
   // algorithm background: a neural-network mesh with lit paths and faint formulas
   function drawNet() {
     const c = document.getElementById("bgnet"); if (!c) return;
@@ -234,7 +285,8 @@ main{background:transparent}
     c.width = W * dpr; c.height = H * dpr;
     const x = c.getContext("2d"); x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, W, H);
     let seed = 11; const r = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-    const cols = ["120,128,110", "110,150,60", "94,148,0", "70,110,0"];
+    const dark = document.documentElement.dataset.theme === "dark";
+    const cols = dark ? ["170,170,170", "150,170,130", "125,178,28", "94,148,0"] : ["120,128,110", "110,150,60", "94,148,0", "70,110,0"];
     const col = (px) => cols[Math.min(3, Math.floor(px / W * 4))];
     const pts = Array.from({ length: Math.round(W * H / 6500) }, () => ({ x: r() * W, y: r() * H, s: .8 + r() * 1.6 }));
     x.lineWidth = 1;
@@ -253,16 +305,16 @@ main{background:transparent}
     if (W > 720) {
       const L = [40, 125, 210].map((lx, i) => Array.from({ length: 9 - i % 2 }, (_, j, a) => ({ x: lx, y: 140 + j * ((H - 260) / ((9 - i % 2) - 1)) })));
       x.shadowBlur = 0; x.lineWidth = 1;
-      for (let k = 0; k < 2; k++) for (const a of L[k]) for (const b of L[k + 1]) { x.strokeStyle = "rgba(40,40,40,.07)"; x.beginPath(); x.moveTo(a.x, a.y); x.lineTo(b.x, b.y); x.stroke(); }
+      for (let k = 0; k < 2; k++) for (const a of L[k]) for (const b of L[k + 1]) { x.strokeStyle = dark ? "rgba(255,255,255,.05)" : "rgba(40,40,40,.07)"; x.beginPath(); x.moveTo(a.x, a.y); x.lineTo(b.x, b.y); x.stroke(); }
       x.lineWidth = 1.6; x.shadowBlur = 12;
       for (const path of [[1, 3, 2], [4, 5, 6], [7, 6, 7]]) {
-        const C = path[0] < 4 ? "242,242,242" : "94,148,0";
+        const C = path[0] < 4 ? (dark ? "200,200,200" : "120,128,110") : "94,148,0";
         x.strokeStyle = `rgba(${C},.5)`; x.shadowColor = `rgb(${C})`; x.beginPath();
         path.forEach((j, k) => { const q = L[k][Math.min(j, L[k].length - 1)]; k ? x.lineTo(q.x, q.y) : x.moveTo(q.x, q.y); }); x.stroke();
         path.forEach((j, k) => { const q = L[k][Math.min(j, L[k].length - 1)]; x.fillStyle = `rgba(${C},.85)`; x.beginPath(); x.arc(q.x, q.y, 3, 0, 7); x.fill(); });
       }
       x.shadowBlur = 0;
-      for (const col of L) for (const q of col) { x.strokeStyle = "rgba(40,40,40,.22)"; x.lineWidth = 1.2; x.beginPath(); x.arc(q.x, q.y, 4, 0, 7); x.stroke(); }
+      for (const col of L) for (const q of col) { x.strokeStyle = dark ? "rgba(255,255,255,.14)" : "rgba(40,40,40,.22)"; x.lineWidth = 1.2; x.beginPath(); x.arc(q.x, q.y, 4, 0, 7); x.stroke(); }
     }
     x.shadowBlur = 0; x.font = "12px 'DejaVu Sans Mono', ui-monospace, monospace"; x.fillStyle = "rgba(94,148,0,.1)";
     const f = ["value = margin × (1 − refund_risk)", "P(buy | ad, post, hook)", "θ ~ Beta(α + sales, β + views)", "lift > 1.96σ → boost",
@@ -455,9 +507,16 @@ main{background:transparent}
         h("div", { class: "biz" }, h("small", {}, "Business"), status ? status.name : session.client),
         h("div", { class: "navlinks" }, NAV.concat(status && status.admin ? [["#/admin", "Admin", "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"]] : [["#/billing", "Plan & billing", "M3 7h18v10H3zM3 11h18"]]).map(([href, label, d, tag]) =>
           h("a", { href, "aria-current": href === active ? "page" : null }, icon(d), label, tag ? h("span", { class: "navtag" }, tag) : null))),
-        h("div", { class: "statusbox" }, statusRows(),
+        h("div", { class: "statusbox" }, statusRows(), themeToggle(),
           h("button", { class: "btn btn-ghost", style: "margin-top:6px", onclick: () => signOut() }, "Sign out"))),
       h("main", {}, h("div", { class: "wrap" }, content)));
+  }
+  function themeToggle() {
+    const sun = "M12 4V2M12 22v-2M4 12H2M22 12h-2M5.6 5.6 4.2 4.2M19.8 19.8l-1.4-1.4M5.6 18.4l-1.4 1.4M19.8 4.2l-1.4 1.4M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z";
+    const moon = "M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z";
+    const btn = (t, d, label) => h("button", { type: "button", "aria-pressed": theme === t ? "true" : "false", "aria-label": label, title: label,
+      onclick: () => { if (theme !== t) setTheme(t); } }, icon(d), h("span", {}, t === "dark" ? "Night" : "Day"));
+    return h("div", { class: "themetog", role: "group", "aria-label": "Theme" }, btn("light", sun, "Day mode"), btn("dark", moon, "Night mode"));
   }
   function loading(text) {
     return h("div", { class: "card", style: "flex-direction:row;align-items:center" }, h("span", { class: "spinner", "aria-hidden": "true" }), text || "Loading…");
@@ -1266,7 +1325,7 @@ main{background:transparent}
     return h("div", { class: "plan" },
       h("div", { class: "between" }, h("b", { style: "font-size:16px", dir: "auto" }, p.name || "Campaign draft"),
         h("span", { class: "sub", style: "font-size:13px" }, (p.optimization || "Sales") + " · " + fmt.format(Number(p.daily_budget || 0)) + " " + (p.currency || "") + "/day")),
-      p.rationale ? h("p", { style: "margin:0;line-height:1.6;color:#333", dir: "auto" }, p.rationale) : null,
+      p.rationale ? h("p", { style: "margin:0;line-height:1.6;color:" + K().body, dir: "auto" }, p.rationale) : null,
       sets.map((s) => h("div", { class: "adset" },
         h("div", { class: "between" }, h("b", { dir: "auto" }, s.name || "Ad set"), h("span", { class: "sub" }, share(s))),
         s.audience ? h("span", { class: "sub", dir: "auto" }, s.audience) : null,
@@ -1463,10 +1522,10 @@ main{background:transparent}
     const col = p >= 0.9 ? "#16A34A" : p >= 0.7 ? "#5E9400" : "#8F8F8F";
     return h("div", { style: "display:flex;flex-direction:column;align-items:center;gap:2px" },
       h("svg", { width: 92, height: 54, viewBox: "0 0 92 54", "aria-label": Math.round(p * 100) + "% confidence" },
-        h("path", { d: "M12 46 A34 34 0 0 1 80 46", fill: "none", stroke: "#E8E9E3", "stroke-width": 8, "stroke-linecap": "round" }),
+        h("path", { d: "M12 46 A34 34 0 0 1 80 46", fill: "none", stroke: K().grid, "stroke-width": 8, "stroke-linecap": "round" }),
         h("path", { d: "M12 46 A34 34 0 0 1 80 46", fill: "none", stroke: col, "stroke-width": 8, "stroke-linecap": "round",
           "stroke-dasharray": (c * p).toFixed(1) + " " + c.toFixed(1) }),
-        h("text", { x: 46, y: 44, "text-anchor": "middle", fill: "#141414", "font-size": 15, "font-weight": 700 }, (p >= 0.995 ? "99%+" : Math.round(p * 100) + "%"))),
+        h("text", { x: 46, y: 44, "text-anchor": "middle", fill: K().text, "font-size": 15, "font-weight": 700 }, (p >= 0.995 ? "99%+" : Math.round(p * 100) + "%"))),
       h("span", { class: "small", style: "color:" + col }, label || "confidence"));
   }
   const HEAT = { // step -> [good, bad] share moving on from the step before
@@ -1634,7 +1693,7 @@ main{background:transparent}
       scanBtn.disabled = false;
     } },
       h("div", { class: "grid2" }, h("label", { class: "f", for: "cq" }, "Competitor", query), h("label", { class: "f", for: "cc" }, "Country they advertise in", country)),
-      h("details", {}, h("summary", { style: "cursor:pointer;font-size:13px;color:#4A4A4A" }, "No results? Paste their ads instead"),
+      h("details", {}, h("summary", { style: "cursor:pointer;font-size:13px;color:" + K().dim }, "No results? Paste their ads instead"),
         h("label", { class: "f", for: "cp", style: "margin-top:10px" }, "Their ad texts", pasted)),
       h("p", { class: "sub", style: "margin:0;font-size:13px" }, "Meta's Ad Library shows every ad running in Europe and the UK; in other countries it can show fewer. Their names and words stay out of your ads."),
       scanBtn);
@@ -1850,12 +1909,12 @@ main{background:transparent}
     const day = (iso) => new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" });
     const grid = [0, 0.25, 0.5, 0.75, 1].map((f) => h("g", {},
       h("line", { x1: L, x2: W - R, y1: y(max * f), y2: y(max * f), stroke: "#242424", "stroke-width": 1 }),
-      h("text", { x: L - 8, y: y(max * f) + 4, "text-anchor": "end", fill: "#6B6B6B", "font-size": 11 }, fmt.format(Math.round(max * f)))));
+      h("text", { x: L - 8, y: y(max * f) + 4, "text-anchor": "end", fill: K().axis, "font-size": 11 }, fmt.format(Math.round(max * f)))));
     const ticks = n > 1 ? [0, Math.floor((n - 1) / 2), n - 1] : [0];
-    const xl = ticks.map((i) => h("text", { x: x(i), y: H - 8, "text-anchor": i === 0 && n > 1 ? "start" : i === n - 1 && n > 1 ? "end" : "middle", fill: "#6B6B6B", "font-size": 11 }, day(dates[i])));
-    const hair = h("line", { y1: T, y2: H - B, stroke: "#6B6B6B", "stroke-width": 1, style: "display:none" });
-    const dotC = h("circle", { r: 5, fill: "#5E9400", stroke: "#fff", "stroke-width": 2, style: "display:none" });
-    const dotP = h("circle", { r: 4, fill: "#9A9A9A", stroke: "#fff", "stroke-width": 2, style: "display:none" });
+    const xl = ticks.map((i) => h("text", { x: x(i), y: H - 8, "text-anchor": i === 0 && n > 1 ? "start" : i === n - 1 && n > 1 ? "end" : "middle", fill: K().axis, "font-size": 11 }, day(dates[i])));
+    const hair = h("line", { y1: T, y2: H - B, stroke: K().axis, "stroke-width": 1, style: "display:none" });
+    const dotC = h("circle", { r: 5, fill: "#5E9400", stroke: K().bg, "stroke-width": 2, style: "display:none" });
+    const dotP = h("circle", { r: 4, fill: "#9A9A9A", stroke: K().bg, "stroke-width": 2, style: "display:none" });
     const tip = h("div", { class: "tip", style: "display:none", role: "status" });
     const hit = h("rect", { x: L, y: T, width: W - L - R, height: H - T - B, fill: "transparent", style: "cursor:crosshair" });
     const gid = "pl" + Math.random().toString(36).slice(2, 8);
@@ -1864,7 +1923,7 @@ main{background:transparent}
         h("stop", { offset: "0", "stop-color": "#C8DCA3" }), h("stop", { offset: "0.4", "stop-color": "#8CB85A" }),
         h("stop", { offset: "0.7", "stop-color": "#8CB85A" }), h("stop", { offset: "1", "stop-color": "#5E9400" }))),
       grid, xl,
-      h("path", { d: path(prev), fill: "none", stroke: "#6B6B6B", "stroke-width": 2, "stroke-dasharray": "5 5", "stroke-linejoin": "round" }),
+      h("path", { d: path(prev), fill: "none", stroke: K().axis, "stroke-width": 2, "stroke-dasharray": "5 5", "stroke-linejoin": "round" }),
       h("path", { d: path(cur), fill: "none", stroke: "url(#" + gid + ")", "stroke-width": 2.5, "stroke-linejoin": "round", "stroke-linecap": "round" }),
       n <= 3 ? cur.map((v, i) => h("circle", { cx: x(i), cy: y(v), r: 5, fill: "#5E9400" })) : null,
       hair, dotP, dotC, hit);
@@ -1910,11 +1969,11 @@ main{background:transparent}
         stroke: leak ? "#DC2626" : i === n - 2 ? "#5E9400" : "#8CB85A", "stroke-width": Math.max(2, width(stages[i + 1].value) / 3), "stroke-linecap": "round" }));
     }
     stages.forEach((st, i) => {
-      const cx = gap * i + gap / 2, c = st.tone === "win" ? "#5E9400" : st.tone === "loss" ? "#DC2626" : "#141414";
-      g.push(h("circle", { cx, cy: 52, r: 40, fill: "#fff", stroke: c, "stroke-width": st.tone ? 2.5 : 1.5 }));
+      const cx = gap * i + gap / 2, c = st.tone === "win" ? "#5E9400" : st.tone === "loss" ? "#DC2626" : K().text;
+      g.push(h("circle", { cx, cy: 52, r: 40, fill: K().bg, stroke: c, "stroke-width": st.tone ? 2.5 : 1.5 }));
       g.push(h("text", { x: cx, y: 58, "text-anchor": "middle", fill: c, "font-size": 17, "font-weight": 700, "font-family": "Space Grotesk, Inter, sans-serif" }, st.fmt));
-      g.push(h("text", { x: cx, y: 118, "text-anchor": "middle", fill: "#3D3D3D", "font-size": 13 }, st.label));
-      if (st.sub) g.push(h("text", { x: cx, y: 136, "text-anchor": "middle", fill: "#6B6B6B", "font-size": 11 }, st.sub));
+      g.push(h("text", { x: cx, y: 118, "text-anchor": "middle", fill: K().label, "font-size": 13 }, st.label));
+      if (st.sub) g.push(h("text", { x: cx, y: 136, "text-anchor": "middle", fill: K().axis, "font-size": 11 }, st.sub));
     });
     return h("div", { class: "scroll" }, h("svg", { class: "river", viewBox: "0 0 " + W + " " + H, style: "min-width:620px", role: "img",
       "aria-label": stages.map((x) => x.label + ": " + x.fmt).join(", ") }, g));
@@ -1943,17 +2002,17 @@ main{background:transparent}
     const exp = line([[hist - 1, f.history[hist - 1].actual]].concat(f.forecast.map((p, i) => [hist + i, p.expected])));
     const band = f.forecast.map((p, i) => [hist + i, p.high]);
     const bandPath = line(band) + " " + f.forecast.slice().reverse().map((p, k) => "L" + X(hist + f.forecast.length - 1 - k).toFixed(1) + " " + Y(p.low).toFixed(1)).join(" ") + " Z";
-    const ticks = [0, 0.5, 1].map((t) => h("g", {}, h("line", { x1: L, x2: W - R, y1: Y(max * t / 1.08), y2: Y(max * t / 1.08), stroke: "#E8E9E3" }),
-      h("text", { x: L - 8, y: Y(max * t / 1.08) + 4, "text-anchor": "end", fill: "#6B6B6B", "font-size": 11 }, fmt.format(Math.round(max * t / 1.08)))));
+    const ticks = [0, 0.5, 1].map((t) => h("g", {}, h("line", { x1: L, x2: W - R, y1: Y(max * t / 1.08), y2: Y(max * t / 1.08), stroke: K().grid }),
+      h("text", { x: L - 8, y: Y(max * t / 1.08) + 4, "text-anchor": "end", fill: K().axis, "font-size": 11 }, fmt.format(Math.round(max * t / 1.08)))));
     const day = (iso) => new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-    const xl = [0, hist - 1, n - 1].map((i, k) => h("text", { x: X(i), y: H - 8, "text-anchor": k === 0 ? "start" : k === 2 ? "end" : "middle", fill: "#6B6B6B", "font-size": 11 },
+    const xl = [0, hist - 1, n - 1].map((i, k) => h("text", { x: X(i), y: H - 8, "text-anchor": k === 0 ? "start" : k === 2 ? "end" : "middle", fill: K().axis, "font-size": 11 },
       k === 1 ? (f.live ? "Today" : day(all[i].d)) : day(all[i].d)));
     const svg = h("svg", { viewBox: "0 0 " + W + " " + H, style: "width:100%;height:auto;display:block", role: "img",
       "aria-label": "Revenue for the last 60 days and the forecast for the next 30 days: about " + money(f.total.expected) },
       ...ticks,
       h("path", { d: bandPath, fill: "rgba(94,148,0,.13)", stroke: "none" }),
-      h("line", { x1: X(hist - 1), x2: X(hist - 1), y1: T, y2: H - B, stroke: "#B5B8AE", "stroke-dasharray": "3 4" }),
-      h("path", { d: actual, fill: "none", stroke: "#141414", "stroke-width": 1.8, "stroke-linejoin": "round" }),
+      h("line", { x1: X(hist - 1), x2: X(hist - 1), y1: T, y2: H - B, stroke: K().dash, "stroke-dasharray": "3 4" }),
+      h("path", { d: actual, fill: "none", stroke: K().text, "stroke-width": 1.8, "stroke-linejoin": "round" }),
       h("path", { d: exp, fill: "none", stroke: "#5E9400", "stroke-width": 2.4, "stroke-dasharray": "6 5", "stroke-linejoin": "round" }),
       ...xl);
     const ch = f.change_vs_last_30;
@@ -1961,7 +2020,7 @@ main{background:transparent}
     const chip = (t) => h("span", { class: "badge b-neutral", style: "font-weight:500" }, t);
     const dr = f.drivers;
     return h("section", { class: "card", "aria-label": "Revenue forecast" },
-      head(h("div", { style: "display:flex;gap:14px;flex-wrap:wrap" }, h("span", { class: "key" }, h("i", { style: "border-top-color:#141414" }), "Real revenue"),
+      head(h("div", { style: "display:flex;gap:14px;flex-wrap:wrap" }, h("span", { class: "key" }, h("i", { style: "border-top-color:" + K().text }), "Real revenue"),
         h("span", { class: "key" }, h("i", { class: "prev", style: "border-top-color:#5E9400" }), "Forecast"),
         h("span", { class: "key" }, h("i", { style: "border-top:8px solid rgba(94,148,0,.18)" }), "Likely range"))),
       h("div", { style: "display:flex;gap:28px;flex-wrap:wrap;align-items:flex-end" },
