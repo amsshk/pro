@@ -552,7 +552,7 @@ main{background:transparent}
     const sumBtn = (lang, label) => h("button", { class: "btn btn-ghost", onclick: async (ev) => {
       const btn = ev.currentTarget;
       btn.disabled = true;
-      summaryBox.replaceChildren(loading("Muse is writing your summary…"));
+      summaryBox.replaceChildren(loading("Writing your summary…"));
       try {
         const r = await api("/audit/" + cid() + "?summary=1&language=" + encodeURIComponent(lang));
         if (r.summary) summaryBox.replaceChildren(h("div", { class: "card", style: "background: var(--violet-card); border-color: var(--violet-edge)" },
@@ -1217,7 +1217,7 @@ main{background:transparent}
     async function ask(text) {
       text = (text || "").trim(); if (!text) return;
       chat.appendChild(bubble("me", text));
-      const wait = h("div", { class: "msg ai" }, h("span", { class: "spinner", "aria-hidden": "true" }), " Muse is thinking…");
+      const wait = h("div", { class: "msg ai" }, h("span", { class: "spinner", "aria-hidden": "true" }), " Thinking…");
       chat.appendChild(wait); chat.scrollTop = chat.scrollHeight;
       send.disabled = true; q.value = "";
       try {
@@ -1248,7 +1248,7 @@ main{background:transparent}
     const build = h("button", { class: "btn btn-primary", type: "submit" }, "Build campaign");
     const campForm = h("form", { style: "display:flex;flex-direction:column;gap:12px", onsubmit: async (e) => {
       e.preventDefault(); build.disabled = true;
-      out.replaceChildren(loading("Muse Wonder is planning your campaign. This can take up to a minute…"));
+      out.replaceChildren(loading("Planning your campaign. This can take up to a minute…"));
       try {
         const r = await api("/campaign/" + cid(), { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ daily_budget: Number(budget.value), goal: goals[Number(goal.value)][0], conversion: goals[Number(goal.value)][1], notes: notes.value }) });
@@ -1302,8 +1302,7 @@ main{background:transparent}
 
     root.replaceChildren(layout("#/assistant", [
       h("header", { class: "between", style: "align-items:flex-end" },
-        h("div", {}, h("h1", {}, "Ask & campaigns"), h("p", { class: "sub" }, "Answers come from your own numbers. The AI never sees customer names, emails or phones.")),
-        h("span", { class: "badge b-neutral" }, "Powered by Meta Muse")),
+        h("div", {}, h("h1", {}, "Ask & campaigns"), h("p", { class: "sub" }, "Answers come from your own numbers. The AI never sees customer names, emails or phones."))),
       h("div", { class: "row", style: "align-items:flex-start" },
         h("section", { class: "card", "aria-labelledby": "chat" }, h("h2", { id: "chat" }, "Ask about your results"), chat, chips, chatForm),
         h("section", { class: "card", "aria-labelledby": "camp" },
