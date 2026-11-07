@@ -2161,8 +2161,67 @@ main{background:transparent}
       : h("section", { class: "card" }, h("h2", {}, "No campaigns yet"), h("p", { class: "sub", style: "margin:0" }, "Build and publish a campaign; ProAds will judge it here against your numbers."),
         h("a", { class: "btn btn-primary", href: "#/assistant", style: "align-self:flex-start" }, "Build a campaign"));
 
+    const budgetSlot = h("div", { hidden: true });
     root.replaceChildren(layout("#/engines", [head, top, d.error ? errorCard(d.error) : null, survival,
-      camps.length ? h("div", { class: "egrid" }, table, panel) : table, numbers]));
+      camps.length ? h("div", { class: "egrid" }, table, panel) : table, budgetSlot, numbers]));
+    if (camps.length) budgetCard().then((c) => { if (c) budgetSlot.replaceWith(c); }).catch(() => {});
+  }
+
+  // ---------- Budget Intelligence: budget changes the owner approves ----------
+  async function budgetCard() {
+    const post = (url, body) => api(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    let d;
+    try { d = await api("/scaling/" + cid()); } catch (e) { return e.message === "signed out" ? null : errorCard(e.message); }
+    const cur = d.currency || "";
+    const m = (v) => v == null ? "–" : money0(v, cur);
+    const ACT = { scale_up: ["b-measured", "Raise budget"], scale_down: ["", "Lower budget"], pause: ["", "Pause"], undo: ["", "Go back"], hold: ["b-neutral", "No change"] };
+    const capIn = h("input", { type: "number", min: "1", step: "1", value: d.cap != null ? d.cap : "", placeholder: "e.g. 500", style: "max-width:140px", "aria-label": "Maximum total daily budget" });
+    const capBtn = h("button", { class: "btn btn-ghost", type: "button", onclick: async () => {
+      try { await post("/scaling/" + cid() + "/settings", { max_daily: capIn.value }); toast("Saved."); const c = await budgetCard(); if (c) document.getElementById("budget-card").replaceWith(c); } catch (e) { if (e.message !== "signed out") toast(e.message); } } }, "Save");
+    const recs = (d.recommendations || []).map((r) => {
+      const a = ACT[r.action] || ACT.hold;
+      const box = h("div", { class: "adset", style: "gap:8px" },
+        h("div", { class: "between", style: "gap:8px;flex-wrap:wrap" }, h("b", {}, r.name || r.campaign_id),
+          h("span", { class: "badge " + a[0], style: a[0] ? "" : "background:var(--loss-bg);color:var(--loss-txt)" }, a[1])),
+        h("span", { class: "small" }, "Daily budget " + m(r.current_daily) + (r.new_daily != null ? " → " + m(r.new_daily) : "") + (r.budget_level === "adset" ? " (spread over its ad sets)" : "")),
+        ...(r.reasons || []).map((t) => h("span", { style: "font-size:14px" }, t)),
+        ...(r.blockers || []).map((t) => h("span", { style: "font-size:14px;color:var(--amber)" }, t)),
+        r.verdict ? h("span", { class: "small" }, "Last " + r.verdict.window_days + " days: " + money0(r.verdict.spend, d.spend_currency) + " spent, " + r.verdict.verified_sales + " verified sales (" + r.verdict.settled_sales + " past the refund window, " + r.verdict.recent_sales + " recent" + (r.verdict.refund_rate_used ? ", discounted by your " + Math.round(r.verdict.refund_rate_used * 100) + "% refund rate" : "") + ").") : null);
+      if (r.action !== "hold" && r.rec_id) {
+        const ok = h("input", { type: "checkbox", style: "width:20px;min-height:20px" });
+        const btn = h("button", { class: "btn btn-primary", type: "button", disabled: true }, r.action === "pause" ? "Pause in Meta" : "Apply in Meta");
+        ok.addEventListener("change", () => { btn.disabled = !ok.checked; });
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try { const res = await post("/scaling/" + cid() + "/apply", { campaign_id: r.campaign_id, rec_id: r.rec_id, confirm: true });
+            toast(res.ok ? "Done. Meta confirmed the change." : res.message); const c = await budgetCard(); if (c) document.getElementById("budget-card").replaceWith(c);
+          } catch (e) { if (e.message !== "signed out") toast(e.message); const c = await budgetCard(); if (c) document.getElementById("budget-card").replaceWith(c); }
+        });
+        box.append(h("label", { style: "display:flex;gap:8px;align-items:center;font-size:14px" }, ok,
+          r.action === "pause" ? "I approve pausing this campaign." : "I approve changing this budget to " + m(r.new_daily) + " a day."), h("div", {}, btn));
+      }
+      return box;
+    });
+    const hist = (d.history || []).slice(0, 8).map((x) => {
+      const row = h("div", { class: "between", style: "gap:8px;font-size:13px;flex-wrap:wrap" },
+        h("span", {}, new Date(x.at * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) + " · " + (ACT[x.action] || [0, x.action])[1] + " · " +
+          (x.action === "pause" ? "paused" : m(x.before_daily) + " → " + m(x.after_daily)) + (x.verified ? "" : " · not confirmed by Meta") + (x.undone_by ? " · undone" : "")));
+      if (!x.undone_by && x.action !== "undo" && Date.now() / 1000 - x.at < 14 * 86400) {
+        row.append(h("button", { class: "btn btn-ghost", type: "button", onclick: async (ev) => {
+          ev.target.disabled = true;
+          try { await post("/scaling/" + cid() + "/undo/" + x.id, { confirm: true }); toast("Put back."); const c = await budgetCard(); if (c) document.getElementById("budget-card").replaceWith(c); }
+          catch (e) { if (e.message !== "signed out") toast(e.message); ev.target.disabled = false; } } }, "Undo"));
+      }
+      return row;
+    });
+    return h("section", { class: "card", id: "budget-card", style: "display:flex;flex-direction:column;gap:12px" },
+      h("div", { class: "between" }, h("h2", {}, "Budget changes"), h("span", { class: "badge b-neutral" }, "Nothing changes without your approval")),
+      h("p", { class: "sub", style: "margin:0;font-size:14px" }, "ProAds suggests budget changes from verified sales only: up 20% at most, never during Meta's learning phase, at least 7 days apart, and never above your maximum. Bids, audiences and ads are never touched."),
+      h("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" }, h("span", { style: "font-size:14px" }, "Maximum total daily budget" + (cur ? " (" + cur + ")" : "") + ":"), capIn, capBtn,
+        d.total_daily != null ? h("span", { class: "small" }, "Now: " + m(d.total_daily) + " a day across your campaigns") : null),
+      d.error ? h("div", { class: "result err" }, h("span", {}, d.error)) : null,
+      ...recs,
+      hist.length ? h("div", { style: "display:flex;flex-direction:column;gap:6px" }, h("b", { style: "font-size:14px" }, "Changes made"), ...hist) : null);
   }
 
   // ---------- Competitor X-ray (Premium) ----------

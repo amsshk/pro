@@ -50,7 +50,7 @@ from .attribution import make_promo_code, tag_link
 from .dashboard import build_dashboard, _realized
 from .ads_report import build_report
 from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, business_context
-from . import autopilot, billing, buyers, competitors, engines, forecast, leaks, learning, meta_capi, proads_revenue, purchase_funnel, delivery, signals, ledger, meta_ads, meta_connect, settlement
+from . import autopilot, billing, buyers, competitors, engines, forecast, leaks, learning, meta_capi, proads_revenue, purchase_funnel, delivery, scaling, signals, ledger, meta_ads, meta_connect, settlement
 from .connectors.stripe import verify_signature as stripe_signature_ok
 from .audit import audit_summary, audit_text, build_audit
 from .importers import xlsx_to_csv, import_auto
@@ -127,6 +127,7 @@ class App:
         self.revenue = proads_revenue.RevenueStore(self.store.db)
         self.funnel = purchase_funnel.FunnelStore(self.store.db)
         self.delivery = delivery.DeliveryLog(self.store.db)
+        self.scaling = scaling.ScalingStore(self.store.db)
         self._nudged: dict = {}
         self.stripe_http = None                # set in tests
         self.billing_sync = False              # tests: add invoice fees inline
@@ -2323,7 +2324,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         with state.lock:
             for slug, ls in slug_to.items():
                 try:
-                    raw[slug] = state.ledger.total([l["campaign_id"] for l in ls], "2000-01-01", today)
+                    raw[slug] = state.ledger.total([l["campaign_id"] for l in ls], "2000-01-01", "2100-01-01")
                 except ValueError:
                     continue
                 names[slug] = ls[0].get("name") or slug
@@ -2828,6 +2829,248 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         state.require_key(client_id)
         return proads_delivery() if is_admin(client_id) else client_delivery(client_id)
     state.proads_delivery = proads_delivery
+
+    # ---------------- Budget Intelligence: human-approved scaling ----------------
+    def read_budget(pub, campaign_id: str, currency: str) -> dict:
+        """The campaign's daily budget (campaign-level or summed over running ad sets) and Meta's learning status."""
+        d = pub._get(campaign_id, "status,effective_status,daily_budget,lifetime_budget,"
+                     "adsets.limit(50){id,name,daily_budget,lifetime_budget,effective_status,learning_stage_info}",
+                     f"reading the budget of campaign {campaign_id}")
+        off = scaling.offset(currency)
+        num = lambda v: float(v) / off if v not in (None, "", "0") else 0.0
+        sets = [a for a in ((d.get("adsets") or {}).get("data") or []) if a.get("effective_status") == "ACTIVE"]
+        lifetime = num(d.get("lifetime_budget")) > 0 or any(num(a.get("lifetime_budget")) > 0 for a in sets)
+        adsets = [{"id": a["id"], "name": a.get("name", ""), "daily": num(a.get("daily_budget"))} for a in sets]
+        if num(d.get("daily_budget")):
+            budget = {"level": "campaign", "daily": num(d.get("daily_budget"))}
+        else:
+            budget = {"level": "adset", "daily": round(sum(a["daily"] for a in adsets), 2)}
+        budget.update(campaign_id=campaign_id, adsets=adsets, lifetime=lifetime)
+        learning = [((a.get("learning_stage_info") or {}).get("status") or "").upper() for a in sets]
+        return {"status": (d.get("effective_status") or d.get("status") or "").upper(), "budget": budget, "learning": learning}
+
+    def verified_sales(client_id: str, slug: str, since: datetime, settle_days: int) -> dict:
+        """Verified paid sales that came from this campaign's own ad links, after refunds.
+        settled = old enough for refunds to have arrived; recent = not yet; refund_rate from this business's history."""
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(days=settle_days)
+        meta_link = lambda src, med: (med or "").lower() == "paid" and (src or "").lower() in META_SOURCES
+        if is_admin(client_id):
+            with state.lock:
+                rows = [r for r in state.revenue.all() if r["kind"] == "first"]
+            tracked = any(meta_link(r["utm"].get("utm_source"), r["utm"].get("utm_medium")) for r in rows)
+            mine = [r for r in rows if r["utm"].get("utm_campaign") == slug and meta_link(r["utm"].get("utm_source"), r["utm"].get("utm_medium"))]
+            kept = lambda r: r["amount"] - r["refunded"] - r["chargeback"] > 0.01
+            when = lambda r: datetime.fromtimestamp(r["paid_at"], timezone.utc)
+            old = [r for r in rows if when(r) < cutoff and when(r) > now - timedelta(days=180)]
+            rate = (sum(1 for r in old if not kept(r)) / len(old)) if len(old) >= 10 else 0.0
+            inwin = [r for r in mine if when(r) >= since and kept(r)]
+            return {"tracked": tracked, "settled": sum(1 for r in inwin if when(r) < cutoff),
+                    "recent": sum(1 for r in inwin if when(r) >= cutoff), "refund_rate": rate}
+        with state.lock:
+            eng = state.engine(client_id)
+            ps = list(eng.store.purchases(client_id))
+            refunded = {p.external_id: eng.store.refunded_amount(client_id, p.external_id) for p in ps}
+        tracked = any(meta_link(p.utm_source, p.utm_medium) for p in ps)
+        kept = lambda p: refunded.get(p.external_id, 0) < p.amount
+        old = [p for p in ps if cutoff > p.occurred_at > now - timedelta(days=180)]
+        rate = (sum(1 for p in old if not kept(p)) / len(old)) if len(old) >= 10 else 0.0
+        inwin = [p for p in ps if p.occurred_at >= since and p.utm_campaign == slug and meta_link(p.utm_source, p.utm_medium) and kept(p)]
+        return {"tracked": tracked, "settled": sum(1 for p in inwin if p.occurred_at < cutoff),
+                "recent": sum(1 for p in inwin if p.occurred_at >= cutoff), "refund_rate": rate}
+
+    def spend_in(client_id: str, campaign_id: str, since_day: str, to_cur: str) -> float:
+        with state.lock:
+            # no upper cut-off: ledger days are the ad account's local dates, which can be ahead of UTC
+            amt, cur = state.ledger.total([campaign_id], since_day, "2100-01-01")
+        if cur and to_cur and cur.upper() != to_cur.upper():
+            amt *= billing.fx_rate(cur, to_cur)
+        return amt
+
+    def scaling_for(client_id: str, only: Optional[str] = None) -> dict:
+        admin = is_admin(client_id)
+        econ = economics_for(client_id)
+        if econ:                                     # sales here are already net of real refunds: don't count them twice
+            econ = engines.economics({**econ["inputs"], "refund_rate": 0})
+        econ_cur = state.config(client_id).get("currency", "AED").upper()
+        with state.lock:
+            launches = [l for l in state.launches.list(client_id) if l.get("status") != "DELETED"]
+            cap = state.scaling.cap(client_id)
+        out = {"cap": cap, "economics": bool(econ), "recommendations": [], "currency": None}
+        s = state.ads_settings(client_id, admin)
+        if not launches:
+            return out
+        if s is None:
+            return {**out, "error": "Connect Facebook & Instagram again so ProAds can read your budgets."}
+        pub = meta_ads.Publisher(state.ads_http, s)
+        settle = refund_delay_days(client_id) if not admin else 14
+        since = datetime.now(timezone.utc) - timedelta(days=scaling.WINDOW_DAYS)
+        reads = {}
+        for l in launches:
+            with state.lock:
+                _, cur = state.ledger.total([l["campaign_id"]], "2000-01-01", "2100-01-01")
+            currency = (cur or ads_currency(client_id)).upper()
+            try:
+                reads[l["campaign_id"]] = (l, currency, read_budget(pub, l["campaign_id"], currency))
+            except meta_ads.PublishError as e:
+                out["recommendations"].append({"campaign_id": l["campaign_id"], "name": l.get("name", ""), "action": "hold",
+                                               "reasons": [str(e)[:200]], "blockers": [], "rec_id": None})
+        total_now = sum(r["budget"]["daily"] for _, _, r in reads.values() if r["status"] == "ACTIVE" and not r["budget"]["lifetime"])
+        for cid_, (l, currency, r) in reads.items():
+            if only and cid_ != only:
+                continue
+            slug = l.get("utm_slug") or meta_ads._slug(l.get("name", ""), 30)
+            sales = verified_sales(client_id, slug, since, settle)
+            try:
+                spend = spend_in(client_id, cid_, since.date().isoformat(), econ_cur)
+            except Exception as e:
+                out["recommendations"].append({"campaign_id": cid_, "name": l.get("name", ""), "action": "hold",
+                                               "reasons": [f"No exchange rate for {currency} to {econ_cur}: {e}"], "blockers": [], "rec_id": None})
+                continue
+            with state.lock:
+                last = state.scaling.last(client_id, cid_)
+            after = None
+            if last and last["action"] == "scale_up" and not last["undone_by"]:
+                start = datetime.fromtimestamp(last["at"], timezone.utc)
+                a_sales = verified_sales(client_id, slug, start, settle)
+                after = {"spend": spend_in(client_id, cid_, start.date().isoformat(), econ_cur),
+                         "sales": a_sales["settled"] + a_sales["recent"] * (1 - a_sales["refund_rate"])}
+            c = {"campaign_id": cid_, "name": l.get("name", ""), "status": r["status"], "budget": r["budget"],
+                 "learning": r["learning"], "spend": spend, "sales_settled": sales["settled"], "sales_recent": sales["recent"],
+                 "refund_rate": sales["refund_rate"], "tracked": sales["tracked"], "currency": currency, "after_change": after}
+            rec = scaling.recommend(c, econ, cap, total_now, last if last and not last["undone_by"] else None)
+            rec["learning"] = r["learning"]
+            rec["budget_level"] = r["budget"]["level"]
+            out["recommendations"].append(rec)
+            out["currency"] = out["currency"] or currency
+        out["total_daily"] = round(total_now, 2)
+        out["spend_currency"] = econ_cur
+        return out
+
+    @flask.get("/scaling/<client_id>")
+    def scaling_view(client_id):
+        state.require_key(client_id)
+        out = scaling_for(client_id)
+        with state.lock:
+            out["history"] = state.scaling.history(client_id)
+        return out
+
+    @flask.post("/scaling/<client_id>/settings")
+    def scaling_settings(client_id):
+        state.require_key(client_id)
+        body = request.get_json(silent=True) or {}
+        v = body.get("max_daily")
+        try:
+            v = None if v in (None, "") else float(v)
+        except (TypeError, ValueError):
+            abort(400, "Enter the maximum as a number.")
+        if v is not None and (v <= 0 or v > 1e7):
+            abort(400, "Enter a maximum above zero.")
+        with state.lock:
+            state.scaling.set_cap(client_id, v)
+        return {"ok": True, "max_daily": v}
+
+    def apply_budget(client_id: str, pub, budget: dict, new_daily: float, currency: str) -> tuple[dict, bool]:
+        """Write the new daily budget(s) to Meta, then read them back to confirm."""
+        targets = scaling.split_budget(budget, new_daily, currency)
+        for obj, minor in targets:
+            pub._post(obj, {"daily_budget": minor}, f"changing the daily budget of {obj}")
+        check = read_budget(pub, budget["campaign_id"], currency)["budget"]
+        ok = abs(check["daily"] - new_daily) <= max(0.02 * new_daily, 1.0)
+        return {"targets": targets, "read_back": check["daily"]}, ok
+
+    @flask.post("/scaling/<client_id>/apply")
+    def scaling_apply(client_id):
+        """Carry out ONE recommendation the owner approved. It's re-checked first; if it changed, nothing happens."""
+        state.require_key(client_id)
+        body = request.get_json(silent=True) or {}
+        if body.get("confirm") is not True:
+            abort(400, "Confirm the change first.")
+        camp = str(body.get("campaign_id") or "")
+        fresh = scaling_for(client_id, only=camp)
+        rec = next((r for r in fresh["recommendations"] if r["campaign_id"] == camp), None)
+        if not rec:
+            abort(404, "That campaign isn't one ProAds manages.")
+        if rec.get("rec_id") != body.get("rec_id") or rec["action"] == "hold":
+            resp = jsonify({"error": "The numbers changed since you looked, so the recommendation changed. Review the new one.",
+                            "recommendation": rec})
+            resp.status_code = 409
+            return resp
+        s = state.ads_settings(client_id, is_admin(client_id))
+        pub = meta_ads.Publisher(state.ads_http, s)
+        currency = rec["currency"]
+        before = read_budget(pub, camp, currency)
+        try:
+            if rec["action"] == "pause":
+                pub._post(camp, {"status": "PAUSED"}, f"pausing campaign {camp}")
+                ok = pub.status_of(camp) == "PAUSED"
+                if ok:
+                    with state.lock:
+                        state.launches.set_status(client_id, camp, "PAUSED")
+                detail = {"status": "PAUSED"}
+            else:
+                detail, ok = apply_budget(client_id, pub, before["budget"], rec["new_daily"], currency)
+        except meta_ads.PublishError as e:
+            abort(502, str(e))
+        with state.lock:
+            last = state.scaling.last(client_id, camp)
+            change = state.scaling.record(client_id, camp, rec["action"], before["budget"], detail, before["budget"]["daily"],
+                                          rec.get("new_daily"), "admin" if is_admin(client_id) else (state.accounts.get(client_id) or {}).get("email"),
+                                          rec["reasons"], ok, undoes=last["id"] if rec["action"] == "undo" and last else None)
+        state.ads_cache.pop(("engines", client_id), None)
+        log.info("budget change %s for %s/%s: %s -> %s (verified %s)", rec["action"], client_id, camp,
+                 before["budget"]["daily"], rec.get("new_daily"), ok)
+        return {"ok": ok, "change_id": change, "action": rec["action"],
+                "message": None if ok else "Meta accepted the request but the budget it reports back differs. Check Ads Manager."}
+
+    @flask.post("/scaling/<client_id>/undo/<int:change_id>")
+    def scaling_undo(client_id, change_id):
+        """Put back the budgets from before a change ProAds made (within 14 days, if nothing changed since)."""
+        state.require_key(client_id)
+        if (request.get_json(silent=True) or {}).get("confirm") is not True:
+            abort(400, "Confirm the change first.")
+        with state.lock:
+            hist = {h["id"]: h for h in state.scaling.history(client_id, 200)}
+            ch = hist.get(change_id)
+            last = state.scaling.last(client_id, ch["campaign_id"]) if ch else None
+        if not ch or ch["undone_by"] or ch["action"] == "undo":
+            abort(404, "Nothing to undo.")
+        if not last or last["id"] != change_id:
+            abort(409, "A newer change was made to this campaign since. Undo that one first.")
+        if time.time() - ch["at"] > 14 * 86400:
+            abort(409, "Too long ago to undo safely. Set the budget you want in Ads Manager.")
+        s = state.ads_settings(client_id, is_admin(client_id))
+        pub = meta_ads.Publisher(state.ads_http, s)
+        before = last["before"]
+        with state.lock:
+            _, cur = state.ledger.total([ch["campaign_id"]], "2000-01-01", "2100-01-01")
+        currency = (cur or ads_currency(client_id)).upper()
+        now_b = read_budget(pub, ch["campaign_id"], currency)
+        try:
+            if ch["action"] == "pause":
+                pub._post(ch["campaign_id"], {"status": "ACTIVE"}, f"switching campaign {ch['campaign_id']} back on")
+                ok = pub.status_of(ch["campaign_id"]) == "ACTIVE"
+                if ok:
+                    with state.lock:
+                        state.launches.set_status(client_id, ch["campaign_id"], "ACTIVE")
+                detail = {"status": "ACTIVE"}
+            else:
+                off = scaling.offset(currency)
+                targets = [(before["campaign_id"], int(round(before["daily"] * off)))] if before["level"] == "campaign" else \
+                    [(a["id"], int(round(a["daily"] * off))) for a in before["adsets"] if a.get("daily")]
+                for obj, minor in targets:
+                    pub._post(obj, {"daily_budget": minor}, f"restoring the daily budget of {obj}")
+                back = read_budget(pub, ch["campaign_id"], currency)["budget"]["daily"]
+                ok = abs(back - before["daily"]) <= max(0.02 * before["daily"], 1.0)
+                detail = {"targets": targets, "read_back": back}
+        except meta_ads.PublishError as e:
+            abort(502, str(e))
+        with state.lock:
+            cid2 = state.scaling.record(client_id, ch["campaign_id"], "undo", now_b["budget"], detail, now_b["budget"]["daily"],
+                                        before.get("daily"), "admin" if is_admin(client_id) else (state.accounts.get(client_id) or {}).get("email"),
+                                        [f"Undo of change #{change_id}"], ok, undoes=change_id)
+        state.ads_cache.pop(("engines", client_id), None)
+        return {"ok": ok, "change_id": cid2}
 
     # ---------------- Facebook & Instagram connection (each client's own) ----------------
     def meta_back(result, message=""):
