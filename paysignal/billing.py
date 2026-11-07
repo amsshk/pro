@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import os
+import json
 import time
 from typing import Optional
 
@@ -260,6 +261,30 @@ class BillingStore:
             self.db.execute("ALTER TABLE billing ADD COLUMN tier TEXT")
         if "ads_trial_started" not in cols:
             self.db.execute("ALTER TABLE billing ADD COLUMN ads_trial_started INTEGER")
+        self.db.execute(self.HELD)
+        self.db.commit()
+
+    HELD = """CREATE TABLE IF NOT EXISTS billing_fee_held (
+        invoice_id TEXT PRIMARY KEY, client_id TEXT NOT NULL, invoice TEXT NOT NULL,
+        tries INTEGER NOT NULL DEFAULT 0, held_at INTEGER NOT NULL)"""
+
+    def hold_fee(self, invoice: dict, client_id: str) -> None:
+        """Meta's spend couldn't be read: keep the invoice as a draft and try again later."""
+        keep = {k: invoice.get(k) for k in ("id", "customer", "currency", "period_start", "period_end")}
+        self.db.execute("INSERT OR IGNORE INTO billing_fee_held (invoice_id, client_id, invoice, held_at) VALUES (?,?,?,?)",
+                        (invoice["id"], client_id, json.dumps(keep), int(time.time())))
+        self.db.commit()
+
+    def held_fees(self) -> list[dict]:
+        rows = self.db.execute("SELECT invoice_id, client_id, invoice, tries, held_at FROM billing_fee_held").fetchall()
+        return [{"invoice_id": r[0], "client_id": r[1], "invoice": json.loads(r[2]), "tries": r[3], "held_at": r[4]} for r in rows]
+
+    def fee_retry(self, invoice_id: str) -> None:
+        self.db.execute("UPDATE billing_fee_held SET tries=tries+1 WHERE invoice_id=?", (invoice_id,))
+        self.db.commit()
+
+    def release_fee(self, invoice_id: str) -> None:
+        self.db.execute("DELETE FROM billing_fee_held WHERE invoice_id=?", (invoice_id,))
         self.db.commit()
 
     def start_ads_trial(self, client_id: str) -> None:

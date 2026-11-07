@@ -7,19 +7,20 @@ AUDIT = {"orders": 120, "refund_rate": 0.08, "peak_sales_hours": "18:00-21:00", 
          "posts": {"patterns": {"format": {"reel": {"lift": 1.6, "posts": 5, "confident": True}}}}}
 
 
-def test_lessons_are_anonymous_and_need_three_businesses(tmp_path):
+def test_lessons_are_anonymous_and_need_five_businesses(tmp_path):
     import sqlite3
     st = LearningStore(sqlite3.connect(":memory:"))
     lesson = lesson_from_audit(AUDIT)
     assert "GLOW10" not in str(lesson) and lesson["discount_effect"] == [-0.3]
     assert lesson_from_audit({"orders": 5}) is None
-    st.keep("a", AUDIT); st.keep("b", AUDIT)
+    for x in "abcd":
+        st.keep(x, AUDIT)
     assert st.benchmarks() is None                              # not enough businesses yet
-    st.keep("c", {**AUDIT, "refund_rate": 0.2})
+    st.keep("e", {**AUDIT, "refund_rate": 0.2})
     b = st.benchmarks()
-    assert b["businesses"] == 3 and b["median_refund_rate"] == 0.08 and b["post_patterns"]["format"]["reel"]["median_lift"] == 1.6
-    st.forget("c")
-    assert st.count() == 2
+    assert b["businesses"] == 5 and b["median_refund_rate"] == 0.08 and b["post_patterns"]["format"]["reel"]["median_lift"] == 1.6
+    st.forget("e")
+    assert st.count() == 4
 
 
 def test_clear_sales_can_keep_lessons_and_ai_gets_benchmarks(tmp_path):
@@ -31,8 +32,9 @@ def test_clear_sales_can_keep_lessons_and_ai_gets_benchmarks(tmp_path):
     c.post("/import/glow", data="id,date,amount,currency\n" + rows + "\n", headers={"X-API-Key": tok})
     r = c.post("/data/glow/clear-sales", json={"confirm": "DELETE", "keep_lessons": True}, headers={"X-API-Key": tok}).json
     assert r["lessons_kept"] and st.learnings.count() == 1
-    st.learnings.keep("x", AUDIT); st.learnings.keep("y", AUDIT)
+    for x in "wxyz":
+        st.learnings.keep(x, AUDIT)
     from paysignal.assistant import business_context
     with app.test_request_context():
         pass
-    assert st.learnings.benchmarks()["businesses"] == 3
+    assert st.learnings.benchmarks()["businesses"] == 5

@@ -6,7 +6,8 @@ phones, order lists, amounts or post IDs:
   (as a % vs full price), the hours and days people buy, and which post formats/hooks/offers
   brought more money per view (lift).
 
-Benchmarks are only shown once at least MIN_BUSINESSES businesses contributed, so no
+Benchmarks are only shown once at least MIN_BUSINESSES businesses contributed (and each pattern
+only once that many businesses share it); only medians are shared, so no
 single business can be recognised from them.
 """
 from __future__ import annotations
@@ -17,7 +18,7 @@ import statistics
 from collections import defaultdict
 from typing import Optional
 
-MIN_BUSINESSES = 3
+MIN_BUSINESSES = 5
 
 
 def lesson_from_audit(audit: dict) -> Optional[dict]:

@@ -32,6 +32,8 @@ class FakeStripe:
             return R(200, {"id": "ii_1"})
         if url.endswith("checkout/sessions"):
             return R(200, {"url": "https://checkout.stripe.com/c/pay/cs_1"})
+        if "/invoices/" in url:
+            return R(200, {"id": url.rsplit("/", 1)[1]})
         if url.endswith("billing_portal/sessions"):
             return R(200, {"url": "https://billing.stripe.com/p/session/1"})
         return R(400, {"error": {"message": "nope"}})
@@ -184,5 +186,18 @@ def test_renewal_invoice_gets_the_ad_spend_fee(app):
         url, data = state.stripe_http.posts[-1]
         assert data["currency"] == "usd" and data["amount"] == str(billing.fee_amount(round(6000.50 * 0.27, 2), 5))
         assert "about USD" in data["description"]
+        # Meta can't be reached: the invoice is held as a draft (no fee lost), then charged on retry
+        ok_get = g.get
+        g.get = lambda url, params, timeout: (_ for _ in ()).throw(ConnectionError("down")) if url.endswith("/insights") else ok_get(url, params, timeout)
+        signed(c, {"type": "invoice.created", "data": {"object": {**inv, "id": "in_4"}}})
+        assert state.stripe_http.posts[-1] == ("invoices/in_4", {"auto_advance": "false"})
+        assert [h["invoice_id"] for h in state.billing.held_fees()] == ["in_4"]
+        state.retry_held_fees()                                               # still down: stays held
+        assert state.billing.held_fees()[0]["tries"] == 1
+        g.get = ok_get
+        state.retry_held_fees()
+        assert [p[0] for p in state.stripe_http.posts[-2:]] == ["invoiceitems", "invoices/in_4"]
+        assert state.stripe_http.posts[-1][1] == {"auto_advance": "true"} and state.billing.held_fees() == []
+        assert state.billing.fee_logged("in_4")
     finally:
         os.environ.pop("PROADS_SECRET_KEY", None)

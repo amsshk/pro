@@ -1,6 +1,6 @@
-"""Competitor X-ray (Premium): read a competitor's public ads from Meta's Ad Library, find which
-ones they keep paying for (long-running ads are the ones that make them money), and have the AI
-build an ORIGINAL counter-campaign that beats them. Their text, brand and claims are never copied.
+"""Competitor X-ray (Premium): read a competitor's public ads from Meta's Ad Library, put the
+longest-running first (a signal, not proof, of what works for them: Meta shows no sales or spend), and have the AI
+build an ORIGINAL counter-campaign to compete with them. Their text, brand and claims are never copied.
 
 Meta's Ad Library API returns every ad shown in the EU/UK; for other countries it can be limited,
 so the client can also paste competitor ad texts by hand.
@@ -108,8 +108,10 @@ def summarize(ads: list[dict]) -> dict:
 
 SYSTEM = (
     "You are a senior Meta ads strategist. You get a competitor's live ads (from Meta's public Ad Library or pasted "
-    "by the client) and this business's own data. Ads that have run for many days are the ones the competitor keeps "
-    "paying for, so they most likely work.\n"
+    "by the client) and this business's own data. The Ad Library shows no sales, spend or results. "
+    "How long an ad has run is only a signal: advertisers tend to keep ads that work, but it is not proof. Treat "
+    "everything you say about their performance as an estimate and word it that way (\"likely\", \"seems\"), "
+    "never as a fact.\n"
     "1) Explain what is working for the competitor: hooks, offers, angles, formats, who they speak to.\n"
     "2) Find their weak spots and what customers are not being told.\n"
     "3) Build an ORIGINAL counter-campaign for THIS business that wins against them. Never copy or closely paraphrase "

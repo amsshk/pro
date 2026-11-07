@@ -1467,6 +1467,32 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             return 0.0, ""
         return meta_ads.Publisher(state.ads_http, s).spend(ids, start, end)
 
+    def retry_held_fees() -> None:
+        """Invoices held because Meta's spend couldn't be read: try again; after a day, send them without the fee."""
+        with state.lock:
+            held = state.billing.held_fees()
+        for h_ in held:
+            stripe = billing.Stripe(state.stripe_http)
+            give_up = time.time() - h_["held_at"] > 86400
+            try:
+                if not give_up:
+                    with state.lock:
+                        state.billing.fee_retry(h_["invoice_id"])
+                    spend, currency = spend_between(h_["client_id"], int(h_["invoice"]["period_start"]), int(h_["invoice"]["period_end"]))
+                    added = billing.add_spend_fee(stripe, h_["invoice"], spend, currency, billing.fee_percent())
+                    with state.lock:
+                        state.billing.log_fee(h_["invoice_id"], h_["client_id"], spend, currency,
+                                              added["amount"] if added else 0.0, (h_["invoice"].get("currency") or "").upper())
+                else:
+                    log.error("ad spend fee for %s on %s given up after a day: invoice sent without it",
+                              h_["client_id"], h_["invoice_id"])
+                stripe.post(f"invoices/{h_['invoice_id']}", {"auto_advance": "true"})
+                with state.lock:
+                    state.billing.release_fee(h_["invoice_id"])
+            except Exception as e:
+                log.warning("held invoice %s still waiting: %s", h_["invoice_id"], e)
+    state.retry_held_fees = retry_held_fees
+
     def charge_spend_fee(inv: dict) -> None:
         """Renewal invoice: add the % of last period's ad spend before Stripe finalizes it (about 1 hour)."""
         percent = billing.fee_percent()
@@ -1475,11 +1501,19 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             done = state.billing.fee_logged(inv.get("id", ""))
         if not cid or done or percent <= 0:
             return
+        stripe = billing.Stripe(state.stripe_http)
         try:
             spend, currency = spend_between(cid, int(inv["period_start"]), int(inv["period_end"]))
-            added = billing.add_spend_fee(billing.Stripe(state.stripe_http), inv, spend, currency, percent)
+            added = billing.add_spend_fee(stripe, inv, spend, currency, percent)
         except Exception as e:
-            log.warning("ad spend fee for %s on %s failed: %s", cid, inv.get("id"), e)
+            # never finalize without the fee by accident: keep the invoice as a draft and retry
+            log.warning("ad spend fee for %s on %s failed, holding the invoice: %s", cid, inv.get("id"), e)
+            try:
+                stripe.post(f"invoices/{inv['id']}", {"auto_advance": "false"})
+                with state.lock:
+                    state.billing.hold_fee(inv, cid)
+            except Exception as e2:
+                log.error("could not hold invoice %s: %s", inv.get("id"), e2)
             return
         if spend and not added:
             log.warning("ad spend fee skipped for %s: spend in %s, invoice in %s", cid, currency, inv.get("currency"))
@@ -1853,6 +1887,11 @@ def _start_worker(state: App, every: int) -> None:
                     state.enforce_ads_trials()
             except Exception:
                 log.exception("ad test check failed")
+            try:
+                if getattr(state, "retry_held_fees", None):
+                    state.retry_held_fees()
+            except Exception:
+                log.exception("held fee retry failed")
             for cid in sorted(set(state.clients) | set(state.meta_conns.all_clients())):
                 try:
                     if not state.known(cid):

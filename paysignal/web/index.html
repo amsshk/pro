@@ -1435,8 +1435,8 @@ main{background:transparent}
           h("h2", {}, "Part of Premium"),
           h("ul", { class: "list" },
             h("li", {}, "Type a competitor's name or Facebook Page: see every ad they're running right now"),
-            h("li", {}, "The ads they've kept running longest are the ones making them money. We put those on top"),
-            h("li", {}, "The AI explains why they work, where they're weak, and builds you an original campaign that beats them"),
+            h("li", {}, "The ads they've kept running longest come first. That's a strong hint of what works for them"),
+            h("li", {}, "The AI estimates what they're doing right and wrong, then builds you an original campaign to compete"),
             h("li", {}, "Publish it to your ad account in one click, like any other campaign")),
           h("a", { class: "btn btn-primary", href: "#/billing", style: "align-self:flex-start" }, "See Premium"))]));
       return;
@@ -1472,7 +1472,7 @@ main{background:transparent}
       const kpi = (label, v) => h("div", { class: "kpi" }, h("span", { class: "label" }, label), h("b", { style: "font-family: var(--head);font-size:26px" }, v));
       const longest = top[0] && top[0].days_running != null ? top[0].days_running + " days" : "—";
       const ads = h("div", { style: "display:flex;flex-direction:column;gap:10px" }, top.map((a, i) => h("div", { class: "ad" },
-        h("div", { class: "between" }, h("span", { style: "font-size:12px;color: var(--muted)" }, [a.page, i === 0 && a.days_running > 14 ? "their longest-running ad" : ""].filter(Boolean).join(" · ")),
+        h("div", { class: "between" }, h("span", { style: "font-size:12px;color: var(--muted)" }, [a.page, i === 0 && a.days_running > 14 ? "longest-running" : ""].filter(Boolean).join(" · ")),
           a.days_running != null ? h("span", { class: "badge " + (a.days_running >= 30 ? "b-measured" : "b-neutral") }, a.days_running + " days live") : null),
         a.headline ? h("b", { dir: "auto" }, a.headline) : null,
         a.text ? h("span", { dir: "auto", style: "white-space:pre-wrap" }, a.text.length > 320 ? a.text.slice(0, 320) + "…" : a.text) : null,
@@ -1482,7 +1482,7 @@ main{background:transparent}
           h("div", { class: "between" }, h("h2", {}, "What they're running"), h("span", { class: "badge b-neutral" }, "From Meta's Ad Library")),
           h("div", { class: "adkpis" }, kpi("Live ads", fmt.format(s.ads)), kpi("Advertisers", fmt.format((s.advertisers || []).length || 1)), kpi("Longest running", longest),
             kpi("Where", (s.platforms || []).slice(0, 2).map((p) => p.name).join(", ") || "—")),
-          h("p", { class: "sub", style: "margin:0;font-size:13px" }, "Nobody keeps paying for an ad that loses money. The longer an ad runs, the more likely it works, so those come first."),
+          h("p", { class: "sub", style: "margin:0;font-size:13px" }, "Meta doesn't show anyone's sales or spend. How long an ad has run is a strong hint, not proof, so the longest-running come first."),
           ads),
         counterCard()];
     }
@@ -1506,8 +1506,9 @@ main{background:transparent}
             const ins = r.insights || {};
             out.replaceChildren(
               h("div", { class: "row", style: "align-items:stretch" },
-                listOf("What's working for them", ins.whats_working, "var(--violet-txt)"), listOf("Their offers", ins.their_offers),
+                listOf("What seems to work for them", ins.whats_working, "var(--violet-txt)"), listOf("Their offers", ins.their_offers),
                 listOf("Their weak spots", ins.weak_spots, "#F87171"), listOf("How you beat them", ins.how_we_beat_them, "var(--violet-txt)")),
+              h("p", { class: "sub", style: "margin:0;font-size:13px" }, "AI estimates from their public ads. Meta doesn't share their sales or results."),
               renderPlan(r));
           } catch (err) { if (err.message !== "signed out") out.replaceChildren(errorCard(err.message)); }
           btn.disabled = false;
@@ -1553,7 +1554,7 @@ main{background:transparent}
     const free = h("section", { class: "card" },
       h("div", { class: "between" }, h("h2", {}, "Free"), b.active ? null : h("span", { class: "badge b-neutral" }, "Your plan")),
       h("ul", { class: "list" }, h("li", {}, "Sales audit and money leaks"), h("li", {}, "Posts that bring buyers"), h("li", {}, "7-day organic plans with tracking links and codes"), h("li", {}, "AI questions about your numbers"),
-        h("li", {}, "Test ads free for " + (b.ads ? b.ads.trial_days : 3) + " days, no card needed")));
+        h("li", {}, "Run ads through ProAds free for " + (b.ads ? b.ads.trial_days : 3) + " days, no card needed (Meta bills your ad spend to your own ad account)")));
     const proItems = h("ul", { class: "list" }, h("li", {}, "Everything in Free"), h("li", {}, "Keep your ads running after the free test"), h("li", {}, "Unlimited campaigns built and published to your ad account"), h("li", {}, "Real sale values sent to your Pixel"));
     let action, line;
     if (!b.available) { line = "Paid plans are coming soon."; action = null; }
@@ -1567,7 +1568,7 @@ main{background:transparent}
       const left = ads.trial_ends ? Math.max(0, ads.trial_ends * 1000 - Date.now()) : 0;
       line = ads.in_trial ? "Your free ad test ends in " + timeLeft(left) + ". Add your card so your ads keep running."
         : ads.trial_started ? "Your free ad test has ended, so your ads are paused. Add your card and they start again."
-        : "Test your ads free for " + (ads.trial_days || 3) + " days first. No card needed until then. Cancel any time.";
+        : "Run ads through ProAds free for " + (ads.trial_days || 3) + " days first. No card needed until then. Your ad spend is always paid to Meta from your own ad account. Cancel any time.";
       action = null;
     }
     const priceOf = (p) => p && p.amount !== null && p.amount !== undefined ? fmt.format(p.amount) + " " + p.currency + " / " + p.interval : "";
@@ -1581,9 +1582,9 @@ main{background:transparent}
       startBtn("pro", (b.ads || {}).trial_started ? "Add card & keep ads running" : "Choose Pro"),
       tier === "premium" && b.available ? switchTo("pro") : null);
     const premItems = h("ul", { class: "list" }, h("li", {}, "Everything in Pro"),
-      h("li", {}, h("b", {}, "Competitor X-ray: "), "see the ads your competitors keep paying for, and why they work"),
+      h("li", {}, h("b", {}, "Competitor X-ray: "), "see every ad your competitors run and which they keep running longest"),
       h("li", {}, "One click: an original campaign built to beat them, ready to publish"),
-      h("li", {}, "Their weak spots and the angles they're missing"));
+      h("li", {}, "AI read of their angles, offers and weak spots"));
     const premium = h("section", { class: "card", style: "background: var(--violet-card); border-color: var(--violet-edge)" },
       h("div", { class: "between" }, h("h2", {}, "Premium"), mine("premium") || h("span", { class: "badge b-neutral" }, "Most power")),
       priceOf(b.premium_price) ? h("b", { style: "font-family: var(--head); font-size:28px" }, priceOf(b.premium_price)) : null, feeLine, premItems,
