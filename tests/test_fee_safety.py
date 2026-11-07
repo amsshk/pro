@@ -81,7 +81,8 @@ def test_disconnect_refuses_when_it_cannot_pause(app):
     assert r.status_code == 200 and r.json["still_running"][0]["campaign_id"] == "c1"
 
 
-FEE = round(6000.50 * 5)
+from paysignal.settlement import fee_of
+FEE = fee_of(6000.50, 5)                      # 300.025 -> 300.03 (half-up)
 NEXT = {**INV, "id": "in_2", "period_start": 1792600000, "period_end": 1795200000}
 
 
@@ -150,8 +151,10 @@ def test_deleted_campaign_is_billed_from_records_and_marked_incomplete(app):
     st.settle_due_periods()
     fp = st.fees.for_client("glow-clinic")[0]
     assert st.ledger.state("c1")["gone"] == 1 and fp["completeness"] == "incomplete" and fp["fee_minor"] == FEE
-    signed(c, {"type": "invoice.created", "data": {"object": NEXT}})
-    assert "based on recorded spend only" in items(st)[-1][1]["description"]
+    st.bill_settled_fees()
+    assert "recorded spend only" in items(st)[-1][1]["description"]
+    d = c.get(f"/billing/glow-clinic/fees/{fp['id']}", headers=h).json
+    assert "could not be retrieved from Meta" in d["note"] and "may have been higher" in d["note"]
 
 
 def test_cancelled_client_crash_after_charge_never_charges_twice(app):
@@ -165,12 +168,12 @@ def test_cancelled_client_crash_after_charge_never_charges_twice(app):
     real = st.fees.billed
     st.fees.billed = lambda *a: (_ for _ in ()).throw(RuntimeError("worker crashed"))
     try:
-        st.bill_leftover_fees()
+        st.bill_settled_fees()
     except RuntimeError:
         pass
     st.fees.billed = real
-    st.bill_leftover_fees()                                                   # restart (idempotency keys long gone)
-    st.bill_leftover_fees()
+    st.bill_settled_fees()                                                    # restart (idempotency keys long gone)
+    st.bill_settled_fees()
     refs = [d["metadata[proads_ref]"] for _, d in items(st)]
     assert len(refs) == len(set(refs))                                        # every period charged at most once
     inv = [d for u, d in st.stripe_http.posts if u == "invoices"]
@@ -178,30 +181,68 @@ def test_cancelled_client_crash_after_charge_never_charges_twice(app):
     assert all(p["status"] in ("billed", "nothing") for p in st.fees.for_client("glow-clinic"))
 
 
-def test_meta_correction_after_billing_becomes_an_adjustment(app):
+def test_meta_correction_after_billing_becomes_an_adjustment_once(app):
     st, c, h, _ = setup(app, Graph())
     signed(c, {"type": "invoice.created", "data": {"object": INV}})
-    st.settle_due_periods()
-    signed(c, {"type": "invoice.created", "data": {"object": NEXT}})
+    st.settle_due_periods(); st.bill_settled_fees()
     fp = st.fees.for_client("glow-clinic")[-1]
     assert fp["status"] == "billed"
     st.fees.db.execute("UPDATE fee_periods SET billed_at=billed_at-8*86400 WHERE id=?", (fp["id"],))
     st.ledger.db.execute("UPDATE spend_sync SET next_try=0")
     orig = st.ads_http.get
+    spend = {"v": "7000.50"}
     def revised(url, params, timeout):
         r = orig(url, params, timeout)
         if url.endswith("/insights") and params.get("time_increment"):
-            r.body["data"][0]["spend"] = "7000.50"
+            r.body["data"][0]["spend"] = spend["v"]
         return r
     st.ads_http.get = revised
     st.recheck_billed_fees()
     adj = [p for p in st.fees.for_client("glow-clinic") if p["kind"] == "adjustment"]
-    assert adj and adj[0]["fee_minor"] == round(7000.50 * 5) - FEE and adj[0]["status"] == "ready"
+    assert adj and adj[0]["fee_minor"] == fee_of(7000.50, 5) - FEE and adj[0]["status"] == "ready"
     assert st.fees.get(fp["id"])["fee_minor"] == FEE                         # the billed period itself never changes
+    st.bill_settled_fees()
+    assert "correction" in items(st)[-1][1]["description"] and f"FP-{fp['id']}" in items(st)[-1][1]["description"]
+    spend["v"] = "9000"                                                       # Meta changes again later: period is final
     st.recheck_billed_fees()
     assert len([p for p in st.fees.for_client("glow-clinic") if p["kind"] == "adjustment"]) == 1
-    signed(c, {"type": "invoice.created", "data": {"object": {**NEXT, "id": "in_3", "period_start": 1795200000, "period_end": 1797800000}}})
-    assert "correction" in items(st)[-1][1]["description"]
+
+
+def test_correction_threshold_and_rounding_are_exact():
+    from paysignal.settlement import correction_threshold
+    assert fee_of(6000.50, 5) == 30003 and fee_of(0.10, 5) == 1 and fee_of(0.09, 5) == 0      # 0.5 fils rounds up
+    assert correction_threshold(5000) == 100          # 50.00 fee: 1% is 0.50, so 1.00 applies
+    assert correction_threshold(30003) == 301         # 300.03 fee: 1% is 3.0003 -> 3.01
+    assert correction_threshold(-20000) == 200
+
+
+def test_full_journey_october_fee_with_crash_and_restart(app):
+    """October ends -> November renewal invoice -> 72h -> settle -> own fee invoice -> crash -> restart -> no duplicate."""
+    st, c, h, _ = setup(app, Graph())
+    signed(c, {"type": "invoice.created", "data": {"object": INV}})           # renewal at the end of the period
+    renewal_items = items(st)
+    assert renewal_items == []                                                # renewal invoice is not held or touched
+    fp = st.fees.for_client("glow-clinic")[0]
+    # before 72h nothing settles
+    assert st.fees.due(now=fp["period_end"] + 71 * 3600) == []
+    st.settle_due_periods()                                                   # 72h+ later (period is in the past)
+    assert st.fees.get(fp["id"])["status"] == "ready"
+    # Stripe accepts the item and the invoice, then the worker dies before writing it down
+    real = st.fees.billed
+    st.fees.billed = lambda *a: (_ for _ in ()).throw(RuntimeError("worker crashed"))
+    try:
+        st.bill_settled_fees()
+    except RuntimeError:
+        pass
+    st.fees.billed = real
+    assert len(items(st)) == 1 and len([p for p in st.stripe_http.posts if p[0] == "invoices"]) == 1
+    # restart days later: the fake Stripe keeps no idempotency keys, so only the reference lookup can prevent a repeat
+    st.bill_settled_fees()
+    st.bill_settled_fees()
+    assert len(items(st)) == 1 and len([p for p in st.stripe_http.posts if p[0] == "invoices"]) == 1
+    p = st.fees.get(fp["id"])
+    assert p["status"] == "billed" and p["invoice_id"] and p["item_id"]
+    assert items(st)[0][1]["amount"] == str(FEE)
 
 
 def test_ledger_takes_revisions_backs_off_and_flags_gaps(tmp_path):
@@ -226,3 +267,8 @@ def test_ledger_takes_revisions_backs_off_and_flags_gaps(tmp_path):
     assert out["failed"] == ["c9"] and L.state("c9")["next_try"] > time.time() + 3000
     ledger.sync(Limited(), L, "x", [{"campaign_id": "c9"}], "act_1", today="2026-11-02")
     assert Limited.calls == 1                                                 # backing off, not hammering Meta
+
+
+def test_fees_page_is_public(app):
+    r = app.test_client().get("/fees")
+    assert r.status_code == 200 and b"72 hours" in r.data and b"half-up" in r.data and b"could not be retrieved from Meta" in r.data

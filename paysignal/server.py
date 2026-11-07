@@ -1002,6 +1002,10 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         """The ProAds web app: sign-in, audit, upload, tracking links, AI assistant."""
         return page("index.html")
 
+    @flask.get("/fees")
+    def fees_page():
+        return page("fees.html", referrer="strict-origin-when-cross-origin")
+
     @flask.get("/privacy")
     def privacy():
         return page("privacy.html", referrer="strict-origin-when-cross-origin")
@@ -1383,7 +1387,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         return {k: p[k] for k in ("id", "kind", "parent_id", "status", "completeness", "reason", "period_start",
                                   "period_end", "invoice_id", "invoice_currency", "detail")} | \
             {"fee": (p["fee_minor"] or 0) / 100, "reference": f"FP-{p['id']}",
-             "description": settlement.describe(p) if p["detail"] else None}
+             "description": settlement.describe(p) if p["detail"] else None,
+             "note": settlement.INCOMPLETE_NOTE if p["completeness"] == "incomplete" else None,
+             "final_after": (p["billed_at"] + settlement.RECHECK_AFTER_DAYS * 86400) if p.get("billed_at") else None}
 
     @flask.post("/billing/<client_id>/checkout")
     def billing_checkout(client_id):
@@ -1461,7 +1467,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 threading.Thread(target=enforce_ads_trials, daemon=True, name="ads-access").start()
         obj = (event.get("data") or {}).get("object") or {}
         if event.get("type") == "invoice.created" and obj.get("status") == "draft" \
-                and obj.get("billing_reason") in ("subscription_cycle", "subscription_create"):
+                and obj.get("billing_reason") == "subscription_cycle":
             if state.billing_sync:
                 on_invoice_created(obj)
             else:
@@ -1589,64 +1595,49 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             item = stripe.post("invoiceitems", data, idempotency_key=ref) or {}
         return item
 
-    def attach_ready_fees(inv: dict) -> None:
-        """A draft invoice for this client: add every settled period not billed yet."""
-        stripe = billing.Stripe(state.stripe_http)
-        with state.lock:
-            cid = state.billing.by_customer(inv.get("customer") or "")
-            ready = state.fees.ready(cid) if cid else []
-        for p in ready:
-            if p["invoice_currency"] != (inv.get("currency") or "").upper():
-                continue                                        # settled in another currency: billed on its own invoice
-            try:
-                item = bill_period(stripe, p, inv["id"])
-            except Exception as e:
-                log.warning("adding FP-%s to %s failed, will retry on its own invoice: %s", p["id"], inv.get("id"), e)
-                continue
-            with state.lock:
-                state.fees.billed(p["id"], item.get("invoice") or inv["id"], item.get("id"))
-
     def on_invoice_created(inv: dict) -> None:
+        """A renewal: the period that just ended starts settling. Its fee is billed on its own invoice once settled
+        (the renewal invoice is created before the period can settle, so the fee never waits a whole extra month)."""
         with state.lock:
             cid = state.billing.by_customer(inv.get("customer") or "")
-        if not cid or billing.fee_percent() <= 0:
+        if not cid or billing.fee_percent() <= 0 or inv.get("billing_reason") != "subscription_cycle":
             return
-        if inv.get("billing_reason") == "subscription_cycle":
-            with state.lock:                                   # the period that just ended starts settling
-                state.fees.open(cid, inv["customer"], inv.get("currency") or "", inv.get("period_start"), inv.get("period_end"))
-        attach_ready_fees(inv)
+        with state.lock:
+            state.fees.open(cid, inv["customer"], inv.get("currency") or "", inv.get("period_start"), inv.get("period_end"))
 
-    def bill_leftover_fees() -> None:
-        """Settled fees with no renewal coming (plan cancelled, or another currency): their own invoice."""
+    def bill_settled_fees() -> None:
+        """Every settled fee (and correction) goes out right away on one invoice per customer and currency.
+        Crash-safe: each item carries a reference that is looked up in Stripe before anything is created,
+        and an item already on an invoice is never invoiced again."""
         with state.lock:
             ready = state.fees.ready()
+        groups: dict = {}
         for p in ready:
-            with state.lock:
-                b = state.billing.get(p["client_id"]) or {}
-            renewing = b.get("status") in billing.ACTIVE and b.get("customer_id") == p["customer"] \
-                and time.time() - (p["settled_at"] or 0) < 40 * 86400
-            if renewing:
-                continue                                        # goes on the next renewal invoice
-            if p["fee_minor"] <= 0:
-                continue                                        # a credit waits for an invoice to reduce
+            groups.setdefault((p["customer"], p["invoice_currency"]), []).append(p)
+        for (customer, currency), periods in groups.items():
             stripe = billing.Stripe(state.stripe_http)
             try:
-                item = bill_period(stripe, p, None)
-                if not item.get("invoice"):
-                    data = {"customer": p["customer"], "auto_advance": "true", "collection_method": "charge_automatically",
-                            "pending_invoice_items_behavior": "include", "description": "ProAds ad spend fee",
-                            "metadata[kind]": "ad_spend_fee", "metadata[proads_ref]": f"proads-fee-invoice-{p['id']}"}
-                    pm = default_payment_method(stripe, p["client_id"])
+                made = [(p, bill_period(stripe, p, None)) for p in periods]
+                loose = [p for p, item in made if not item.get("invoice")]
+                invoice_id = None
+                if loose:
+                    ids = "-".join(str(p["id"]) for p in sorted(loose, key=lambda x: x["id"]))
+                    data = {"customer": customer, "auto_advance": "true", "collection_method": "charge_automatically",
+                            "pending_invoice_items_behavior": "include", "currency": currency.lower(),
+                            "description": "ProAds ad spend fee. Each line shows its FP reference; see Plan & billing for the breakdown.",
+                            "metadata[kind]": "ad_spend_fee", "metadata[fee_periods]": ids}
+                    pm = default_payment_method(stripe, periods[0]["client_id"])
                     if pm:
                         data["default_payment_method"] = pm
-                    made = stripe.post("invoices", data, idempotency_key=f"proads-fee-invoice-{p['id']}") or {}
-                    item = {**item, "invoice": made.get("id")}
+                    invoice_id = (stripe.post("invoices", data, idempotency_key=f"proads-fee-invoice-{ids}") or {}).get("id")
             except Exception as e:
-                log.warning("own invoice for FP-%s failed, will retry: %s", p["id"], e)
+                log.warning("fee invoice for %s failed, will retry: %s", customer, e)
                 continue
             with state.lock:
-                state.fees.billed(p["id"], item.get("invoice"), item.get("id"))
-    state.bill_leftover_fees = bill_leftover_fees
+                for p, item in made:
+                    state.fees.billed(p["id"], item.get("invoice") or invoice_id, item.get("id"))
+            log.info("billed %s for %s", [f"FP-{p['id']}" for p in periods], customer)
+    state.bill_settled_fees = bill_settled_fees
 
     def recheck_billed_fees() -> None:
         """A week after billing, compare with Meta's latest numbers once; bill or credit a material difference separately."""
@@ -1677,7 +1668,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 continue
             diff = res["fee_minor"] - (p["fee_minor"] or 0)
             with state.lock:
-                if abs(diff) >= max(settlement.MATERIAL_MINOR, abs(p["fee_minor"] or 0) // 100):
+                if abs(diff) >= settlement.correction_threshold(p["fee_minor"] or 0):
                     state.fees.adjustment(p, diff, {**res["detail"], "previous_fee": (p["fee_minor"] or 0) / 100,
                                                     "correction": diff / 100})
                     log.info("FP-%s corrected by %s %s", p["id"], diff / 100, p["invoice_currency"])
@@ -2082,7 +2073,7 @@ def _start_worker(state: App, every: int) -> None:
                     state.enforce_ads_trials()
             except Exception:
                 log.exception("ad test check failed")
-            for job in ("sync_all_spend", "settle_due_periods", "bill_leftover_fees", "recheck_billed_fees"):
+            for job in ("sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees"):
                 try:
                     if getattr(state, job, None):
                         getattr(state, job)()

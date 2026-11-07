@@ -1593,7 +1593,7 @@ main{background:transparent}
       action = null;
     }
     const priceOf = (p) => p && p.amount !== null && p.amount !== undefined ? fmt.format(p.amount) + " " + p.currency + " / " + p.interval : "";
-    const feeLine = b.fee_percent > 0 ? h("span", { class: "sub", style: "font-size:14px" }, "Plus " + b.fee_percent + "% of the ad spend you run through ProAds, worked out after each month settles and added to your next invoice.") : null;
+    const feeLine = b.fee_percent > 0 ? h("span", { class: "sub", style: "font-size:14px" }, "Plus " + b.fee_percent + "% of the ad spend you run through ProAds, charged on its own invoice once each month settles (about 3 days after it ends). ", h("a", { href: "/fees", target: "_blank", rel: "noopener" }, "How fees work")) : null;
     const startBtn = (t, label) => b.available && !b.active ? h("button", { class: t === "premium" ? "btn btn-primary" : "btn btn-ghost", type: "button", onclick: go("/checkout", { tier: t }) }, label) : null;
     const mine = (t) => tier === t ? h("span", { class: "badge b-measured" }, "Your plan") : null;
     const pro = h("section", { class: "card" },
@@ -1626,7 +1626,7 @@ main{background:transparent}
   function feeTable(b) {
     const list = b.fee_periods || [];
     if (!list.length) return null;
-    const STATUS = { settling: ["b-neutral", "Settling"], pending: ["b-est", "Waiting for Meta"], ready: ["b-measured", "On next invoice"],
+    const STATUS = { settling: ["b-neutral", "Settling"], pending: ["b-est", "Waiting for Meta"], ready: ["b-measured", "Being invoiced"],
       billed: ["b-measured", "Billed"], nothing: ["b-neutral", "No fee"] };
     const detail = h("div", {});
     const open = async (id) => {
@@ -1640,6 +1640,7 @@ main{background:transparent}
               : d.completeness === "incomplete" ? h("span", { class: "badge b-est" }, "Recorded spend only") : h("span", { class: "badge b-measured" }, "Complete")),
           !d.completeness ? h("p", { class: "sub", style: "margin:0" }, d.reason || ("This period settles " + (b.settle_hours || 72) + " hours after it ends. Nothing is charged before then.")) : null,
           d.description ? h("p", { class: "sub", style: "margin:0" }, d.description) : null,
+          d.note ? h("div", { class: "result err" }, h("span", {}, d.note)) : null,
           (x.campaigns || []).map((c) => h("div", { class: "adset", style: "gap:6px" },
             h("div", { class: "between" }, h("b", {}, c.name || "Campaign " + c.campaign_id), h("span", {}, fmt.format(c.spend) + " " + c.currency)),
             h("span", { class: "small" }, "Campaign " + c.campaign_id + " · ad account " + (c.ad_account || "–") + " · days " + c.since + " to " + c.until + " (" + c.time_zone + ")" + (c.complete ? "" : " · some days couldn't be read")),
@@ -1652,8 +1653,9 @@ main{background:transparent}
       } catch (e) { if (e.message !== "signed out") detail.replaceChildren(errorCard(e.message)); }
     };
     const date = (t) => new Date(t * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-    return [h("section", { class: "card" }, h("h2", {}, "Ad spend fees"),
-      h("p", { class: "sub", style: "margin:0;font-size:13px" }, "Each billing period settles " + (b.settle_hours || 72) + " hours after it ends, once Meta has finished updating its numbers. Days follow your ad account's time zone. The fee then goes on your next invoice; any later correction by Meta shows as its own line."),
+    return [h("section", { class: "card" }, h("div", { class: "between" }, h("h2", {}, "Ad spend fees"),
+        h("a", { href: "/fees", target: "_blank", rel: "noopener", style: "font-size:13px" }, "How fees work")),
+      h("p", { class: "sub", style: "margin:0;font-size:13px" }, "Each billing period settles " + (b.settle_hours || 72) + " hours after it ends, once Meta has finished updating its numbers, and its fee is then charged on its own invoice. Days follow your ad account's time zone; amounts round half-up to the smallest unit. One week after billing, ProAds compares once more with Meta: a difference of at least 1.00 or 1% of the fee (whichever is larger) is billed or credited as a separate correction. After that the period is final."),
       h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Period", "Ad spend", "Fee", "Status", ""].map((t) => h("th", { scope: "col" }, t)))),
         h("tbody", {}, list.map((f) => h("tr", {},
           h("td", {}, date(f.period_start) + " – " + date(f.period_end) + (f.kind === "adjustment" ? " (correction)" : "")),

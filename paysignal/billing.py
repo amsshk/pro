@@ -148,7 +148,7 @@ def checkout_session(stripe: Stripe, client_id: str, email: str, customer_id: Op
             "tax_id_collection[enabled]": "true"}
     if fee_percent() > 0:                    # the customer sees the full price before paying
         data["custom_text[submit][message]"] = (f"Plus {fee_percent():g}% of the ad spend you run through ProAds, "
-                                                "worked out after each month settles (in your ad account's time zone) and added to the next invoice.")
+                                                "charged on its own invoice about 3 days after each month ends, once Meta's numbers settle.")
     if customer_id:
         data.update({"customer": customer_id, "customer_update[name]": "auto", "customer_update[address]": "auto"})
     elif email:

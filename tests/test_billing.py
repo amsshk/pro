@@ -29,10 +29,16 @@ class FakeStripe:
         self.posts.append((url.rsplit("/v1/", 1)[1], data))
         self.headers = headers
         if url.endswith("invoiceitems"):
-            return R(200, {"id": "ii_1"})
+            return R(200, {"id": f"ii_{len(self.posts) - 1}", "invoice": data.get("invoice")})
         if url.endswith("checkout/sessions"):
             return R(200, {"url": "https://checkout.stripe.com/c/pay/cs_1"})
-        if "/invoices/" in url or url.endswith("/invoices"):
+        if url.endswith("/invoices"):
+            inv = f"in_fee_{len(self.posts)}"
+            for _, d in self.posts:                      # Stripe sweeps the customer's loose items into it
+                if "metadata[proads_ref]" in d and not d.get("_on"):
+                    d["_on"] = inv
+            return R(200, {"id": inv})
+        if "/invoices/" in url:
             return R(200, {"id": url.rsplit("/", 1)[1]})
         if url.endswith("billing_portal/sessions"):
             return R(200, {"url": "https://billing.stripe.com/p/session/1"})
@@ -41,7 +47,7 @@ class FakeStripe:
     def get(self, url, params, auth, timeout):
         if url.endswith("/invoiceitems"):
             items = [{"id": f"ii_{i}", "amount": int(d["amount"]), "description": d.get("description"),
-                      "invoice": d.get("invoice"), "metadata": {"proads_ref": d.get("metadata[proads_ref]")}}
+                      "invoice": d.get("invoice") or d.get("_on"), "metadata": {"proads_ref": d.get("metadata[proads_ref]")}}
                      for i, (u, d) in enumerate(self.posts) if u == "invoiceitems" and not getattr(self, "forget_items", False)]
             return R(200, {"data": items, "has_more": False})
         if "/subscriptions/" in url:
@@ -155,28 +161,30 @@ def test_unknown_events_and_accounts_are_ignored(app):
 
 
 def test_renewal_invoice_gets_the_ad_spend_fee(app):
-    """Full flow: period ends -> settles 72h later -> fee goes on the next invoice, with a reference."""
-    from test_fee_safety import INV, setup
+    """Period ends -> settles 72h later -> fee on its own invoice with a reference and a breakdown."""
+    from test_fee_safety import FEE, INV, setup
     state, c, h, _ = setup(app, FakeGraph())
     assert signed(c, {"type": "invoice.created", "data": {"object": INV}}).status_code == 200
     assert not [p for p in state.stripe_http.posts if p[0] == "invoiceitems"]       # not settled yet: nothing guessed
     state.settle_due_periods()
     fp = state.fees.for_client("glow-clinic")[0]
-    assert fp["status"] == "ready" and fp["fee_minor"] == round(6000.50 * 5) and fp["completeness"] == "complete"
-    nxt = {**INV, "id": "in_2", "period_start": 1792600000, "period_end": 1795200000}
-    signed(c, {"type": "invoice.created", "data": {"object": nxt}})
-    url, data = state.stripe_http.posts[-1]
-    assert url == "invoiceitems" and data["invoice"] == "in_2" and data["amount"] == str(round(6000.50 * 5))
-    assert f"ref FP-{fp['id']}" in data["description"] and data["metadata[proads_ref]"] == f"proads-fee-period-{fp['id']}"
+    assert fp["status"] == "ready" and fp["fee_minor"] == FEE and fp["completeness"] == "complete"
+    state.bill_settled_fees()
+    (u1, item), (u2, inv) = [p for p in state.stripe_http.posts if p[0] in ("invoiceitems", "invoices")][-2:]
+    assert u1 == "invoiceitems" and item["amount"] == str(FEE) and "invoice" not in item
+    assert f"ref FP-{fp['id']}" in item["description"] and item["metadata[proads_ref]"] == f"proads-fee-period-{fp['id']}"
+    assert u2 == "invoices" and inv["default_payment_method"] == "pm_card" and inv["pending_invoice_items_behavior"] == "include"
     n = len(state.stripe_http.posts)
-    signed(c, {"type": "invoice.created", "data": {"object": nxt}})                    # Stripe retries: no double fee
-    assert len(state.stripe_http.posts) == n
+    state.bill_settled_fees()
+    signed(c, {"type": "invoice.created", "data": {"object": INV}})                    # Stripe retries: no double fee
+    assert len([p for p in state.stripe_http.posts[n:] if p[0] in ("invoiceitems", "invoices")]) == 0
     b = c.get("/billing/glow-clinic", headers=h).json
-    assert b["fee_periods"][-1]["status"] == "billed" and b["fee_periods"][-1]["fee"] == round(6000.50 * 5) / 100
+    assert b["fee_periods"][-1]["status"] == "billed" and b["fee_periods"][-1]["fee"] == FEE / 100
     d = c.get(f"/billing/glow-clinic/fees/{fp['id']}", headers=h).json
     camp = d["detail"]["campaigns"][0]
     assert camp["time_zone"] == "Asia/Dubai" and camp["since"] == "2026-09-22" and camp["until"] == "2026-10-21"
     assert camp["days"] == [{"day": "2026-10-01", "spend": 6000.5, "currency": "AED"}] and d["reference"] == f"FP-{fp['id']}"
+    assert d["final_after"] and d["note"] is None
     assert c.get(f"/billing/glow-clinic/fees/{fp['id'] + 99}", headers=h).status_code == 404
 
 
@@ -187,5 +195,6 @@ def test_fee_in_another_invoice_currency_records_the_rate(app):
     signed(c, {"type": "invoice.created", "data": {"object": {**INV, "currency": "usd"}}})
     state.settle_due_periods()
     fp = state.fees.for_client("glow-clinic")[0]
-    assert fp["invoice_currency"] == "USD" and fp["fee_minor"] == round(6000.50 * 0.27 * 5)
+    from paysignal.settlement import fee_of
+    assert fp["invoice_currency"] == "USD" and fp["fee_minor"] == fee_of(round(6000.50 * 0.27, 2), 5)
     assert fp["detail"]["fx"][0]["rate"] == 0.27 and fp["detail"]["fx"][0]["from"] == "AED"

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How fees work · ProAds</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+<style>
+:root{color-scheme:dark}
+body{margin:0;background:#0A0A0A;color:#EDEDED;font-family:Inter,system-ui,sans-serif;line-height:1.65;font-size:16px}
+a{color:#5E9400}a:hover{color:#7DB21C}
+main{max-width:760px;margin:0 auto;padding:32px clamp(16px,4vw,40px) 64px}
+.brand{display:inline-flex;align-items:center;gap:10px;font-family:'Space Grotesk',Inter,sans-serif;font-weight:700;font-size:20px;color:#EDEDED;text-decoration:none}
+h1{font-family:'Space Grotesk',Inter,sans-serif;font-size:36px;margin:28px 0 4px}
+h2{font-family:'Space Grotesk',Inter,sans-serif;font-size:21px;margin:32px 0 8px}
+p,li{color:#D0D0D0}
+table{border-collapse:collapse;width:100%;font-size:14px}td,th{border-bottom:1px solid #262626;padding:8px 6px;text-align:left;vertical-align:top;color:#D0D0D0}
+.muted{color:#A3A3A3;font-size:14px}
+ul{padding-left:20px}
+</style>
+</head>
+<body>
+<main>
+  <a class="brand" href="/"><svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="5" fill="#5E9400"/><path d="M5 19l6-6 4 3 8-9" stroke="#0A0A0A" stroke-width="2.4" fill="none" stroke-linecap="square" stroke-linejoin="miter"/></svg>ProAds</a>
+  <h1>How fees work</h1>
+  <p class="muted">Last updated 7 November 2026</p>
+
+  <p>This page explains exactly how ProAds charges, so every amount on your invoice can be checked.</p>
+
+  <h2>Plans</h2>
+  <table>
+    <tr><th>Free</th><td>AED 0. Audit, organic plans, AI questions. Run ads through ProAds free for 3 days from your first Go live.</td></tr>
+    <tr><th>Pro</th><td>Monthly price shown at checkout, plus a percentage of your ad spend (below).</td></tr>
+    <tr><th>Premium</th><td>Monthly price shown at checkout, plus the same percentage of your ad spend.</td></tr>
+  </table>
+  <p>Your ad spend itself is always paid by you to Meta, from your own ad account. ProAds never pays or holds your ad spend.</p>
+
+  <h2>The ad spend fee</h2>
+  <ul>
+    <li><b>What counts:</b> the spend of campaigns ProAds created in your ad account, whether you switched them on in ProAds or in Meta Ads Manager.</li>
+    <li><b>Days and time zone:</b> Meta reports spend per day in your ad account's time zone. A day belongs to the billing period in which it starts, so each day is counted once.</li>
+    <li><b>Settling:</b> Meta keeps updating recent days, so each billing period settles 72 hours after it ends. ProAds reads the spend once more, works out the fee and locks it. Nothing is charged before then.</li>
+    <li><b>When it's charged:</b> as soon as a period settles, the fee is charged on its own invoice to the card you use for ProAds. Your monthly plan invoice is separate.</li>
+    <li><b>Calculation and rounding:</b> fee = spend × percentage, in your invoice currency, rounded half-up to the smallest unit (for example 300.025 becomes 300.03).</li>
+    <li><b>Other currencies:</b> if your ad account uses a different currency, the spend is converted at the daily rate on the day the period settles. The rate and its source are recorded.</li>
+    <li><b>Breakdown:</b> every fee has a reference (FP-number) on the invoice. In Plan &amp; billing, "How it was worked out" shows each campaign, ad account, time zone, day, exchange rate and the calculation.</li>
+  </ul>
+
+  <h2>When spend can't be read</h2>
+  <ul>
+    <li><b>Facebook disconnected or Meta not answering:</b> the period waits ("Waiting for Meta"). ProAds never treats missing spend as zero and never guesses. The fee is worked out once the spend can be read, for example when you connect Facebook again.</li>
+    <li><b>Before disconnecting</b>, ProAds pauses its campaigns and checks with Meta that they are paused. Campaigns confirmed paused are treated as having no spend after that moment.</li>
+    <li><b>Recorded spend only:</b> if a campaign is deleted on Meta before every day was read, the fee is calculated using the spend records available to ProAds. Some historical campaign spend could not be retrieved from Meta, so the actual spend may have been higher than shown. You are never charged an estimate.</li>
+  </ul>
+
+  <h2>Corrections</h2>
+  <ul>
+    <li>Seven days after a fee is charged, ProAds compares it once with Meta's latest numbers, using the same exchange rate.</li>
+    <li>If the difference is at least the larger of 1.00 (in your invoice currency) or 1% of the original fee, it is charged or credited as a separate "correction" line that names the original FP-number. The original invoice never changes.</li>
+    <li>After that check the period is final. Later changes by Meta are not billed or credited.</li>
+  </ul>
+
+  <h2>Cancelling</h2>
+  <ul>
+    <li>When your plan ends, the last (partial) period settles the same way and its fee is charged on its own invoice.</li>
+    <li>A fee waiting for Meta's numbers stays owed until it can be worked out.</li>
+  </ul>
+
+  <h2>Contact</h2>
+  <p id="contact">For any billing question, contact us through your ProAds account.</p>
+</main>
+<script>
+"use strict";
+fetch("/public-config").then((r) => r.json()).then((c) => {
+  if (!c.contact) return;
+  const p = document.getElementById("contact");
+  const a = document.createElement("a");
+  a.href = "mailto:" + c.contact; a.textContent = c.contact;
+  p.replaceChildren("For any billing question, email ", a, ".");
+}).catch(() => {});
+</script>
+</body>
+</html>

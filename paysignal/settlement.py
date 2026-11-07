@@ -6,8 +6,12 @@ Rules (also shown to clients):
     (Meta reports daily spend in that time zone). So every day belongs to exactly one period, DST included.
   - SETTLE_HOURS after a period ends (Meta keeps revising recent days), ProAds reads the spend once more and
     settles the period. A settled period is locked: its numbers never change.
-  - The fee of a settled period is added to the client's next invoice (or its own invoice if they left).
-  - A correction found later is billed or credited as a separate adjustment on a later invoice.
+  - As soon as a period settles, its fee is billed on its own invoice (charged to the saved card).
+  - Rounding: fee = spend (in the invoice currency) x percent, rounded half-up to the smallest unit (e.g. fils).
+  - Corrections: exactly once, RECHECK_AFTER_DAYS after billing, ProAds compares with Meta's latest numbers.
+    A difference of at least the larger of 1.00 (in the invoice currency) or 1% of the original fee is billed
+    (or credited) as its own "correction" line referencing the original FP number. After that check the period
+    is final: later changes by Meta are ignored.
 Statuses:
   settling   period ended less than SETTLE_HOURS ago
   pending    some spend still can't be read (e.g. Facebook not connected); retried, never treated as zero
@@ -21,7 +25,9 @@ Every period keeps the full calculation (campaigns, days, time zones, exchange r
 from __future__ import annotations
 
 import json
+import math
 import time
+from decimal import ROUND_HALF_UP, Decimal
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Optional
 from zoneinfo import ZoneInfo
@@ -175,11 +181,25 @@ def calculate(period: dict, campaigns: list[dict], ledger, percent: float,
                    "source": "same currency" if r == 1.0 else "open.er-api.com daily rate", "at": int(time.time())})
         converted += sub * r
     converted = round(converted, 2)
-    fee_minor = int(round(converted * percent))             # converted * 100 (minor) * percent / 100
+    fee_minor = fee_of(converted, percent)
     return {"status": "settled", "fee_minor": fee_minor, "completeness": "incomplete" if incomplete else "complete",
             "detail": {"percent": percent, "rule": "days are ad-account-local; a day belongs to the period it starts in",
                        "campaigns": lines, "fx": fx, "spend_in_invoice_currency": converted,
                        "fee": fee_minor / 100, "currency": out_cur}}
+
+
+def fee_of(amount: float, percent: float) -> int:
+    """amount x percent%, in minor units, rounded half-up (6000.50 x 5% = 300.025 -> 300.03)."""
+    return int((Decimal(str(amount)) * Decimal(str(percent))).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def correction_threshold(original_minor: int) -> int:
+    """Smallest difference (minor units) that becomes a correction: the larger of 1.00 or 1% of the original fee."""
+    return max(MATERIAL_MINOR, math.ceil(abs(original_minor or 0) / 100))
+
+
+INCOMPLETE_NOTE = ("This fee is calculated using the spend records available to ProAds. Some historical campaign "
+                   "spend could not be retrieved from Meta, so the actual spend may have been higher than shown.")
 
 
 def describe(p: dict) -> str:
@@ -188,7 +208,7 @@ def describe(p: dict) -> str:
     when = f"{fmt(p['period_start'])} - {fmt(p['period_end'])}"
     if p["kind"] == "adjustment":
         return f"Ad spend fee correction for {when} (Meta revised the spend after billing) · ref FP-{p['parent_id']}"
-    tail = " · based on recorded spend only: a campaign was deleted on Meta before all days could be read" \
+    tail = " · recorded spend only: some campaign spend could not be retrieved from Meta" \
         if p["completeness"] == "incomplete" else ""
     return (f"Ad spend fee: {d.get('percent', 0):g}% of {p['invoice_currency']} {d.get('spend_in_invoice_currency', 0):,.2f} "
             f"spent through ProAds ({when}) · ref FP-{p['id']}{tail}")
