@@ -50,7 +50,7 @@ from .attribution import make_promo_code, tag_link
 from .dashboard import build_dashboard, _realized
 from .ads_report import build_report
 from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, business_context
-from . import billing, buyers, competitors, engines, forecast, leaks, learning, meta_capi, signals, ledger, meta_ads, meta_connect, settlement
+from . import autopilot, billing, buyers, competitors, engines, forecast, leaks, learning, meta_capi, signals, ledger, meta_ads, meta_connect, settlement
 from .connectors.stripe import verify_signature as stripe_signature_ok
 from .audit import audit_summary, audit_text, build_audit
 from .importers import xlsx_to_csv, import_auto
@@ -864,7 +864,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         start = datetime.fromtimestamp(e["started_at"], timezone.utc)
         today = datetime.now(timezone.utc).date()
         cutoff = today - timedelta(days=settle_days)
-        slug = {l["campaign_id"]: meta_ads._slug(l.get("name", ""), 30) for l in launches}
+        slug = {l["campaign_id"]: l.get("utm_slug") or meta_ads._slug(l.get("name", ""), 30) for l in launches}
         prelim, settled = {}, {}
         with state.lock:
             eng = state.engine(client_id)
@@ -982,10 +982,242 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             state.experiments.decide(client_id, eid, body["decision"], str(body.get("note") or ""))
         return {"decided": body["decision"]}
 
+    # ---------------- Autonomous Experiment Engine ----------------
+    ACTIVE_EXP = ("proposed", "approved", "running")
+
+    def autopilot_state(client_id):
+        """Stages 1-3: opportunities from every engine, three proposals, sizing and the next best experiment."""
+        custs, basis, last, launches = buyer_inputs(client_id)
+        cur = state.config(client_id).get("currency", "AED")
+        an = buyers.analyse(custs, last, cur)
+        try:
+            eng = engines_for(client_id)
+        except Exception as e:
+            log.info("autopilot: profit engine skipped: %s", e)
+            eng = {}
+        try:
+            lk = leaks_for(client_id)
+        except Exception as e:
+            log.info("autopilot: leaks skipped: %s", e)
+            lk = {}
+        learn = (state.ads_cache.get(("learning", client_id)) or (0, {}))[1]
+        with state.lock:
+            history = state.experiments.list(client_id)
+            econ_in = state.economics.get(client_id)
+        hist = [{**h, "kind": h.get("kind") or {"product": "product", "offer": "offer"}.get(h["dimension"], "creative")}
+                for h in history]
+        ops = autopilot.discover(an, eng, lk, learn, hist)
+        econ = engines.economics(econ_in) if econ_in else None
+        spent = sum(c.get("spend") or 0 for c in eng.get("campaigns", []) if c.get("results"))
+        results = sum(c.get("results") or 0 for c in eng.get("campaigns", []) if c.get("results"))
+        cpp = (spent / results) if results >= 5 else ((econ or {}).get("target_cpa") or (econ or {}).get("break_even_cpa"))
+        sizing = autopilot.test_budget(cpp, (econ or {}).get("margin_per_sale"), (econ_in or {}).get("daily_budget"))
+        if results >= 5:
+            sizing["based_on"] = "your real cost per purchase from recent campaigns"
+        elif cpp:
+            sizing["based_on"] = "your target cost per customer (no campaign history yet)"
+        props = autopilot.proposals(ops, sizing)
+        return {"opportunities": ops, "proposals": props, "next_best": autopilot.next_best(props), "sizing": sizing,
+                "experiments": [h for h in history if h.get("kind")], "launches": launches, "buyers_ready": an.get("ready")}
+
+    @flask.get("/autopilot/<client_id>")
+    def autopilot_view(client_id):
+        state.require_key(client_id)
+        st_ = autopilot_state(client_id)
+        settle_days = refund_delay_days(client_id)
+        for e in st_["experiments"]:
+            if e["status"] == "running" and e["started_at"]:
+                prelim, settled = experiment_arms(client_id, e, st_["launches"], settle_days)
+                e["result"] = buyers.evaluate(prelim, settled, (e["design"] or {}).get("min_spend_per_arm"), e["started_at"],
+                                              14, settle_days)
+                # loss guard: settled value the variant lost vs the control's rate, against the agreed limit
+                sv = e["result"]["settled"]
+                limit = (e["design"] or {}).get("max_acceptable_loss")
+                if sv["control"]["spend"] and sv["variant"]["spend"] and limit:
+                    lost = (sv["control"]["value"] / sv["control"]["spend"] - sv["variant"]["value"] / sv["variant"]["spend"]) * sv["variant"]["spend"]
+                    e["result"]["loss_so_far"] = round(max(0.0, lost), 2)
+                    e["result"]["loss_alert"] = lost > limit
+                with state.lock:
+                    state.experiments.save_result(client_id, e["id"], e["result"])
+        st_["campaigns"] = [{"campaign_id": l["campaign_id"], "name": l.get("name", ""), "status": l["status"]}
+                            for l in st_.pop("launches") if not l.get("experiment")]
+        return st_
+
+    def meta_test_for(client_id) -> autopilot.MetaTest:
+        s_ = state.ads_settings(client_id, is_admin(client_id))
+        if not s_:
+            abort(409, "Connect Facebook & Instagram (with an ad account) first.")
+        return autopilot.MetaTest(state.ads_http, s_["token"], s_["ad_account"], meta_ads.settings()["version"])
+
+    def busy_campaigns(client_id) -> set:
+        with state.lock:
+            return {c for e in state.experiments.list(client_id) if e["status"] in ACTIVE_EXP + ("planned",)
+                    for c in (e.get("control_campaign"), e.get("variant_campaign")) if c}
+
+    @flask.post("/autopilot/<client_id>/prepare")
+    def autopilot_prepare(client_id):
+        """Stage 4a: read the control from Meta and show EXACTLY what the variant would change. Nothing is created."""
+        state.require_key(client_id)
+        body = request.get_json(silent=True) or {}
+        st_ = autopilot_state(client_id)
+        prop = next((p for p in st_["proposals"] if p["key"] == body.get("key")), None)
+        if not prop:
+            abort(404, "That proposal isn't supported by your data any more.")
+        if prop.get("not_a_split_test"):
+            abort(400, "This one is a structure fix, not a split test: apply it in Ads Manager (merge the ad sets).")
+        control = str(body.get("control_campaign") or prop.get("control_campaign") or "")
+        if control not in {l["campaign_id"] for l in st_["launches"]}:
+            abort(400, "Pick the control: a live campaign published through ProAds.")
+        if control in busy_campaigns(client_id):
+            abort(409, "That campaign is already part of another test. One test per campaign keeps control groups clean.")
+        change = {k: (str(v).strip() or None) for k, v in (body.get("change") or {}).items() if k in ("message", "name", "link") and v}
+        mt = meta_test_for(client_id)
+        try:
+            snap = mt.snapshot(control)
+        except autopilot.MetaTestError as e:
+            abort(502, str(e))
+        if not change and prop["kind"] in ("creative", "product", "offer"):
+            ai = state.ai or MetaAI()
+            if ai.available:
+                ld = ((snap["ads"][0].get("creative") or {}).get("object_story_spec") or {}).get("link_data") or {} if snap["ads"] else {}
+                try:
+                    reply = ai.chat("campaign_builder", [
+                        {"role": "developer", "content": "Rewrite ONE Meta ad for a controlled test. Change only what the brief "
+                         "says; keep the offer and facts unless the brief is about the offer. Never invent prices, results "
+                         "or discounts. English. Reply with only JSON {\"message\": str (max 300 chars), \"name\": str (max 40 chars)}."},
+                        {"role": "user", "content": json.dumps({"change": prop["change"], "why": prop["why"],
+                                                                 "current_text": ld.get("message"), "current_headline": ld.get("name")})}],
+                        max_completion_tokens=800)
+                    t = reply.text
+                    j = json.loads(t[t.find("{"):t.rfind("}") + 1])
+                    change = {"message": str(j.get("message", ""))[:300] or None, "name": str(j.get("name", ""))[:40] or None}
+                except Exception as e:
+                    log.info("autopilot copy draft failed: %s", e)
+        if prop["kind"] == "landing" and not change.get("link"):
+            abort(400, "Give the new landing page link for the variant.")
+        if not any(change.values()):
+            abort(400, "Write the variant's text, headline or link (the one thing that changes).")
+        preview = autopilot.MetaTest.preview(snap, change)
+        if not preview:
+            abort(400, "The variant would be identical to the control. Change the text, headline or link.")
+        plan = {"proposal": {k: prop[k] for k in ("key", "kind", "label", "change", "why", "benefit_text", "unchanged", "measure")},
+                "change": change, "preview": preview,
+                "control": {"campaign_id": control, "adsets": len(snap["adsets"]), "ads": len(snap["ads"]),
+                            "daily_budget": sum(float(a.get("daily_budget") or 0) for a in snap["adsets"])
+                            / (1 if ads_currency(client_id).upper() in meta_ads.ZERO_DECIMAL else 100)}}
+        with state.lock:
+            eid = state.experiments.add_proposal(client_id, {**prop, "budget": {**(prop["budget"] or {})}}, plan, control)
+        return {"id": eid, "plan": plan, "budget": prop["budget"]}
+
+    @flask.post("/autopilot/<client_id>/dismiss")
+    def autopilot_dismiss(client_id):
+        """Owner rejects a proposal without testing it: recorded, and never proposed again."""
+        state.require_key(client_id)
+        body = request.get_json(silent=True) or {}
+        st_ = autopilot_state(client_id)
+        prop = next((p for p in st_["proposals"] if p["key"] == body.get("key")), None)
+        if not prop:
+            abort(404, "No such proposal.")
+        with state.lock:
+            eid = state.experiments.add_proposal(client_id, prop, {"proposal": {k: prop[k] for k in ("key", "kind", "label", "change", "why")},
+                                                                     "dismissed": True}, prop.get("control_campaign") or "")
+            state.experiments.decide(client_id, eid, "reject", str(body.get("reason") or "Rejected by the owner without a test")[:300])
+        return {"dismissed": True}
+
+    @flask.post("/autopilot/<client_id>/experiments/<int:eid>/approve")
+    def autopilot_approve(client_id, eid):
+        """Stage 4b (approval 1): create the variant in Meta, PAUSED, with Meta's A/B test. Nothing goes live."""
+        state.require_key(client_id)
+        if (request.get_json(silent=True) or {}).get("confirm") is not True:
+            abort(400, 'Approval needed: send {"confirm": true}')
+        with state.lock:
+            e = state.experiments.get(client_id, eid)
+            launches = state.launches.list(client_id)
+        if not e or e["status"] != "proposed":
+            abort(404, "No proposed test with that number.")
+        with state.lock:
+            others = [x for x in state.experiments.list(client_id) if x["id"] != eid and x["status"] in ACTIVE_EXP + ("planned",)]
+        if any(e["control_campaign"] in (x.get("control_campaign"), x.get("variant_campaign")) for x in others):
+            abort(409, "The control is already in another active test. One test per campaign keeps control groups clean.")
+        control = next((l for l in launches if l["campaign_id"] == e["control_campaign"]), None)
+        if not control:
+            abort(404, "The control campaign is no longer in ProAds.")
+        plan = e["plan"] or {}
+        change = dict(plan.get("change") or {})
+        # the variant gets its own tracking tag, so real sales can be told apart from the control's
+        ctl_slug = control.get("utm_slug") or meta_ads._slug(control.get("name", ""), 30)
+        var_slug = f"{ctl_slug[:22]}-test{eid}"
+        mt = meta_test_for(client_id)
+        try:
+            snap = mt.snapshot(control["campaign_id"])
+            base_link = change.get("link") or next((((a.get("creative") or {}).get("object_story_spec") or {}).get("link_data", {}).get("link")
+                                                   for a in snap["ads"]), None)
+            if base_link:
+                from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+                u = urlparse(base_link)
+                q = dict(parse_qsl(u.query))
+                q["utm_campaign"] = var_slug
+                if q.get("utm_content"):
+                    q["utm_content"] = q["utm_content"].replace(ctl_slug, var_slug, 1)
+                change["link"] = urlunparse(u._replace(query=urlencode(q)))
+            made = mt.create_paused(snap, change, f"ProAds test {eid}: {plan.get('proposal', {}).get('label', '')}", 14)
+        except autopilot.MetaTestError as ex:
+            abort(502, str(ex))
+        with state.lock:
+            state.launches.add(client_id, {"campaign_id": made["variant_campaign"], "name": f"{control.get('name', '')} · test {eid}",
+                                           "ad_sets": [], "ads": [a["ad_id"] for a in made["ads"]], "status": "PAUSED",
+                                           "conversion": control.get("conversion"), "utm_slug": var_slug, "experiment": eid})
+            state.experiments.set_fields(client_id, eid, status="approved", variant_campaign=made["variant_campaign"],
+                                         split_test_id=made.get("split_test_id"), meta=made)
+        return {"status": "approved", **made, "live": False}
+
+    @flask.post("/autopilot/<client_id>/experiments/<int:eid>/start")
+    def autopilot_start(client_id, eid):
+        """Approval 2: switch the variant on. The control must already be live; budgets are untouched."""
+        state.require_key(client_id)
+        if (request.get_json(silent=True) or {}).get("confirm") is not True:
+            abort(400, 'Approval needed: send {"confirm": true}')
+        with state.lock:
+            e = state.experiments.get(client_id, eid)
+            launches = {l["campaign_id"]: l for l in state.launches.list(client_id)}
+        if not e or e["status"] != "approved":
+            abort(404, "No approved test with that number.")
+        if (launches.get(e["control_campaign"]) or {}).get("status") != "ACTIVE":
+            abort(409, "Switch the control campaign on first (Go live), so both sides run at the same time.")
+        try:
+            meta_test_for(client_id).set_status(e["variant_campaign"], "ACTIVE")
+        except autopilot.MetaTestError as ex:
+            abort(502, str(ex))
+        with state.lock:
+            state.launches.set_status(client_id, e["variant_campaign"], "ACTIVE")
+            state.experiments.set_fields(client_id, eid, status="running", started_at=int(time.time()))
+        return {"status": "running"}
+
+    @flask.post("/autopilot/<client_id>/experiments/<int:eid>/pause-variant")
+    def autopilot_pause(client_id, eid):
+        """Owner-approved stop (e.g. the loss limit was reached). Pausing never needs a second approval to be safe."""
+        state.require_key(client_id)
+        if (request.get_json(silent=True) or {}).get("confirm") is not True:
+            abort(400, 'Approval needed: send {"confirm": true}')
+        with state.lock:
+            e = state.experiments.get(client_id, eid)
+        if not e or not e.get("variant_campaign"):
+            abort(404, "No test with a variant.")
+        try:
+            meta_test_for(client_id).set_status(e["variant_campaign"], "PAUSED")
+        except autopilot.MetaTestError as ex:
+            abort(502, str(ex))
+        with state.lock:
+            state.launches.set_status(client_id, e["variant_campaign"], "PAUSED")
+        return {"variant": "PAUSED"}
+
     @flask.get("/leaks/<client_id>")
     def leaks_endpoint(client_id):
         """Where the business loses money outside winning new customers, ranked by AED a month."""
         state.require_key(client_id)
+        return leaks_for(client_id)
+
+    def leaks_for(client_id):
         cur = state.config(client_id).get("currency", "AED")
         losing = []
         try:

@@ -33,6 +33,7 @@ from .engine import Engine
 from .identity import customer_key
 
 MIN_CUSTOMERS = 15          # per segment before comparing
+MIN_TEST_PURCHASES = 20     # settled purchases (both arms) before a test shows any confidence range
 MIN_MATURE = 40             # customers with a full window before anything is shown
 WINDOWS = (60, 30)
 BEST_SHARE = 0.2            # "best buyers" = top 20% by value in the window
@@ -274,6 +275,8 @@ def evaluate(prelim: dict, settled: dict, min_spend: Optional[float], started_at
                "variant": {"spend": round(v["spend"], 2), "purchases": len(v["values"]), "value": round(sum(v["values"]), 2)}}
         if min(c["spend"], v["spend"]) < floor or c["spend"] <= 0 or v["spend"] <= 0:
             return {**out, "enough_spend": False, "verdict": None}
+        if len(c["values"]) + len(v["values"]) < MIN_TEST_PURCHASES:
+            return {**out, "enough_spend": True, "verdict": None, "too_few": True}      # no range: it would be invented
         r = value_per_spend_diff(c, v)
         if r is None:
             return {**out, "enough_spend": True, "verdict": None}
@@ -291,6 +294,13 @@ def evaluate(prelim: dict, settled: dict, min_spend: Optional[float], started_at
         return {**res, "status": "provisional", "suggested": None,
                 "why": f"Early results lean to '{pv['verdict']}', but recent purchases can still be refunded. "
                        f"ProAds waits {settle_days} days after each purchase before trusting it."}
+    if sv.get("too_few") or (pv.get("too_few") and pv["enough_spend"]):
+        n = sv["control"]["purchases"] + sv["variant"]["purchases"]
+        return {**res, "status": "collecting", "suggested": None,
+                "why": f"Too few settled purchases to estimate anything ({n} of at least {MIN_TEST_PURCHASES}). "
+                       "No confidence is shown until there's enough."
+                       + (f" It's past the planned {max_days} days: keep collecting, or stop and record it as inconclusive."
+                          if days > max_days else "")}
     if not pv["enough_spend"]:
         why = (f"Each side needs at least {floor:,.0f} spend before any judgement." if floor else "Both sides need spend first.")
     else:
@@ -345,13 +355,13 @@ class ExperimentStore:
         decision TEXT, decided_at INTEGER, note TEXT)"""
     COLS = ("id", "client_id", "created_at", "dimension", "segment", "hypothesis", "change", "evidence", "design",
             "status", "control_campaign", "variant_campaign", "started_at", "result", "decision", "decided_at", "note",
-            "checks", "split_test_id")
+            "checks", "split_test_id", "kind", "plan", "meta")
 
     def __init__(self, db):
         self.db = db
         self.db.execute(self.SCHEMA)
         cols = {r[1] for r in self.db.execute("PRAGMA table_info(experiments)").fetchall()}
-        for col in ("checks", "split_test_id"):
+        for col in ("checks", "split_test_id", "kind", "plan", "meta"):
             if col not in cols:
                 self.db.execute(f"ALTER TABLE experiments ADD COLUMN {col} TEXT")
         self.db.commit()
@@ -370,7 +380,7 @@ class ExperimentStore:
         out = []
         for r in rows:
             d = dict(zip(self.COLS, r))
-            for k in ("evidence", "design", "result", "checks"):
+            for k in ("evidence", "design", "result", "checks", "plan", "meta"):
                 d[k] = json.loads(d[k]) if d[k] else None
             out.append(d)
         return out
@@ -391,6 +401,24 @@ class ExperimentStore:
     def decide(self, client_id: str, eid: int, decision: str, note: str = "") -> None:
         self.db.execute("UPDATE experiments SET status='decided', decision=?, decided_at=?, note=? WHERE id=? AND client_id=?",
                         (decision, int(time.time()), note[:500], eid, client_id))
+        self.db.commit()
+
+    def add_proposal(self, client_id: str, p: dict, plan: dict, control: str) -> int:
+        cur = self.db.execute("INSERT INTO experiments (client_id, created_at, dimension, segment, hypothesis, change,"
+                              " evidence, design, status, kind, plan, control_campaign) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                              (client_id, int(time.time()), "autopilot", p["segment"], p["change"], p["change"],
+                               json.dumps({"why": p["why"], "source": p["source"], "strength": p["strength"],
+                                           "benefit": p["benefit"]}),
+                               json.dumps({**(p.get("budget") or {}), "max_days": 14,
+                                           "min_spend_per_arm": None}), "proposed", p["kind"], json.dumps(plan), control))
+        self.db.commit()
+        return cur.lastrowid
+
+    def set_fields(self, client_id: str, eid: int, **kw) -> None:
+        cols = [k for k in kw if k in self.COLS]
+        vals = [json.dumps(kw[k]) if isinstance(kw[k], (dict, list)) else kw[k] for k in cols]
+        self.db.execute(f"UPDATE experiments SET {', '.join(c + '=?' for c in cols)} WHERE id=? AND client_id=?",
+                        (*vals, eid, client_id))
         self.db.commit()
 
     def forget(self, client_id: str) -> None:

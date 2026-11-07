@@ -491,6 +491,7 @@ main{background:transparent}
     ["#/upload", "Connect & upload", "M12 16V4M6 10l6-6 6 6M4 20h16"],
     ["#/whatsapp", "WhatsApp", "M12 3a9 9 0 0 0-7.8 13.5L3 21l4.6-1.2A9 9 0 1 0 12 3z"],
     ["#/assistant", "Ask & campaigns", "M4 5h16v11H8l-4 4z"],
+    ["#/experiments", "Experiments", "M9 3h6M10 3v6L5 19a1.5 1.5 0 0 0 1.3 2h11.4a1.5 1.5 0 0 0 1.3-2L14 9V3M7.5 15h9"],
     ["#/buyers", "Buyer quality", "M16 11a4 4 0 1 0-8 0 4 4 0 0 0 8 0zM4 21c1.5-4 4.5-6 8-6s6.5 2 8 6M19 3l1.5 1.5L23 2"],
     ["#/learning", "Meta learning", "M4 19V5M4 19h16M8 15l3-4 3 2 5-7"],
     ["#/engines", "Profit engine", "M12 3v3M12 18v3M4.6 6.6l2.1 2.1M17.3 15.3l2.1 2.1M3 12h3M18 12h3M4.6 17.4l2.1-2.1M17.3 8.7l2.1-2.1M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"],
@@ -1553,6 +1554,127 @@ main{background:transparent}
       h("a", { class: "btn btn-primary", href: "#/billing" }, "Add card"));
   }
 
+  // ---------- Autonomous Experiment Engine ----------
+  async function viewExperiments() {
+    const head = h("header", {}, h("h1", {}, "Experiments"),
+      h("p", { class: "sub" }, "ProAds finds what to test, sizes it, prepares it in Meta and judges it on real, settled sales. You approve every step that touches your ads."));
+    root.replaceChildren(layout("#/experiments", [head, loading("Reading your buyers, campaigns, leaks and Meta learning…")]));
+    let d;
+    try { d = await api("/autopilot/" + cid()); } catch (e) { if (e.message !== "signed out") root.replaceChildren(layout("#/experiments", [head, errorCard(e.message)])); return; }
+    const cur = (status && status.currency) || adsCurrency();
+    const m = (x) => fmt.format(Math.round(x)) + " " + cur;
+    const post = (url, body) => api(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+    const blocks = [head];
+    const props = d.proposals || [];
+    const camps = (d.campaigns || []);
+    const budgetBlock = (b) => !b ? null : b.affordable === null ? h("span", { class: "small" }, b.why)
+      : h("div", { class: "result" + (b.affordable ? "" : " err"), style: "flex-direction:column;align-items:flex-start;gap:4px" },
+        b.affordable ? [h("b", {}, "Test size: about " + m(b.budget) + " over about " + b.days + " days"),
+          h("span", { class: "small" }, b.purchases_per_arm + " purchases per side to reliably spot a " + Math.round(b.detectable_uplift * 100) + "% improvement, at " + m(b.cost_per_purchase) + " a purchase (" + (b.based_on || "") + "). Maximum acceptable loss if the variant is worse: about " + m(b.max_acceptable_loss) + "."),
+          b.note ? h("span", { class: "small" }, b.note) : null] : [h("b", {}, "Not affordable as a reliable test"), h("span", { class: "small" }, b.why)]);
+    const propCard = (p, best) => {
+      const form = h("div", { style: "display:contents" });
+      const prep = h("button", { class: "btn btn-primary", type: "button" }, "Prepare this test");
+      prep.addEventListener("click", () => {
+        prep.remove();
+        const ctl = h("select", { id: "pc-" + p.kind }, h("option", { value: "" }, "Choose the control…"), camps.map((c) => h("option", { value: c.campaign_id, selected: c.campaign_id === p.control_campaign || null }, (c.name || c.campaign_id) + (c.status === "ACTIVE" ? " (live)" : ""))));
+        const msg = h("textarea", { id: "pm-" + p.kind, placeholder: "Leave empty and ProAds drafts it from the evidence" });
+        const hd = h("input", { id: "ph-" + p.kind, placeholder: "Leave empty to keep the control's headline" });
+        const ln = h("input", { id: "pl-" + p.kind, placeholder: p.kind === "landing" ? "New landing page link (required)" : "Leave empty to keep the same page" });
+        const go_ = h("button", { class: "btn btn-primary", type: "button" }, "Show me the exact changes");
+        go_.addEventListener("click", async () => {
+          go_.disabled = true;
+          try {
+            await post("/autopilot/" + cid() + "/prepare", { key: p.key, control_campaign: ctl.value, change: { message: msg.value, name: hd.value, link: ln.value } });
+            toast("Prepared. Review the changes below; nothing is in Meta yet."); viewExperiments();
+          } catch (e) { if (e.message !== "signed out") toast(e.message); go_.disabled = false; }
+        });
+        form.replaceChildren(h("label", { class: "f", for: "pc-" + p.kind }, "Control campaign (stays exactly as it is)", ctl),
+          h("label", { class: "f", for: "pm-" + p.kind }, "Variant ad text (the one change)", msg),
+          h("div", { class: "grid2" }, h("label", { class: "f", for: "ph-" + p.kind }, "Variant headline", hd), h("label", { class: "f", for: "pl-" + p.kind }, "Variant landing page", ln)), go_);
+      });
+      const rej = h("button", { class: "btn btn-ghost", type: "button" }, "Reject");
+      rej.addEventListener("click", async () => { try { await post("/autopilot/" + cid() + "/dismiss", { key: p.key }); toast("Rejected. ProAds won't propose it again."); viewExperiments(); } catch (e) { if (e.message !== "signed out") toast(e.message); } });
+      return h("div", { class: "adset", style: "gap:8px" + (best ? ";border:1px solid var(--violet)" : "") },
+        h("div", { class: "between", style: "gap:8px;flex-wrap:wrap" }, h("div", { style: "display:flex;gap:8px;align-items:center" }, h("span", { class: "badge b-neutral" }, p.label), best ? h("span", { class: "badge b-measured" }, "Run this first") : null), h("span", { class: "small" }, "from " + p.source)),
+        h("b", {}, p.change), h("span", { style: "font-size:14px" }, h("b", {}, "Why: "), p.why),
+        h("span", { style: "font-size:14px" }, h("b", {}, "Expected: "), p.benefit_text), p.tried ? h("span", { class: "small" }, p.tried) : null,
+        h("span", { class: "small" }, h("b", {}, "Stays the same: "), p.unchanged.join(", ") + "."),
+        h("span", { class: "small" }, h("b", {}, "Measured by: "), p.measure),
+        p.not_a_split_test ? h("span", { class: "small" }, "This is a structure fix: apply it in Ads Manager; no split test needed.") : budgetBlock(p.budget),
+        form, p.not_a_split_test ? h("div", { style: "display:flex;gap:8px" }, rej) : h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, prep, rej));
+    };
+    const nb = d.next_best;
+    if (props.length) {
+      const best = props.find((p) => nb && p.key === nb.key) || props[0];
+      blocks.push(h("section", { class: "card", style: "background: var(--violet-card); border-color: var(--violet-edge)" },
+        h("span", { class: "label" }, "Next best experiment"),
+        h("h2", { style: "margin:0" }, "You have " + props.length + " possible way" + (props.length > 1 ? "s" : "") + " to improve purchases. Based on your real customer and profit data, this is the one I'd run first:"),
+        h("ul", { class: "list" }, (nb ? nb.reasons : []).map((r) => h("li", {}, r))),
+        propCard(best, true)));
+      const rest = props.filter((p) => p !== best);
+      if (rest.length) blocks.push(h("section", { class: "card" }, h("h2", {}, "Other options"), rest.map((p) => propCard(p, false))));
+    } else {
+      blocks.push(h("section", { class: "card" }, h("h2", {}, "No experiment worth running yet"),
+        h("p", { class: "sub", style: "margin:0" }, d.buyers_ready === false ? "ProAds needs more customer history (with emails or phones) and campaign results to find an opportunity with real evidence behind it." : "No opportunity with enough evidence right now. ProAds won't invent one."),
+        budgetBlock(d.sizing)));
+    }
+    // experiments in progress and history
+    const ex = d.experiments || [];
+    if (ex.length) {
+      const ST = { proposed: ["b-neutral", "Waiting for your approval"], approved: ["b-neutral", "Ready in Meta (paused)"], running: ["b-measured", "Running"], decided: ["b-neutral", "Decided"] };
+      blocks.push(h("section", { class: "card" }, h("h2", {}, "Your experiments"), ex.map((e) => {
+        const plan = e.plan || {};
+        const box = h("div", { class: "adset", style: "gap:8px" },
+          h("div", { class: "between", style: "gap:8px" }, h("b", {}, (plan.proposal && plan.proposal.change) || e.hypothesis),
+            h("span", { class: "badge " + (ST[e.status] || ST.decided)[0] }, e.status === "decided" ? (e.decision === "keep" ? "Kept" : e.decision === "reject" ? "Rejected" : "Inconclusive") : (ST[e.status] || ST.decided)[1])));
+        if (plan.preview && e.status !== "decided") box.append(h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Ad", "What changes", "Control (unchanged)", "Variant"].map((t) => h("th", {}, t)))),
+          h("tbody", {}, plan.preview.map((r) => h("tr", {}, h("td", {}, r.ad), h("td", {}, r.field), h("td", { dir: "auto" }, r.control || "–"), h("td", { dir: "auto", style: "font-weight:600" }, r.variant)))))),
+          h("span", { class: "small" }, "Everything else is copied exactly from the control, including its budget (" + (plan.control ? m(plan.control.daily_budget) + " a day" : "unchanged") + "). A separate tracking tag on the variant lets ProAds tell the two sides' real sales apart."));
+        const confirmRow = (label, url, done) => {
+          const ok = h("input", { type: "checkbox", id: "ok-" + e.id + url.length, style: "width:20px;min-height:20px" });
+          const btn = h("button", { class: "btn btn-primary", type: "button", disabled: true }, label);
+          ok.addEventListener("change", () => { btn.disabled = !ok.checked; });
+          btn.addEventListener("click", async () => { btn.disabled = true; try { await post("/autopilot/" + cid() + "/experiments/" + e.id + url, { confirm: true }); toast(done); viewExperiments(); } catch (er) { if (er.message !== "signed out") toast(er.message); btn.disabled = false; } });
+          return [ok, btn];
+        };
+        if (e.status === "proposed") {
+          const [ok, btn] = confirmRow("Approve: create it in Meta, paused", "/approve", "Created in Meta, paused, with Meta's A/B test. Start it when ready.");
+          box.append(h("label", { for: ok.id, style: "display:flex;gap:10px;align-items:center;font-size:14px" }, ok, "I approve creating this variant in my ad account. It stays paused; nothing is spent yet."), btn);
+        }
+        if (e.status === "approved") {
+          const [ok, btn] = confirmRow("Start the test", "/start", "The variant is live. ProAds is watching real sales and refunds.");
+          box.append(h("span", { class: "small" }, "Variant campaign " + e.variant_campaign + (e.split_test_id ? " · Meta A/B test " + e.split_test_id : "")),
+            h("label", { for: ok.id, style: "display:flex;gap:10px;align-items:center;font-size:14px" }, ok, "I approve switching the variant on. Its budget is the control's; ProAds never raises it."), btn);
+        }
+        if (e.result && e.result.preliminary) {
+          const r = e.result;
+          const tbl = (title, A) => h("div", { style: "display:flex;flex-direction:column;gap:6px;flex:1 1 300px;min-width:0" }, h("b", { style: "font-size:14px" }, title),
+            h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["", "Spend", "Real purchases", "Net value"].map((t) => h("th", {}, t)))),
+              h("tbody", {}, ["control", "variant"].map((k) => h("tr", {}, h("td", {}, k === "control" ? "Control" : "Variant"), h("td", {}, m(A[k].spend)), h("td", {}, fmt.format(A[k].purchases)), h("td", {}, m(A[k].value))))))),
+            A.interval ? h("span", { class: "small" }, "Variant − control per " + cur + " spent: " + A.interval[0].toFixed(2) + " to " + A.interval[1].toFixed(2) + " (95% range)") : null);
+          box.append(h("div", { class: "row", style: "align-items:flex-start" }, tbl("Settled (decides)", r.settled), tbl("Early (provisional)", r.preliminary)),
+            h("span", { style: "font-size:14px" }, r.why));
+          if (r.loss_alert) {
+            const [ok, btn] = confirmRow("Pause the variant", "/pause-variant", "Variant paused.");
+            box.append(h("div", { class: "result err" }, h("span", {}, "The variant has lost about " + m(r.loss_so_far) + ", past the agreed limit of " + m(e.design.max_acceptable_loss) + ". ProAds recommends pausing it.")),
+              h("label", { for: ok.id, style: "display:flex;gap:10px;align-items:center;font-size:14px" }, ok, "I approve pausing the variant"), btn);
+          }
+        }
+        if (e.status === "running") {
+          const sugg = e.result && e.result.suggested;
+          box.append(h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, ["keep", "reject", "inconclusive"].map((dec) =>
+            h("button", { class: "btn " + (sugg === dec ? "btn-primary" : "btn-ghost"), type: "button", onclick: async () => { try { await post("/buyers/" + cid() + "/experiments/" + e.id + "/decide", { decision: dec }); viewExperiments(); } catch (er) { if (er.message !== "signed out") toast(er.message); } } },
+              (dec === "keep" ? "Keep the change" : dec === "reject" ? "Reject it" : "Inconclusive") + (sugg === dec ? " (ProAds' verdict)" : "")))));
+        }
+        if (e.status === "decided") box.append(h("span", { class: "small" }, (e.note ? e.note + ". " : "") + (e.decision === "keep" ? "The variant is your new baseline; ProAds builds the next test on it." : e.decision === "reject" ? "ProAds won't propose this again." : "Can be retried only with a bigger budget.")));
+        return box;
+      })));
+    }
+    blocks.push(h("p", { class: "small", style: "margin:0" }, "Safety: ProAds never raises a budget, never publishes or switches anything on without your approval, never calls a winner on provisional (unsettled) sales, shows no confidence when there are too few purchases, and never puts a campaign in two tests at once."));
+    root.replaceChildren(layout("#/experiments", blocks));
+  }
+
   // ---------- Buyer Quality Intelligence ----------
   function checkList(checks) {
     return h("div", { class: "adset", style: "gap:6px;background:var(--card)" }, h("b", { style: "font-size:14px" }, "Is it a fair test?"),
@@ -2549,7 +2671,7 @@ main{background:transparent}
   }
 
   // ---------- router ----------
-  const VIEWS = { "#/platforms": viewPlatforms, "#/home": viewHome, "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling, "#/competitors": viewCompetitors, "#/engines": viewEngines, "#/learning": viewLearning, "#/buyers": viewBuyers };
+  const VIEWS = { "#/platforms": viewPlatforms, "#/home": viewHome, "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling, "#/competitors": viewCompetitors, "#/engines": viewEngines, "#/learning": viewLearning, "#/buyers": viewBuyers, "#/experiments": viewExperiments };
   function go(hash) { if (location.hash !== hash) location.hash = hash; else route(); }
   async function route() {
     const [path, query] = location.hash.split("?");
