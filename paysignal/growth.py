@@ -93,10 +93,15 @@ def send(event: dict, http=None) -> dict:
         return {"error": str(e)}
 
 
-def send_later(event: dict, http=None, sent: Optional[list] = None) -> None:
-    """Fire and forget, so a slow Meta never slows the visitor down."""
+def send_later(event: dict, http=None, sent: Optional[list] = None, on_done=None) -> None:
+    """Fire and forget, so a slow Meta never slows the visitor down. on_done(result) records the outcome."""
     def run():
         result = send(event, http)
+        if on_done is not None:
+            try:
+                on_done(result)
+            except Exception as e:
+                log.warning("recording Meta delivery failed: %s", e)
         if sent is not None:
             sent.append((event, result))
     threading.Thread(target=run, daemon=True, name="meta-growth-event").start()

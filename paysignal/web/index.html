@@ -1915,14 +1915,45 @@ main{background:transparent}
       h("p", { class: "sub" }, "Meta learns who buys from the purchases it receives. This page shows what reached Meta, how well Meta can match it, and what's slowing your campaigns' learning."));
     root.replaceChildren(layout("#/learning", [head, loading("Checking with Meta…")]));
     let d;
-    try { d = await api("/learning/" + cid()); } catch (e) { if (e.message !== "signed out") root.replaceChildren(layout("#/learning", [head, errorCard(e.message)])); return; }
+    let dv = null;
+    try { [d, dv] = await Promise.all([api("/learning/" + cid()), api("/delivery/" + cid()).catch(() => null)]); } catch (e) { if (e.message !== "signed out") root.replaceChildren(layout("#/learning", [head, errorCard(e.message)])); return; }
     const sg = d.signals || {};
     const ago = (t) => { if (!t) return "never"; const m = Math.round((Date.now() / 1000 - t) / 60); return m < 1 ? "just now" : m < 60 ? m + " min ago" : m < 1440 ? Math.round(m / 60) + " h ago" : Math.round(m / 1440) + " days ago"; };
     const k = (label, v, note, color) => h("div", { class: "ek" }, h("span", { class: "label" }, label), h("b", { style: color ? "color:" + color : "" }, v), note ? h("span", { class: "small" }, note) : null);
     const blocks = [head];
+    const alertBox = (a) => h("div", { class: a.level === "bad" ? "result err" : "result", role: a.level === "bad" ? "alert" : null },
+      h("span", {}, h("b", {}, a.text), a.fix ? h("span", { style: "display:block;margin-top:4px" }, "Fix: " + a.fix) : null));
     if (d.admin) {
-      blocks.push(h("div", { class: "result" }, h("span", {}, "Your own sign-ups and active users are sent to Meta by ProAds' sign-up tracking (CompleteRegistration and StartTrial). Below is how Meta is learning on your campaigns.")));
+      if (dv) {
+        const hh = dv.health, rc = dv.reconciliation;
+        (hh.alerts || []).forEach((a) => blocks.push(alertBox(a)));
+        if (!dv.configured) blocks.push(alertBox({ level: "bad", text: "ProAds can't send events: PROADS_META_DATASET_ID or PROADS_META_TOKEN is missing in Render." }));
+        if (dv.test_mode) blocks.push(alertBox({ level: "bad", text: "Test mode is on (PROADS_META_TEST_CODE). Meta treats every event as a test and won't use them for your ads.", fix: "Delete PROADS_META_TEST_CODE in Render when you've finished testing." }));
+        const label = { CompleteRegistration: "Sign-ups", StartTrial: "Active users", Purchase: "First payments", Refund: "Refunds" };
+        const ev = Object.entries(hh.by_event || {});
+        blocks.push(h("section", { class: "card estrip" },
+          h("div", { class: "elead" }, h("span", { class: "label" }, "Your events accepted by Meta · 7 days"),
+            h("b", { class: "ebig" }, fmt.format(hh.accepted || 0) + (hh.total ? " / " + fmt.format(hh.total) : "")),
+            h("span", { class: "badge " + (hh.healthy ? "b-measured" : ""), style: "align-self:flex-start" + (hh.healthy ? "" : ";background:var(--loss-bg);color:var(--loss-txt)") },
+              hh.healthy ? (hh.total ? "Delivering" : "Waiting for first event") : "Problem")),
+          ...ev.map(([n, c]) => k(label[n] || n, fmt.format(c.accepted || 0) + " of " + fmt.format(c.total), [c.retrying || c.sending ? (c.retrying || 0) + (c.sending || 0) + " retrying" : "", c.rejected ? c.rejected + " refused" : "", c.expired ? c.expired + " too old" : "", c.recovered ? c.recovered + " recovered after a retry" : ""].filter(Boolean).join(" · ") || "all accepted", c.accepted < c.total ? "var(--amber)" : null)),
+          k("Last accepted", ago(hh.last_accepted), dv.dataset ? "dataset " + dv.dataset : "")));
+        const st = { accepted: ["b-measured", "Accepted"], retrying: ["", "Retrying"], sending: ["", "Sending"], rejected: ["", "Refused"], expired: ["", "Too old"], missing: ["", "Never sent"], untracked: ["b-neutral", "Before tracking"], no_consent: ["b-neutral", "No ad consent"] };
+        const rows = (rc.rows || []).slice().reverse().slice(0, 12).map((r) => h("tr", {},
+          h("td", { style: "padding:6px 8px;font-size:13px" }, label[r.event] || r.event),
+          h("td", { style: "padding:6px 8px;font-size:13px" }, r.who),
+          h("td", { style: "padding:6px 8px;font-size:13px" }, r.value != null ? money0(r.value, r.currency) : ""),
+          h("td", { style: "padding:6px 8px" }, h("span", { class: "badge " + st[r.status][0], style: st[r.status][0] ? "" : "background:var(--loss-bg);color:var(--loss-txt)" }, st[r.status][1]))));
+        blocks.push(h("section", { class: "card", style: "display:flex;flex-direction:column;gap:10px" },
+          h("div", { class: "between" }, h("h2", {}, "Did every eligible event reach Meta?"),
+            h("span", { class: "badge b-neutral" }, fmt.format(rc.accepted) + " of " + fmt.format(rc.eligible) + " accepted")),
+          rows.length ? h("div", { style: "overflow-x:auto" }, h("table", { style: "width:100%;border-collapse:collapse" }, h("tbody", {}, rows)))
+            : h("p", { class: "sub", style: "margin:0;font-size:14px" }, "No sign-ups or first payments in the last 7 days."),
+          h("p", { class: "small", style: "margin:0" }, dv.note + " Failed sends are retried for up to 6.5 days with the same event ID, so Meta never counts one twice."),
+          hh.match_keys && hh.match_keys.length ? h("p", { class: "small", style: "margin:0" }, "Match keys sent: " + hh.match_keys.map((m) => m.label + " " + Math.round(m.share * 100) + "%").join(" · ")) : null));
+      }
     } else {
+      if (dv) (dv.alerts || []).filter((a) => a.level === "bad").forEach((a) => blocks.push(alertBox(a)));
       const mode = sg.mode === "live" ? ["b-measured", "Sending live"] : sg.mode === "practice" ? ["b-neutral", "Practice mode: nothing sent"] : ["b-neutral", "Nothing sent yet"];
       const acc = sg.sent ? sg.accepted / sg.sent : null;
       blocks.push(h("section", { class: "card estrip" },
@@ -2651,8 +2682,11 @@ main{background:transparent}
         d.campaigns.length ? d.campaigns.map((x) => h("div", { class: "between", style: "font-size:14px;gap:8px" }, h("span", {}, x.name || x.campaign_id),
           h("span", { class: "badge " + (x.status === "ACTIVE" ? "b-measured" : "b-neutral") }, x.status === "ACTIVE" ? "Live" : "Paused"))) :
           h("p", { class: "sub", style: "margin:0;font-size:14px" }, "None yet."));
-      const [adsBox, acq] = await Promise.all([adsSection(homePeriod), api("/acquisition/" + cid()).catch(() => null)]);
-      body.replaceChildren(strip, adsBox, acquisitionCard(acq),
+      const [adsBox, acq, dv] = await Promise.all([adsSection(homePeriod), api("/acquisition/" + cid()).catch(() => null), api("/delivery/" + cid()).catch(() => null)]);
+      const bad = dv ? ((dv.health ? dv.health.alerts : dv.alerts) || []).filter((a) => (a.level || "bad") === "bad") : [];
+      const deliveryNote = bad.length ? h("div", { class: "result err", role: "alert" }, h("span", {}, h("b", {}, "Events aren't reaching Meta. "), bad[0].text + " ",
+        h("a", { href: "#/learning" }, "See what to fix"))) : null;
+      body.replaceChildren(...[deliveryNote, strip, adsBox, acquisitionCard(acq)].filter(Boolean),
         h("section", { class: "card", "aria-label": "Chart" }, h("div", { class: "between" }, h("h2", {}, label + " over time"),
           h("div", { style: "display:flex;gap:14px" }, h("span", { class: "key" }, h("i"), "This period"), h("span", { class: "key" }, h("i", { class: "prev" }), "Previous period"))), chartHost),
         h("div", { class: "row", style: "align-items:flex-start" }, h("div", { style: "flex:1 1 380px;display:flex;flex-direction:column;gap:24px;min-width:0" }, newest),

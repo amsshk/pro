@@ -50,7 +50,7 @@ from .attribution import make_promo_code, tag_link
 from .dashboard import build_dashboard, _realized
 from .ads_report import build_report
 from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, business_context
-from . import autopilot, billing, buyers, competitors, engines, forecast, leaks, learning, meta_capi, proads_revenue, purchase_funnel, signals, ledger, meta_ads, meta_connect, settlement
+from . import autopilot, billing, buyers, competitors, engines, forecast, leaks, learning, meta_capi, proads_revenue, purchase_funnel, delivery, signals, ledger, meta_ads, meta_connect, settlement
 from .connectors.stripe import verify_signature as stripe_signature_ok
 from .audit import audit_summary, audit_text, build_audit
 from .importers import xlsx_to_csv, import_auto
@@ -97,7 +97,7 @@ class App:
     def __init__(self, clients: dict, db_path: str):
         self.clients = clients
         self.store = PaymentStore(db_path)
-        self.lock = threading.Lock()          # one writer at a time
+        self.lock = threading.RLock()         # one writer at a time; re-entrant so helpers can be called with it held
         self.engines: dict[str, Engine] = {}
         self.posts: dict[str, list] = {}
         self.trained_at: dict[str, float] = {}
@@ -126,10 +126,25 @@ class App:
         self.experiments = buyers.ExperimentStore(self.store.db)
         self.revenue = proads_revenue.RevenueStore(self.store.db)
         self.funnel = purchase_funnel.FunnelStore(self.store.db)
+        self.delivery = delivery.DeliveryLog(self.store.db)
         self._nudged: dict = {}
         self.stripe_http = None                # set in tests
         self.billing_sync = False              # tests: add invoice fees inline
         self.ads_cache: dict = {}              # (client, period) -> (time, report)
+
+    def emit_growth(self, event: dict) -> bool:
+        """Send one of ProAds' own events to Meta, recorded so a failure is seen and retried, never lost silently."""
+        with self.lock:
+            if not self.delivery.queued("proads", event):
+                return False                         # already sent or queued: never twice
+
+        def done(result, eid=event["event_id"]):
+            with self.lock:
+                status = self.delivery.result(eid, result)
+            if status != "accepted":
+                log.warning("ProAds event %s not accepted by Meta yet (%s)", eid, status)
+        growth.send_later(event, self.growth_http, self.growth_sent, on_done=done)
+        return True
 
     def known(self, client_id: str) -> bool:
         return client_id in self.clients or self.accounts.get(client_id) is not None
@@ -165,12 +180,8 @@ class App:
         c = self.meta_conns.get(client_id)
         if c and meta_connect.public_view(c)["ready"]:
             def dead(cid=client_id):
-                got = self.lock.acquire(timeout=2)     # may be called while this thread already holds the lock
-                try:
+                with self.lock:
                     self.meta_conns.mark_expired(cid)
-                finally:
-                    if got:
-                        self.lock.release()
                 log.warning("Facebook session for %s was invalidated: marked for reconnect", cid)
             return {**meta_connect.ads_settings(c, meta_connect.decrypt(c["token"])), "on_token_invalid": dead}
         if is_admin and not meta_ads.missing():
@@ -188,8 +199,7 @@ class App:
             first = self.accounts.mark_activated(client_id)
         ctx = growth.load_ctx(acct["ads_ctx"])
         if first and ctx:
-            growth.send_later(growth.build_event("StartTrial", acct, ctx, f"activate:{client_id}"),
-                              self.growth_http, self.growth_sent)
+            self.emit_growth(growth.build_event("StartTrial", acct, ctx, f"activate:{client_id}"))
 
     def engine(self, client_id: str) -> Engine:
         if client_id not in self.engines:
@@ -1718,8 +1728,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         state.signup_limiter.fail(ip_key)              # counts sign-ups per connection
         event_id = f"signup:{cid}"
         if ctx:
-            growth.send_later(growth.build_event("CompleteRegistration", state.accounts.get(cid), ctx, event_id),
-                              state.growth_http, state.growth_sent)
+            state.emit_growth(growth.build_event("CompleteRegistration", state.accounts.get(cid), ctx, event_id))
         log.info("new account %s", cid)
         return {"client_id": cid, "token": token, "event_id": event_id, "name": clean["name"]}
 
@@ -2235,7 +2244,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             ev = growth.build_event("Purchase", acct, ctx, f"proads:first:{inv_id}", value=row["amount"], currency=currency,
                                     custom={"content_name": f"ProAds {row['tier'].title()}", "proads_source": "stripe_first_payment"},
                                     event_time=paid_at if paid_at > time.time() - 6 * 86400 else None)
-            growth.send_later(ev, state.growth_http, state.growth_sent)
+            state.emit_growth(ev)
             with state.lock:
                 state.store.db.execute("UPDATE proads_revenue SET sent_to_meta=1 WHERE invoice_id=?", (inv_id,))
                 state.store.db.commit()
@@ -2259,9 +2268,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if rec["kind"] == "first":
             ctx = growth.load_ctx(acct.get("ads_ctx"))
             if ctx:
-                growth.send_later(growth.build_event("Refund", acct, ctx, f"proads:{ext_id}", value=amount,
-                                                     currency=rec["currency"], custom={"proads_source": why}),
-                                  state.growth_http, state.growth_sent)
+                state.emit_growth(growth.build_event("Refund", acct, ctx, f"proads:{ext_id}", value=amount,
+                                                     currency=rec["currency"], custom={"proads_source": why}))
 
     def record_proads_refund(charge: dict) -> Optional[dict]:
         """charge.refunded carries the running total refunded: record only the increase, once."""
@@ -2717,6 +2725,110 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                     state.fees.mark_rechecked(p["id"])
     state.recheck_billed_fees = recheck_billed_fees
 
+    # ---------------- Purchase Event Reliability ----------------
+    def retry_meta_events() -> None:
+        """Re-send ProAds' own events that didn't reach Meta (same event_id, so Meta never counts one twice)."""
+        with state.lock:
+            due = state.delivery.due()
+        for eid, ev in due:
+            res = growth.send(ev, state.growth_http)
+            with state.lock:
+                status = state.delivery.result(eid, res)
+            if state.growth_sent is not None:
+                state.growth_sent.append((ev, res))
+            log.info("retried Meta event %s: %s", eid, status)
+        delivery_alert()
+    state.retry_meta_events = retry_meta_events
+
+    def delivery_alert(now: Optional[int] = None) -> Optional[str]:
+        """Email once a day while ProAds' own events are failing for over 30 minutes."""
+        now = int(now or time.time())
+        with state.lock:
+            h = state.delivery.health("proads", 7, now)
+            oldest = state.store.db.execute("SELECT MIN(created_at) FROM meta_delivery WHERE client_id='proads'"
+                                            " AND status IN ('retrying','sending','rejected','expired') AND created_at>=?",
+                                            (now - 7 * 86400,)).fetchone()[0]
+            last = state.store.db.execute("SELECT value FROM funnel_meta WHERE key='delivery_alert_at'").fetchone()
+        if h["healthy"] or not oldest or now - oldest < 1800 or (last and now - int(last[0]) < 86400):
+            return None
+        to = os.environ.get("PROADS_ALERT_EMAIL") or os.environ.get("PROADS_CONTACT_EMAIL")
+        text = ("ProAds' events are not reaching Meta.\n\n" + "\n".join(
+            f"- {a['text']}" + (f"\n  Fix: {a['fix']}" if a.get("fix") else "") for a in h["alerts"]) +
+            "\n\nDetails: Meta learning page in ProAds.")
+        if to and mailer.available():
+            threading.Thread(target=mailer.send, daemon=True, args=(to, "ProAds: events not reaching Meta", text)).start()
+        log.warning("event delivery alert: %s", text.replace("\n", " "))
+        with state.lock:
+            state.store.db.execute("INSERT INTO funnel_meta (key, value) VALUES ('delivery_alert_at', ?)"
+                                   " ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(now),))
+            state.store.db.commit()
+        return text
+    state.delivery_alert = delivery_alert
+
+    def proads_delivery() -> dict:
+        """ProAds' own events: health, plus every eligible sign-up and first payment checked against Meta's answer."""
+        with state.lock:
+            h = state.delivery.health("proads", 7)
+            since = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+            signups = state.store.db.execute("SELECT client_id, ads_ctx FROM accounts WHERE created_at>=?", (since,)).fetchall()
+            firsts = [r for r in state.revenue.all() if r["kind"] == "first" and r["paid_at"] >= time.time() - 7 * 86400]
+            started = state.store.db.execute("SELECT MIN(created_at) FROM meta_delivery").fetchone()[0]
+
+            def check(event_id: str) -> str:
+                d = state.delivery.status_of(event_id)
+                if d:
+                    return d["status"]
+                return "untracked" if not started else "missing"
+            rows = []
+            for cid, ctx in signups:
+                if is_admin(cid):
+                    continue
+                rows.append({"event": "CompleteRegistration", "who": cid,
+                             "status": check(f"signup:{cid}") if ctx else "no_consent"})
+            for r in firsts:
+                acct = state.accounts.get(r["client_id"]) or {}
+                rows.append({"event": "Purchase", "who": r["client_id"], "value": r["amount"], "currency": r["currency"],
+                             "status": check(f"proads:first:{r['invoice_id']}") if acct.get("ads_ctx") else "no_consent"})
+        eligible = [x for x in rows if x["status"] != "no_consent"]
+        tally = {k: sum(1 for x in eligible if x["status"] == k) for k in ("accepted", "retrying", "sending", "rejected", "expired", "missing", "untracked")}
+        return {"health": h, "reconciliation": {"eligible": len(eligible), "no_consent": len(rows) - len(eligible), **tally,
+                                                "rows": rows[-50:]},
+                "configured": bool(os.environ.get("PROADS_META_DATASET_ID") and os.environ.get("PROADS_META_TOKEN")),
+                "dataset": os.environ.get("PROADS_META_DATASET_ID") or None,
+                "test_mode": bool(os.environ.get("PROADS_META_TEST_CODE")),
+                "note": "Eligible = the person accepted ad cookies. 'Missing' means ProAds never tried to send it; "
+                        "'untracked' means it happened before delivery tracking started."}
+
+    def client_delivery(client_id: str) -> dict:
+        """A client's purchase events: what reached Meta, what's stuck, and why."""
+        cfg = state.config(client_id)
+        meta = cfg.get("meta", {})
+        with state.lock:
+            sig = state.signals.summary(client_id)
+            stuck = [p for p in state.engine(client_id).store.unsent(client_id)
+                     if p.occurred_at.timestamp() < time.time() - 2 * 3600 and p.occurred_at.timestamp() > time.time() - 7 * 86400]
+            conn = state.meta_conns.get(client_id)
+        alerts = []
+        if conn and not meta_connect.public_view(conn)["ready"]:
+            alerts.append({"level": "bad", "text": "Your Facebook connection has expired or was signed out by Facebook, so no "
+                           "sales are reaching Meta.", "fix": "Reconnect Facebook in Connect & upload."})
+        if meta.get("live") and stuck:
+            alerts.append({"level": "bad", "text": f"{len(stuck)} paid order{'s' if len(stuck) != 1 else ''} older than 2 hours "
+                           "haven't been sent to Meta yet.", "fix": (sig.get("last_error") or {}).get("message")})
+        err = sig.get("last_error")
+        if err and (not sig.get("last_accepted_at") or err["at"] > sig["last_accepted_at"]):
+            alerts.append({"level": "bad", "text": "Meta refused the last delivery of your sales.", "fix": err["message"]})
+        if not meta.get("live"):
+            alerts.append({"level": "info", "text": "Sales are not being sent to Meta yet (practice mode or no Pixel chosen).",
+                           "fix": "Choose your Pixel and switch sending on in Meta learning."})
+        return {"signals": sig, "stuck": len(stuck), "alerts": alerts, "healthy": not [a for a in alerts if a["level"] == "bad"]}
+
+    @flask.get("/delivery/<client_id>")
+    def delivery_view(client_id):
+        state.require_key(client_id)
+        return proads_delivery() if is_admin(client_id) else client_delivery(client_id)
+    state.proads_delivery = proads_delivery
+
     # ---------------- Facebook & Instagram connection (each client's own) ----------------
     def meta_back(result, message=""):
         q = urlencode({"meta": result, **({"message": message} if message else {})})
@@ -3115,7 +3227,7 @@ def _start_worker(state: App, every: int) -> None:
                     state.enforce_ads_trials()
             except Exception:
                 log.exception("ad test check failed")
-            for job in ("sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees"):
+            for job in ("retry_meta_events", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees"):
                 try:
                     if getattr(state, job, None):
                         getattr(state, job)()
