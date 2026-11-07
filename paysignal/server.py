@@ -50,7 +50,7 @@ from .attribution import make_promo_code, tag_link
 from .dashboard import build_dashboard, _realized
 from .ads_report import build_report
 from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, business_context
-from . import billing, competitors, engines, forecast, leaks, learning, signals, ledger, meta_ads, meta_connect, settlement
+from . import billing, competitors, engines, forecast, leaks, learning, meta_capi, signals, ledger, meta_ads, meta_connect, settlement
 from .connectors.stripe import verify_signature as stripe_signature_ok
 from .audit import audit_summary, audit_text, build_audit
 from .importers import xlsx_to_csv, import_auto
@@ -372,7 +372,8 @@ class App:
             self.ensure_trained(client_id)
             results = self.engine(client_id).push_to_meta(
                 dataset_id=meta.get("dataset_id", ""), access_token=meta.get("access_token", ""),
-                dry_run=not live, test_event_code=meta.get("test_event_code"))
+                dry_run=not live, test_event_code=meta.get("test_event_code"),
+                value_mode=meta.get("value_mode") or self.signals.value_mode(client_id))
         with self.lock:
             self.signals.log(client_id, "live" if live else "practice", results)
         batches = [r for r in results if not r.get("report")]
@@ -771,7 +772,11 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             launches = state.launches.list(client_id)
             econ_in = state.economics.get(client_id)
             sent7 = state.signals.sent_purchases_since(client_id, int(time.time()) - 7 * 86400)
+        with state.lock:
+            mode = state.signals.value_mode(client_id)
+            costs_known = any(p.cost_of_goods() is not None for p in state.engine(client_id).store.purchases(client_id)[-200:])
         out = {"signals": sig, "pixel": meta.get("dataset_id") or None, "live": bool(meta.get("live")),
+               "value_mode": mode, "costs_known": costs_known,
                "last_sale_at": int(last_sale.timestamp()) if last_sale else None, "admin": admin}
         hit = state.ads_cache.get(("learning", client_id))
         if hit and time.time() - hit[0] < 600 and not request.args.get("fresh"):
@@ -814,6 +819,17 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                                            "advice": signals.learning_advice(sets, target, kind)})
         state.ads_cache[("learning", client_id)] = (time.time(), extra)
         return {**out, **extra}
+
+    @flask.post("/learning/<client_id>/settings")
+    def learning_settings(client_id):
+        """What a Purchase's value means for this business: amount paid (default) or actual profit on the order."""
+        state.require_key(client_id)
+        mode = (request.get_json(silent=True) or {}).get("value_mode")
+        if mode not in meta_capi.VALUE_MODES:
+            abort(400, "value_mode must be 'amount' or 'profit'")
+        with state.lock:
+            state.signals.set_value_mode(client_id, mode)
+        return {"value_mode": mode}
 
     @flask.get("/leaks/<client_id>")
     def leaks_endpoint(client_id):

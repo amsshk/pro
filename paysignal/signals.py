@@ -30,6 +30,16 @@ class SignalLog:
     def __init__(self, db):
         self.db = db
         self.db.execute(self.SCHEMA)
+        self.db.execute("CREATE TABLE IF NOT EXISTS signal_settings (client_id TEXT PRIMARY KEY, value_mode TEXT NOT NULL)")
+        self.db.commit()
+
+    def value_mode(self, client_id: str) -> str:
+        r = self.db.execute("SELECT value_mode FROM signal_settings WHERE client_id=?", (client_id,)).fetchone()
+        return r[0] if r else "amount"
+
+    def set_value_mode(self, client_id: str, mode: str) -> None:
+        self.db.execute("INSERT INTO signal_settings (client_id, value_mode) VALUES (?,?) ON CONFLICT(client_id)"
+                        " DO UPDATE SET value_mode=excluded.value_mode", (client_id, mode))
         self.db.commit()
 
     def log(self, client_id: str, mode: str, results: list[dict]) -> Optional[dict]:
@@ -81,6 +91,7 @@ class SignalLog:
 
     def forget(self, client_id: str) -> None:
         self.db.execute("DELETE FROM capi_log WHERE client_id=?", (client_id,))
+        self.db.execute("DELETE FROM signal_settings WHERE client_id=?", (client_id,))
         self.db.commit()
 
 

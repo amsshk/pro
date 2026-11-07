@@ -108,3 +108,32 @@ def test_learning_endpoint_and_instant_send(tmp_path, monkeypatch):
     st.ingest("pro", [Payment("pro", "stripe", "ch_2", "purchase", 100.0, "AED", NOW, email="a@b.c")])
     time.sleep(0.3)
     assert calls == ["pro"]                                               # sent at once, and not hammered
+
+
+def test_purchase_value_is_what_was_paid_unless_profit_is_chosen():
+    from paysignal.models import LineItem
+    st = Store()
+    eng = Engine("glow", st)
+    paid = Payment("glow", "shopify", "o1", "purchase", 300.0, "AED", NOW, email="a@b.c", event_source_url="https://x",
+                   items=[LineItem("s", "Serum", 1, 300.0, 120.0)], fbc="fb.1.1.abc")
+    upload = Payment("glow", "upload", "u1", "purchase", 200.0, "AED", NOW, email="b@b.c")
+    st.add(paid); st.add(upload)
+    ev = {e["custom_data"]["order_id"]: e for e in eng.push_to_meta("px", "tok", dry_run=True)[0]["payload"]["data"]}
+    assert ev["o1"]["custom_data"]["value"] == 300.0 and ev["o1"]["custom_data"]["proads_value_basis"] == "amount_paid"
+    assert "predicted_return_risk" not in ev["o1"]["custom_data"]                # no predictions to Meta
+    assert ev["o1"]["user_data"]["fbc"] == "fb.1.1.abc" and ev["o1"]["action_source"] == "website"
+    assert ev["u1"]["action_source"] == "other" and ev["u1"]["custom_data"]["proads_source"] == "upload"
+    ev = {e["custom_data"]["order_id"]: e for e in eng.push_to_meta("px", "tok", dry_run=True, value_mode="profit")[0]["payload"]["data"]}
+    assert ev["o1"]["custom_data"]["value"] == 180.0 and ev["o1"]["custom_data"]["proads_value_basis"] == "profit"
+    assert ev["u1"]["custom_data"]["value"] == 200.0                            # no known cost: never a guess
+
+
+def test_value_mode_setting(tmp_path):
+    app = create_app({}, str(tmp_path / "x.db"), start_worker=False)
+    c = app.test_client()
+    tok = c.post("/auth/signup", json={"business": "Glow", "email": "o@glow.ae", "password": "first-password-1", "terms": True}).json["token"]
+    h = {"X-API-Key": tok}
+    assert c.get("/learning/glow", headers=h).json["value_mode"] == "amount"
+    assert c.post("/learning/glow/settings", json={"value_mode": "ltv"}, headers=h).status_code == 400
+    assert c.post("/learning/glow/settings", json={"value_mode": "profit"}, headers=h).json["value_mode"] == "profit"
+    assert c.get("/learning/glow", headers=h).json["value_mode"] == "profit"

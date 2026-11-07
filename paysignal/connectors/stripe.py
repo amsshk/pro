@@ -56,7 +56,7 @@ def parse_stripe_event(event: dict, client_id: str) -> list[Payment]:
         utm_source=meta.get("utm_source"), utm_medium=meta.get("utm_medium"),
         utm_campaign=meta.get("utm_campaign"), utm_content=meta.get("utm_content"),
         promo_code=meta.get("promo_code"),
-        fbp=meta.get("fbp"),
+        fbp=meta.get("fbp"), fbc=meta.get("fbc"),
         first_name=(billing.get("name") or "").split(" ")[0] or None,
         last_name=" ".join((billing.get("name") or "").split(" ")[1:]) or None,
         city=(billing.get("address") or {}).get("city"),

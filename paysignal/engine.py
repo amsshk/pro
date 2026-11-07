@@ -36,7 +36,7 @@ class Engine:
         return [meta_capi.build_purchase_event(p, self.scorer.score(p)) for p in source]
 
     def push_to_meta(self, dataset_id: str, access_token: str, dry_run: bool = True,
-                     test_event_code: str | None = None) -> list[dict]:
+                     test_event_code: str | None = None, value_mode: str = "amount") -> list[dict]:
         """Send new purchases (with their real value) and refunds. Returns one result per batch, plus a
         "report" entry with what was skipped and why."""
         pending = self.store.unsent(self.client_id)
@@ -49,7 +49,9 @@ class Engine:
         if not dry_run:
             for p in too_old:
                 self.store.mark_sent(p.client_id, p.source, p.external_id)
-        events = [meta_capi.build_purchase_event(p, self.scorer.score(p)) for p in pending]
+        events = [meta_capi.build_purchase_event(p, self.scorer.score(p), value_mode=value_mode,
+                                                 profit=self.scorer.margin(p) if p.cost_of_goods() is not None else None)
+                  for p in pending]
         events += [meta_capi.build_refund_event(r, self.store.purchase(self.client_id, r.refund_of or "")) for r in refunds]
         sendable = [e for e in events if meta_capi.has_match_key(e)]
         results = meta_capi.send(sendable, dataset_id, access_token,

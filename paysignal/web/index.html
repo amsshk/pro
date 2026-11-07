@@ -1053,7 +1053,7 @@ main{background:transparent}
       card.replaceChildren(head("Facebook & Instagram", "Ready", true),
         h("ul", { class: "list" },
           h("li", {}, "Ads publish to ", h("b", {}, v.ad_account_name || v.ad_account), " from the Page ", h("b", {}, v.page_name || v.page_id)),
-          h("li", {}, v.send_sales ? "Your sales are sent to your Pixel with their real value" : "Sales are not sent to Meta (switched off)"),
+          h("li", {}, v.send_sales ? "Your sales are sent to your Pixel with the amount paid" : "Sales are not sent to Meta (switched off)"),
           left !== null && left < 15 ? h("li", { style: "color: var(--amber-txt)" }, "Access ends in " + Math.max(left, 0) + " days: reconnect before then") : null),
         h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, h("a", { class: "btn btn-primary", href: "#/assistant" }, "Build a campaign"), change, disc), ...(notice ? [notice] : []));
     }
@@ -1569,14 +1569,35 @@ main{background:transparent}
       const mode = sg.mode === "live" ? ["b-measured", "Sending live"] : sg.mode === "practice" ? ["b-neutral", "Practice mode: nothing sent"] : ["b-neutral", "Nothing sent yet"];
       const acc = sg.sent ? sg.accepted / sg.sent : null;
       blocks.push(h("section", { class: "card estrip" },
-        h("div", { class: "elead" }, h("span", { class: "label" }, "Purchases Meta learned from · 7 days"),
+        h("div", { class: "elead" }, h("span", { class: "label" }, "Purchases delivered to Meta · 7 days"),
           h("b", { class: "ebig" }, fmt.format(sg.accepted || 0)),
           h("span", { class: "badge " + mode[0], style: "align-self:flex-start" }, mode[1])),
         k("Sales received", fmt.format(sg.purchases || 0), "verified paid orders"),
-        k("Accepted by Meta", acc == null ? "–" : Math.round(acc * 100) + "%", "last accepted " + ago(sg.last_accepted_at), acc != null && acc < 0.95 ? "var(--amber)" : null),
-        k("Refunds sent", fmt.format(sg.refunds || 0), "so Meta knows who sent things back"),
+        k("Received by Meta", acc == null ? "–" : Math.round(acc * 100) + "%", "last delivery " + ago(sg.last_accepted_at), acc != null && acc < 0.95 ? "var(--amber)" : null),
+        k("Refunds sent", fmt.format(sg.refunds || 0), "as a custom event, for audiences"),
         k("Couldn't be matched", fmt.format(sg.no_identifier || 0), "no email, phone or click ID", sg.no_identifier ? "var(--amber)" : null),
         k("Too old to send", fmt.format(sg.too_old || 0), "Meta only takes the last 7 days")));
+      blocks.push(h("p", { class: "small", style: "margin:-8px 0 0" }, "Received means Meta got the event. It doesn't prove Meta matched the buyer, credited a campaign, or used it to optimise; Meta doesn't report that per event. Refund events don't change Meta's purchase counts; ProAds' own numbers stay the source of truth for refunds."));
+      // what a Purchase is worth
+      const vm = (mode, title, text) => h("label", { class: "adset", style: "flex:1 1 280px;flex-direction:row;gap:12px;cursor:pointer;align-items:flex-start" },
+        h("input", { type: "radio", name: "vmode", value: mode, checked: d.value_mode === mode || null, style: "flex:0 0 18px;width:18px;height:18px;min-height:0;margin:3px 0 0;padding:0",
+          disabled: mode === "profit" && !d.costs_known || null,
+          onchange: async () => { try { await api("/learning/" + cid() + "/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value_mode: mode }) }); toast("Saved. New purchases use this from now on."); } catch (e) { if (e.message !== "signed out") toast(e.message); } } }),
+        h("div", { style: "display:flex;flex-direction:column;gap:4px" }, h("b", {}, title), h("span", { class: "small" }, text)));
+      blocks.push(h("section", { class: "card" }, h("h2", {}, "What each purchase is worth to Meta"),
+        h("div", { class: "row", style: "align-items:stretch" },
+          vm("amount", "Amount paid (recommended)", "The real price the customer paid. Your ROAS in Ads Manager stays true, and Meta learns from real money."),
+          vm("profit", "Profit on that order", d.costs_known ? "Price minus the product costs you gave ProAds, for that order only. Meta then chases profitable orders; ROAS in Ads Manager will read lower." : "Needs product costs in your sales data first.")),
+        h("p", { class: "small", style: "margin:0" }, "Predictions (expected refunds, future purchases) are never sent as a purchase's value. They stay in ProAds.")));
+      // browser ids
+      const snippet = '<script>(function(){function c(n){var m=document.cookie.match("(^|;)\\s*"+n+"=([^;]+)");return m?decodeURIComponent(m[2]):""}var p=c("_fbp"),f=c("_fbc"),q=new URLSearchParams(location.search).get("fbclid");if(!f&&q){f="fb.1."+Date.now()+"."+q}if(!p&&!f)return;fetch("/cart/update.js",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({attributes:{_fbp:p,_fbc:f}})}).catch(function(){})})();<\/script>';
+      const bid = (sg.match_keys || []).find((x) => x.key === "fbp");
+      blocks.push(h("section", { class: "card" },
+        h("div", { class: "between" }, h("h2", {}, "Capture browser and click IDs"), bid && sg.events_with_keys ? h("span", { class: "badge " + (bid.share >= 0.5 ? "b-measured" : "b-est") }, Math.round(bid.share * 100) + "% of purchases have them") : null),
+        h("p", { class: "sub", style: "margin:0;font-size:14px" }, "Meta matches best with the browser ID (_fbp) and ad-click ID (_fbc) from the customer's visit. Shopify orders don't carry them unless your shop saves them at checkout. Paste this once into your Shopify theme (Online Store → Themes → Edit code → theme.liquid, just before </body>). The IDs are saved on the order, hidden from customers, and ProAds sends them to Meta."),
+        h("pre", { class: "snippet", style: "white-space:pre-wrap;word-break:break-all;font-size:12px;margin:0;padding:12px;border-radius:10px;background:var(--soft);border:1px solid var(--line)" }, snippet),
+        h("button", { class: "btn btn-ghost", type: "button", style: "align-self:flex-start", onclick: () => { navigator.clipboard.writeText(snippet).then(() => toast("Copied")).catch(() => toast("Select the code and copy it")); } }, "Copy code"),
+        h("p", { class: "small", style: "margin:0" }, "Other shops: pass fbp and fbc into your payment's metadata (e.g. Stripe metadata) and ProAds picks them up.")));
       if (sg.last_error) blocks.push(h("div", { class: "result err" }, h("span", {}, "Meta rejected a delivery " + ago(sg.last_error.at) + ": " + sg.last_error.message), h("span", { class: "ok" }, "ProAds retries automatically")));
       if (d.last_sale_at && sg.mode === "live" && sg.last_accepted_at && d.last_sale_at - sg.last_accepted_at > 3600 && Date.now() / 1000 - d.last_sale_at < 6 * 86400)
         blocks.push(h("div", { class: "result err" }, h("span", {}, "Your newest sale hasn't reached Meta yet."), h("span", { class: "ok" }, "Check the Facebook connection")));

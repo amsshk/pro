@@ -49,6 +49,7 @@ class Payment:
     client_ip_address: Optional[str] = None
     event_source_url: Optional[str] = None
     fbp: Optional[str] = None             # Meta browser id (_fbp cookie), when the checkout passed it on
+    fbc: Optional[str] = None             # Meta click id cookie (_fbc), as captured on the visit
     # Address details from the order, used only as hashed match keys for Meta
     first_name: Optional[str] = None
     last_name: Optional[str] = None

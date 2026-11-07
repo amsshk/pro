@@ -18,9 +18,15 @@ GRAPH_URL = "https://graph.facebook.com/{version}/{dataset_id}/events"
 BATCH = 1000
 
 
+VALUE_MODES = ("amount", "profit")
+
+
 def _action_source(p: Payment) -> str:
+    """Where the sale really happened. Uploaded files can't prove a website checkout, so they're 'other'."""
     if p.channel == "physical_store":
         return "physical_store"
+    if p.source in ("upload", "csv") and not p.event_source_url:
+        return "other"
     return "website"
 
 
@@ -35,7 +41,7 @@ def user_data_for(p: Payment, default_country_code: str = "971") -> dict:
         "em": one(hash_email(p.email)),
         "ph": one(hash_phone(p.phone, default_country_code)),
         "external_id": one(_sha256(str(p.customer_id).strip().lower())) if p.customer_id else None,
-        "fbc": fbc_from_fbclid(p.fbclid, p.occurred_at),
+        "fbc": p.fbc or fbc_from_fbclid(p.fbclid, p.occurred_at),
         "fbp": p.fbp,
         "client_user_agent": p.client_user_agent,
         "client_ip_address": p.client_ip_address,
@@ -45,8 +51,13 @@ def user_data_for(p: Payment, default_country_code: str = "971") -> dict:
     }.items() if v}
 
 
-def build_purchase_event(p: Payment, score: Score, default_country_code: str = "971") -> dict:
+def build_purchase_event(p: Payment, score: Score, default_country_code: str = "971", value_mode: str = "amount",
+                         profit: Optional[float] = None) -> dict:
+    """A Purchase is a real transaction: its value is what the customer paid ("amount", the default), or, if the
+    business chooses, the actual profit on THIS order ("profit"). Predictions (refund risk, future purchases) are
+    never put in the value; they stay inside ProAds."""
     user_data = user_data_for(p, default_country_code)
+    value = round(profit, 2) if value_mode == "profit" and profit is not None else round(p.amount, 2)
 
     event = {
         "event_name": "Purchase",
@@ -55,11 +66,11 @@ def build_purchase_event(p: Payment, score: Score, default_country_code: str = "
         "action_source": _action_source(p),
         "user_data": user_data,
         "custom_data": {
-            "value": score.real_value,     # the real value, not the checkout total
+            "value": value,
             "currency": p.currency,
             "order_id": p.external_id,
-            "gross_value": p.amount,
-            "predicted_return_risk": score.return_risk,
+            "proads_value_basis": "profit" if value != round(p.amount, 2) else "amount_paid",
+            "proads_source": p.source,
         },
     }
     if p.event_source_url:
