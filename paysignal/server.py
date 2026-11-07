@@ -841,29 +841,50 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             custs, basis, last = buyers.build_customers(eng, promo, names)
         return custs, basis, last, launches
 
-    def experiment_arms(client_id, e: dict, launches: list) -> dict:
-        """Real paid purchases (after refunds) and recorded spend per arm since the test started."""
+    def refund_delay_days(client_id) -> int:
+        """How long refunds take to show up at THIS business (90th percentile), so results aren't trusted too early."""
+        with state.lock:
+            store = state.engine(client_id).store
+            buys = {p.external_id: p.occurred_at for p in store.purchases(client_id)}
+            rows = store.db.execute("SELECT data FROM payments WHERE client_id=? AND kind='refund'", (client_id,)).fetchall()
+        delays = []
+        for (raw,) in rows:
+            d = json.loads(raw)
+            t0 = buys.get(d.get("refund_of") or "")
+            if t0:
+                delays.append((datetime.fromisoformat(d["occurred_at"]) - t0).days)
+        if len(delays) < 10:
+            return 14
+        delays.sort()
+        return max(7, min(60, delays[int(0.9 * (len(delays) - 1))]))
+
+    def experiment_arms(client_id, e: dict, launches: list, settle_days: int) -> tuple[dict, dict]:
+        """Per arm, since the test started: recorded spend and the net value of each real paid purchase.
+        'settled' only counts purchases (and spend) old enough for refunds to have arrived."""
         start = datetime.fromtimestamp(e["started_at"], timezone.utc)
-        since_day = start.date().isoformat()
-        today = datetime.now(timezone.utc).date().isoformat()
+        today = datetime.now(timezone.utc).date()
+        cutoff = today - timedelta(days=settle_days)
         slug = {l["campaign_id"]: meta_ads._slug(l.get("name", ""), 30) for l in launches}
-        out = {}
+        prelim, settled = {}, {}
         with state.lock:
             eng = state.engine(client_id)
             purchases = eng.store.purchases(client_id)
             for arm, camp in (("control", e["control_campaign"]), ("variant", e["variant_campaign"])):
-                spend, _ = state.ledger.total([camp], since_day, today)
-                k, value = 0, 0.0
+                spend, _ = state.ledger.total([camp], start.date().isoformat(), today.isoformat())
+                spend_s, _ = (state.ledger.total([camp], start.date().isoformat(), cutoff.isoformat())
+                              if cutoff >= start.date() else (0.0, ""))
+                vals, vals_s = [], []
                 for p in purchases:
                     if p.occurred_at < start or (p.utm_medium or "").lower() != "paid" or (p.utm_campaign or "") != slug.get(camp):
                         continue
                     ref = min(eng.store.refunded_amount(client_id, p.external_id), p.amount)
-                    if ref >= p.amount:
-                        continue
-                    k += 1
-                    value += p.amount - ref - (p.cost_of_goods() or 0.0)
-                out[arm] = {"campaign_id": camp, "spend": round(spend, 2), "purchases": k, "value": round(value, 2)}
-        return out
+                    v = p.amount - ref - (p.cost_of_goods() or 0.0)        # a fully refunded sale counts as 0, not dropped
+                    vals.append(v)
+                    if p.occurred_at.date() <= cutoff:
+                        vals_s.append(v)
+                prelim[arm] = {"campaign_id": camp, "spend": spend, "values": vals}
+                settled[arm] = {"campaign_id": camp, "spend": spend_s, "values": vals_s}
+        return prelim, settled
 
     @flask.get("/buyers/<client_id>")
     def buyers_view(client_id):
@@ -877,12 +898,12 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             history = state.experiments.list(client_id)
             econ_in = state.economics.get(client_id)
         econ = engines.economics(econ_in) if econ_in else None
+        settle_days = refund_delay_days(client_id) if any(e["status"] == "running" for e in history) else 14
         for e in history:
             if e["status"] == "running" and e["started_at"]:
-                arms = experiment_arms(client_id, e, launches)
-                ev = buyers.evaluate(arms, (e["design"] or {}).get("min_spend_per_arm"), e["started_at"],
-                                     (e["design"] or {}).get("max_days", 14))
-                e["result"] = {"arms": arms, **ev}
+                prelim, settled = experiment_arms(client_id, e, launches, settle_days)
+                e["result"] = buyers.evaluate(prelim, settled, (e["design"] or {}).get("min_spend_per_arm"), e["started_at"],
+                                              (e["design"] or {}).get("max_days", 14), settle_days)
                 with state.lock:
                     state.experiments.save_result(client_id, e["id"], e["result"])
         names = {l["campaign_id"]: l.get("name", "") for l in launches}
@@ -922,9 +943,32 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         c, v = str(body.get("control_campaign") or ""), str(body.get("variant_campaign") or "")
         if c not in ids or v not in ids or c == v:
             abort(400, "pick two different campaigns published through ProAds: the control and the variant")
+        split_id = re.sub(r"\D", "", str(body.get("split_test_id") or ""))[:30]
+        s_ = state.ads_settings(client_id, is_admin(client_id))
+        if not s_:
+            abort(409, "Connect Facebook & Instagram so ProAds can check both campaigns are a fair test.")
+        sets = {}
+        for camp in (c, v):
+            try:
+                r = state.ads_http.get(f"https://graph.facebook.com/{meta_ads.settings()['version']}/{camp}/adsets",
+                                       params={"access_token": s_["token"], "limit": 50, "fields":
+                                               "optimization_goal,promoted_object,attribution_spec,targeting,daily_budget"}, timeout=20)
+                body_ = r.json()
+            except Exception as ex:
+                abort(502, f"Couldn't read campaign {camp} from Meta: {ex}")
+            if r.status_code != 200 or "error" in body_:
+                abort(502, "Meta: " + ((body_.get("error") or {}).get("message") or "refused"))
+            sets[camp] = body_.get("data") or []
+        checks = buyers.control_checks(sets[c], sets[v], split_id)
+        bad = [x for x in checks if not x["ok"] and not x.get("warning_only")]
+        if bad and not body.get("force"):
+            resp = jsonify({"error": "Not a fair test yet: " + "; ".join(x["label"].lower() + " fails" for x in bad) + ".",
+                            "checks": checks, "can_force": True})
+            resp.status_code = 409
+            abort(resp)
         with state.lock:
-            state.experiments.start(client_id, eid, c, v)
-        return {"started": True}
+            state.experiments.start(client_id, eid, c, v, checks, split_id)
+        return {"started": True, "checks": checks}
 
     @flask.post("/buyers/<client_id>/experiments/<int:eid>/decide")
     def experiment_decide(client_id, eid):

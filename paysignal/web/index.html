@@ -1554,6 +1554,12 @@ main{background:transparent}
   }
 
   // ---------- Buyer Quality Intelligence ----------
+  function checkList(checks) {
+    return h("div", { class: "adset", style: "gap:6px;background:var(--card)" }, h("b", { style: "font-size:14px" }, "Is it a fair test?"),
+      checks.map((x) => h("div", { style: "display:flex;gap:8px;align-items:flex-start;font-size:14px" },
+        h("span", { style: "font-weight:700;color:" + (x.ok ? "var(--win)" : x.warning_only ? "var(--muted)" : "var(--amber)") }, x.ok ? "✓" : x.warning_only ? "!" : "✗"),
+        h("span", {}, x.label, x.fix ? h("span", { class: "small", style: "display:block" }, x.fix) : null))));
+  }
   async function viewBuyers() {
     const head = h("header", {}, h("h1", {}, "Buyer quality"),
       h("p", { class: "sub" }, "Based on the customers who actually made you money, what should you test next on Meta to get more like them?"));
@@ -1575,10 +1581,11 @@ main{background:transparent}
         k("Average buyer", m(a.avg_value), "first " + a.window_days + " days"),
         k("Came back", Math.round(a.repeat_rate * 100) + "%", "of all buyers (best: " + Math.round(a.best.repeat_rate * 100) + "%)"),
         k("Buyers compared", fmt.format(a.customers), "with a full " + a.window_days + "-day window")));
-      blocks.push(h("p", { class: "small", style: "margin:-8px 0 0" }, "Value = money actually paid, " + a.value_basis + ". Only real repeat purchases count; nothing here is a prediction. A difference is only called real when its 95% range doesn't include zero, and every group needs at least 15 buyers."));
+      blocks.push(h("p", { class: "small", style: "margin:-8px 0 0" }, "Value = money actually paid, " + a.value_basis + ". Only real repeat purchases count; nothing here is a prediction. Ranges come from resampling whole customers (so a few big spenders can't fake a result), every group needs at least 15 buyers, and a difference only counts when its whole 95% range is on one side of zero."));
+      blocks.push(h("div", { class: "result" }, h("span", {}, h("b", {}, "Patterns, not proof. "), "Buyers who first bought a product may differ from others in many ways. These patterns only suggest what to test; a controlled test on Meta is what shows whether a change actually brings better buyers.")));
       // suggested tests
       const sug = d.suggestions || [];
-      blocks.push(h("section", { class: "card" }, h("div", { class: "between" }, h("h2", {}, "What to test next on Meta"), h("span", { class: "small" }, "from confident findings only")),
+      blocks.push(h("section", { class: "card" }, h("div", { class: "between" }, h("h2", {}, "Hypotheses to test on Meta"), h("span", { class: "small" }, "from strong patterns only")),
         sug.length ? sug.map((x) => {
           const ev = x.evidence;
           const btn = h("button", { class: "btn btn-primary", type: "button", style: "align-self:flex-start" }, "Plan this test");
@@ -1593,13 +1600,14 @@ main{background:transparent}
       // segments
       a.dimensions.forEach((dm) => {
         if (!dm.segments.length && !dm.too_small) return;
-        const V = { better: ["b-measured", "Better buyers"], worse: ["b-est", "Worse buyers"], unclear: ["b-neutral", "No clear difference"] };
+        const V = { better: ["b-measured", "Higher value (pattern)"], worse: ["b-est", "Lower value (pattern)"], unclear: ["b-neutral", "No clear difference"] };
         blocks.push(h("section", { class: "card", style: "min-width:0" }, h("div", { class: "between" }, h("h2", {}, dm.label), dm.too_small ? h("span", { class: "small" }, dm.too_small + " too small to judge") : null),
           dm.segments.length ? h("div", { class: "scroll" }, h("table", { class: "etable" },
-            h("thead", {}, h("tr", {}, ["", "Buyers", "Value each", "vs others", "Came back", "Refunded", "Of best buyers", ""].map((t) => h("th", {}, t)))),
+            h("thead", {}, h("tr", {}, ["", "Buyers", "Average", "Median", "vs others (95% range)", "Came back", "Refunded", "Of best buyers", ""].map((t) => h("th", {}, t)))),
             h("tbody", {}, dm.segments.map((sg) => h("tr", {},
-              h("td", {}, h("b", { dir: "auto" }, sg.name)), h("td", {}, fmt.format(sg.customers)), h("td", {}, m(sg.avg_value)),
-              h("td", { style: sg.verdict === "better" ? "background:rgba(22,163,74,.12)" : sg.verdict === "worse" ? "background:rgba(220,38,38,.10)" : "" }, (sg.vs_rest >= 0 ? "+" : "") + m(sg.vs_rest)),
+              h("td", {}, h("b", { dir: "auto" }, sg.name)), h("td", {}, fmt.format(sg.customers)), h("td", {}, m(sg.avg_value)), h("td", {}, m(sg.median_value)),
+              h("td", { style: sg.verdict === "better" ? "background:rgba(22,163,74,.12)" : sg.verdict === "worse" ? "background:rgba(220,38,38,.10)" : "" }, (sg.vs_rest >= 0 ? "+" : "") + m(sg.vs_rest),
+                h("span", { class: "small", style: "display:block" }, m(sg.interval[0]) + " to " + m(sg.interval[1]))),
               h("td", {}, Math.round(sg.repeat_rate * 100) + "%"), h("td", {}, Math.round(sg.refund_rate * 100) + "%"),
               h("td", {}, Math.round(sg.share_of_best * 100) + "% (of all: " + Math.round(sg.share_of_all * 100) + "%)"),
               h("td", {}, h("span", { class: "badge " + V[sg.verdict][0] }, V[sg.verdict][1]))))))) : h("p", { class: "small", style: "margin:0" }, "Each group needs at least 15 buyers.")));
@@ -1618,18 +1626,41 @@ main{background:transparent}
         if (e.status === "planned") {
           const pick = (id) => h("select", { id }, h("option", { value: "" }, "Choose…"), camps.map((c) => h("option", { value: c.campaign_id }, c.name || c.campaign_id)));
           const c1 = pick("ctl-" + e.id), c2 = pick("var-" + e.id);
+          const sid = h("input", { id: "sid-" + e.id, placeholder: "e.g. 6012345678901", inputmode: "numeric" });
+          const checkBox = h("div", { style: "display:contents" });
+          let force = false;
           box.append(h("div", { class: "grid2" }, h("label", { class: "f", for: "ctl-" + e.id }, "Control (current best ad)", c1), h("label", { class: "f", for: "var-" + e.id }, "Variant (the change)", c2)),
+            h("label", { class: "f", for: "sid-" + e.id }, "Meta A/B test ID (recommended, for a clean audience split)", sid),
+            checkBox,
             h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" },
               h("button", { class: "btn btn-ghost", type: "button", onclick: () => { pendingBrief = "Experiment variant. Hypothesis: " + e.hypothesis + " Change ONE thing only: " + e.change + " Keep audience, budget and offer the same as the control."; go("#/assistant"); } }, "Build the variant ad"),
-              h("button", { class: "btn btn-primary", type: "button", onclick: async (ev) => { ev.currentTarget.disabled = true; try { await post("/buyers/" + cid() + "/experiments/" + e.id + "/start", { control_campaign: c1.value, variant_campaign: c2.value }); viewBuyers(); } catch (er) { if (er.message !== "signed out") toast(er.message); ev.target.disabled = false; } } }, "Start the test")),
+              h("button", { class: "btn btn-primary", type: "button", onclick: async (ev) => {
+                const b = ev.currentTarget; b.disabled = true;
+                try { await post("/buyers/" + cid() + "/experiments/" + e.id + "/start", { control_campaign: c1.value, variant_campaign: c2.value, split_test_id: sid.value, force }); viewBuyers(); }
+                catch (er) {
+                  if (er.message === "signed out") return;
+                  b.disabled = false;
+                  if (er.data && er.data.checks) {
+                    checkBox.replaceChildren(checkList(er.data.checks));
+                    force = true; b.textContent = "Start anyway (results less reliable)";
+                  } else toast(er.message);
+                } } }, "Check & start the test")),
             h("span", { class: "small" }, "Tip: Meta's own A/B test (Ads Manager → Experiments) splits the audience cleanly; ProAds still judges both campaigns on real paid purchases."));
         }
-        if (e.result && e.result.arms) {
-          const r = e.result, A = r.arms;
-          box.append(h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["", "Spend", "Real purchases", "Net value", "Value per spend"].map((t) => h("th", {}, t)))),
-            h("tbody", {}, ["control", "variant"].map((k) => h("tr", {}, h("td", {}, k === "control" ? "Control" : "Variant"), h("td", {}, m(A[k].spend)),
-              h("td", {}, fmt.format(A[k].purchases)), h("td", {}, m(A[k].value)), h("td", {}, A[k].spend ? (A[k].value / A[k].spend).toFixed(2) : "–")))))),
-            h("span", { style: "font-size:14px" }, r.why + (r.confidence_variant_better != null ? " (" + Math.round(r.confidence_variant_better * 100) + "% sure the variant is better)" : "")));
+        if (e.checks) box.append(checkList(e.checks));
+        if (e.result && e.result.preliminary) {
+          const r = e.result;
+          const ST = { collecting: ["b-neutral", "Collecting evidence"], provisional: ["b-neutral", "Provisional"], evidence: ["b-measured", "Clear result"] };
+          const tbl = (title, A, note) => h("div", { style: "display:flex;flex-direction:column;gap:6px;flex:1 1 320px;min-width:0" }, h("b", { style: "font-size:14px" }, title), h("span", { class: "small" }, note),
+            h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["", "Spend", "Real purchases", "Net value", "Per " + cur].map((t) => h("th", {}, t)))),
+              h("tbody", {}, ["control", "variant"].map((k) => h("tr", {}, h("td", {}, k === "control" ? "Control" : "Variant"), h("td", {}, m(A[k].spend)),
+                h("td", {}, fmt.format(A[k].purchases)), h("td", {}, m(A[k].value)), h("td", {}, A[k].spend ? (A[k].value / A[k].spend).toFixed(2) : "–")))))),
+            A.interval ? h("span", { class: "small" }, "Variant minus control, per " + cur + " spent: " + A.interval[0].toFixed(2) + " to " + A.interval[1].toFixed(2) + " (95% range) · " + Math.round(A.chance_variant_better * 100) + "% of resamples favour the variant") : null);
+          box.append(h("span", { class: "badge " + ST[r.status][0], style: "align-self:flex-start" }, ST[r.status][1]),
+            h("div", { class: "row", style: "align-items:flex-start" },
+              tbl("Settled", r.settled, "purchases at least " + r.settle_days + " days old (refunds would have arrived)"),
+              tbl("Early (provisional)", r.preliminary, "everything so far; can still change")),
+            h("span", { style: "font-size:14px" }, r.why));
         }
         if (e.status !== "decided" && (e.status === "running")) {
           const sugg = e.result && e.result.suggested;

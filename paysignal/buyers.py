@@ -3,6 +3,9 @@
 Question it answers: "Based on the customers who actually made this business money, what should we test next
 on Meta to acquire more customers like them?"
 
+These are PATTERNS among existing customers, not proof of cause: who bought a product first may differ from
+who didn't in many ways. Findings only become hypotheses; a randomized test on Meta is what shows cause.
+
 Rules (built in, not optional):
   - FACTS ONLY for buyer value: money actually paid minus refunds (and minus product cost where the business gave
     costs). Repeat purchases are counted only when they happened. No predicted lifetime value anywhere here.
@@ -19,6 +22,7 @@ from __future__ import annotations
 
 import json
 import math
+import random
 import statistics
 import time
 from collections import defaultdict
@@ -106,6 +110,25 @@ def window_value(c: dict, days: int) -> dict:
     return {"value": gross - refunds - sum(o[3] for o in inside), "orders": len(inside), "gross": gross, "refunds": refunds}
 
 
+BOOT = 2000
+
+
+def boot_diff(a: list[float], b: list[float], n: int = BOOT, seed: int = 7) -> tuple[float, float, float]:
+    """Customer-level bootstrap of mean(a) - mean(b): returns (2.5%, 97.5%, share of resamples above zero).
+    Resampling whole customers keeps skewed values (a few big spenders) from faking certainty."""
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    xa, xb = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+    diffs = []
+    for chunk in range(0, n, 250):                      # chunks keep memory small for big shops
+        k = min(250, n - chunk)
+        ma = xa[rng.integers(0, len(xa), size=(k, len(xa)))].mean(axis=1)
+        mb = xb[rng.integers(0, len(xb), size=(k, len(xb)))].mean(axis=1)
+        diffs.append(ma - mb)
+    d = np.sort(np.concatenate(diffs))
+    return float(d[int(0.025 * n)]), float(d[int(0.975 * n) - 1]), float((d > 0).mean())
+
+
 def _stats(xs: list[float]) -> tuple[float, float]:
     m = statistics.fmean(xs)
     sd = statistics.stdev(xs) if len(xs) > 1 else 0.0
@@ -149,16 +172,19 @@ def analyse(customers: list[dict], last_day: Optional[date], currency: str) -> d
             rest = [r["value"] for r in rows if r[dim] != name]
             if len(rest) < MIN_CUSTOMERS:
                 continue
-            m, sd = _stats([r["value"] for r in members])
-            mr, sdr = _stats(rest)
-            se = math.sqrt(sd ** 2 / len(members) + sdr ** 2 / len(rest))
+            mine = [r["value"] for r in members]
+            m, _ = _stats(mine)
+            mr, _ = _stats(rest)
             diff = m - mr
-            verdict = "better" if diff - 1.96 * se > 0 else "worse" if diff + 1.96 * se < 0 else "unclear"
+            lo, hi, _ = boot_diff(mine, rest)
+            # a higher average alone is never enough: the whole 95% range must be on one side of zero
+            verdict = "better" if lo > 0 else "worse" if hi < 0 else "unclear"
             gross = sum(r["gross"] for r in members)
             in_best = sum(1 for r in members if r["value"] >= cut)
             segs.append({"name": name, "customers": len(members), "avg_value": round(m, 2),
                          "vs_rest": round(diff, 2), "lift": round(m / mr - 1, 3) if mr > 0 else None,
-                         "interval": [round(diff - 1.96 * se, 2), round(diff + 1.96 * se, 2)], "verdict": verdict,
+                         "median_value": round(statistics.median(mine), 2),
+                         "interval": [round(lo, 2), round(hi, 2)], "verdict": verdict,
                          "repeat_rate": round(sum(r["orders"] > 1 for r in members) / len(members), 3),
                          "refund_rate": round(sum(r["refunds"] for r in members) / gross, 3) if gross else 0.0,
                          "share_of_best": round(in_best / len(best), 3), "share_of_all": round(len(members) / len(rows), 3)})
@@ -217,37 +243,97 @@ def suggest(analysis: dict, history: list[dict], economics: Optional[dict], dail
     return out[:5]
 
 
-def evaluate(arms: dict, min_spend: Optional[float], started_at: int, max_days: int = 14) -> dict:
-    """arms: {"control": {"spend", "purchases", "value"}, "variant": {...}} from real paid sales.
-    Two-rate test on purchases per spend (conditional binomial), plus net value per spend."""
-    c, v = arms["control"], arms["variant"]
-    days = (time.time() - started_at) / 86400
+def value_per_spend_diff(c: dict, v: dict, n: int = BOOT, seed: int = 11) -> Optional[tuple[float, float, float]]:
+    """Bootstrap of (variant - control) net value per unit spent. Each resample redraws HOW MANY purchases each
+    arm got (Poisson) and WHICH ones (customer-level), so a single big order can't decide the test."""
+    import numpy as np
+    if c["spend"] <= 0 or v["spend"] <= 0 or not (c["values"] or v["values"]):
+        return None
+    rng = np.random.default_rng(seed)
+
+    def draws(arm):
+        vals = np.asarray(arm["values"] or [0.0], dtype=float)
+        k = rng.poisson(len(arm["values"]), size=n)
+        tot = np.array([vals[rng.integers(0, len(vals), size=x)].sum() if x and arm["values"] else 0.0 for x in k])
+        return tot / arm["spend"]
+    d = np.sort(draws(v) - draws(c))
+    return float(d[int(0.025 * n)]), float(d[int(0.975 * n) - 1]), float((d > 0).mean())
+
+
+def evaluate(prelim: dict, settled: dict, min_spend: Optional[float], started_at: int, max_days: int = 14,
+             settle_days: int = 14, ended_at: Optional[int] = None) -> dict:
+    """prelim / settled: {"control": {"spend", "values": [net value per real purchase]}, "variant": {...}}.
+    Verdicts come only from SETTLED results (purchases old enough for refunds to have arrived). A verdict needs
+    the whole 95% range of the difference on one side of zero; time running out never forces one."""
     floor = min_spend or 0
-    if c["spend"] <= 0 or v["spend"] <= 0 or min(c["spend"], v["spend"]) < floor:
-        status = "running" if days < max_days else "inconclusive"
-        return {"status": status, "suggested": None if status == "running" else "inconclusive",
-                "why": (f"Each arm needs at least {floor:,.0f} spend before deciding." if floor else "Both arms need spend first.")
-                       if status == "running" else "Time is up without enough spend to decide."}
-    k1, k2 = c["purchases"], v["purchases"]
-    n = k1 + k2
-    share = v["spend"] / (c["spend"] + v["spend"])
-    if n == 0:
-        p_better = 0.5
+    days = (time.time() - started_at) / 86400
+
+    def view(arms):
+        c, v = arms["control"], arms["variant"]
+        out = {"control": {"spend": round(c["spend"], 2), "purchases": len(c["values"]), "value": round(sum(c["values"]), 2)},
+               "variant": {"spend": round(v["spend"], 2), "purchases": len(v["values"]), "value": round(sum(v["values"]), 2)}}
+        if min(c["spend"], v["spend"]) < floor or c["spend"] <= 0 or v["spend"] <= 0:
+            return {**out, "enough_spend": False, "verdict": None}
+        r = value_per_spend_diff(c, v)
+        if r is None:
+            return {**out, "enough_spend": True, "verdict": None}
+        lo, hi, p = r
+        verdict = "keep" if lo > 0 else "reject" if hi < 0 else None
+        return {**out, "enough_spend": True, "interval": [round(lo, 4), round(hi, 4)], "chance_variant_better": round(p, 3),
+                "verdict": verdict}
+    pv, sv = view(prelim), view(settled)
+    res = {"preliminary": pv, "settled": sv, "settle_days": settle_days, "days_running": round(days, 1)}
+    if sv["verdict"]:
+        why = ("The variant brought more real net value per spend, beyond the 95% range of chance."
+               if sv["verdict"] == "keep" else "The control brought more real net value per spend, beyond the 95% range of chance.")
+        return {**res, "status": "evidence", "suggested": sv["verdict"], "why": why}
+    if pv["verdict"]:
+        return {**res, "status": "provisional", "suggested": None,
+                "why": f"Early results lean to '{pv['verdict']}', but recent purchases can still be refunded. "
+                       f"ProAds waits {settle_days} days after each purchase before trusting it."}
+    if not pv["enough_spend"]:
+        why = (f"Each side needs at least {floor:,.0f} spend before any judgement." if floor else "Both sides need spend first.")
     else:
-        # P(variant at least this many | equal rates) -> small = variant better
-        p_tail = sum(math.comb(n, i) * share ** i * (1 - share) ** (n - i) for i in range(k2, n + 1))
-        p_better = 1 - p_tail
-    vpc = v["value"] / v["spend"] if v["spend"] else 0
-    cpc = c["value"] / c["spend"] if c["spend"] else 0
-    res = {"variant_value_per_spend": round(vpc, 3), "control_value_per_spend": round(cpc, 3),
-           "confidence_variant_better": round(p_better, 3)}
-    if p_better >= 0.9 and vpc > cpc:
-        return {**res, "status": "decided", "suggested": "keep", "why": "The variant brought more real purchases per spend, and more net value."}
-    if p_better <= 0.1 and vpc < cpc:
-        return {**res, "status": "decided", "suggested": "reject", "why": "The control did clearly better on real purchases and value."}
-    if days >= max_days:
-        return {**res, "status": "inconclusive", "suggested": "inconclusive", "why": "No clear winner within the time limit."}
-    return {**res, "status": "running", "suggested": None, "why": "No clear winner yet; keep both running."}
+        why = "No clear difference yet: the 95% range still includes zero."
+    if days > max_days:
+        why += f" It's past the planned {max_days} days, so it stays inconclusive so far: keep collecting, or stop and record it as inconclusive."
+    return {**res, "status": "collecting", "suggested": None, "why": why}
+
+
+AUDIENCE_KEYS = ("geo_locations", "age_min", "age_max", "genders", "custom_audiences", "excluded_custom_audiences",
+                 "flexible_spec", "locales")
+PLACEMENT_KEYS = ("publisher_platforms", "facebook_positions", "instagram_positions", "audience_network_positions",
+                  "messenger_positions", "device_platforms")
+
+
+def control_checks(control: list[dict], variant: list[dict], split_test_id: str = "") -> list[dict]:
+    """Is it a fair test? Compares the two campaigns' ad sets as Meta has them."""
+    def one(sets, f):
+        vals = {json.dumps(f(a), sort_keys=True) for a in sets}
+        return vals.pop() if len(vals) == 1 else ("mixed:" + "|".join(sorted(vals)))
+    pick = lambda a, keys: {k: a.get("targeting", {}).get(k) for k in keys if a.get("targeting", {}).get(k) is not None}
+    rows = []
+
+    def check(key, label, f, fix):
+        a, b = one(control, f), one(variant, f)
+        rows.append({"key": key, "label": label, "ok": a == b, "fix": None if a == b else fix})
+    check("event", "Same optimisation event",
+          lambda a: [a.get("optimization_goal"), (a.get("promoted_object") or {}).get("custom_event_type")],
+          "Both must optimise for the same event (e.g. Purchase), or results aren't comparable.")
+    check("attribution", "Same attribution setting", lambda a: a.get("attribution_spec"),
+          "Set the same attribution window on both.")
+    check("audience", "Same audience", lambda a: pick(a, AUDIENCE_KEYS), "Use the same countries, ages and audiences.")
+    check("placements", "Same placements", lambda a: pick(a, PLACEMENT_KEYS), "Use the same placements on both.")
+    bc = sum(float(a.get("daily_budget") or 0) for a in control)
+    bv = sum(float(a.get("daily_budget") or 0) for a in variant)
+    same_budget = bool(bc and bv and abs(bc - bv) / max(bc, bv) <= 0.10)
+    rows.append({"key": "budget", "label": "Equal budgets (within 10%)", "ok": same_budget,
+                 "fix": None if same_budget else "Give both the same daily budget."})
+    rows.append({"key": "split", "label": "People split between the two (no overlap)", "ok": bool(split_test_id),
+                 "warning_only": True,
+                 "fix": None if split_test_id else "Without Meta's A/B test, the same person can see both ads. Create the test in "
+                                                   "Ads Manager → Experiments → A/B test and paste its ID for a clean split."})
+    return rows
 
 
 class ExperimentStore:
@@ -258,11 +344,16 @@ class ExperimentStore:
         control_campaign TEXT, variant_campaign TEXT, started_at INTEGER, result TEXT,
         decision TEXT, decided_at INTEGER, note TEXT)"""
     COLS = ("id", "client_id", "created_at", "dimension", "segment", "hypothesis", "change", "evidence", "design",
-            "status", "control_campaign", "variant_campaign", "started_at", "result", "decision", "decided_at", "note")
+            "status", "control_campaign", "variant_campaign", "started_at", "result", "decision", "decided_at", "note",
+            "checks", "split_test_id")
 
     def __init__(self, db):
         self.db = db
         self.db.execute(self.SCHEMA)
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(experiments)").fetchall()}
+        for col in ("checks", "split_test_id"):
+            if col not in cols:
+                self.db.execute(f"ALTER TABLE experiments ADD COLUMN {col} TEXT")
         self.db.commit()
 
     def add(self, client_id: str, s: dict) -> int:
@@ -279,7 +370,7 @@ class ExperimentStore:
         out = []
         for r in rows:
             d = dict(zip(self.COLS, r))
-            for k in ("evidence", "design", "result"):
+            for k in ("evidence", "design", "result", "checks"):
                 d[k] = json.loads(d[k]) if d[k] else None
             out.append(d)
         return out
@@ -287,10 +378,10 @@ class ExperimentStore:
     def get(self, client_id: str, eid: int) -> Optional[dict]:
         return next((e for e in self.list(client_id) if e["id"] == eid), None)
 
-    def start(self, client_id: str, eid: int, control: str, variant: str) -> None:
-        self.db.execute("UPDATE experiments SET status='running', control_campaign=?, variant_campaign=?, started_at=?"
-                        " WHERE id=? AND client_id=? AND status IN ('planned','running')",
-                        (control, variant, int(time.time()), eid, client_id))
+    def start(self, client_id: str, eid: int, control: str, variant: str, checks: list, split_test_id: str = "") -> None:
+        self.db.execute("UPDATE experiments SET status='running', control_campaign=?, variant_campaign=?, started_at=?,"
+                        " checks=?, split_test_id=? WHERE id=? AND client_id=? AND status IN ('planned','running')",
+                        (control, variant, int(time.time()), json.dumps(checks), split_test_id or None, eid, client_id))
         self.db.commit()
 
     def save_result(self, client_id: str, eid: int, result: dict) -> None:

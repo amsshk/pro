@@ -106,7 +106,11 @@ def test_learning_endpoint_and_instant_send(tmp_path, monkeypatch):
     st.instant_meta = True
     st.ingest("pro", [Payment("pro", "stripe", "ch_1", "purchase", 100.0, "AED", NOW, email="a@b.c")])
     st.ingest("pro", [Payment("pro", "stripe", "ch_2", "purchase", 100.0, "AED", NOW, email="a@b.c")])
-    time.sleep(0.3)
+    for _ in range(50):                                                   # the send runs in a background thread
+        if calls:
+            break
+        time.sleep(0.05)
+    time.sleep(0.1)
     assert calls == ["pro"]                                               # sent at once, and not hammered
 
 
