@@ -30,7 +30,7 @@ nav.links{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .btn-primary{background:#5E9400;color:var(--ink)}.btn-primary:hover{background:#6CA60A;color:var(--ink)}
 .btn-ghost{background:transparent;color:var(--text);border:1px solid var(--edge)}.btn-ghost:hover{border-color:var(--violet);color:var(--text)}
 .btn[disabled]{opacity:.6;cursor:wait}
-.hero{padding:56px 0 40px;display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:48px;align-items:center}
+.hero{padding:56px 0 40px;display:grid;grid-template-columns:minmax(0,760px);gap:48px;align-items:center}
 .eyebrow{display:inline-block;font-size:13px;font-weight:600;color:var(--violet-txt);background:var(--violet-card);border:1px solid var(--violet-edge);border-radius:999px;padding:6px 12px}
 h1{font-family:var(--head);font-size:clamp(36px,5.2vw,58px);line-height:1.05;letter-spacing:-.02em;margin:18px 0 18px}
 h1 em{font-style:normal;color:var(--violet)}
@@ -93,14 +93,6 @@ footer{border-top:1px solid var(--soft);padding:28px 0 40px;color:var(--muted);f
           <a class="btn btn-ghost" href="#how">How it works</a>
         </div>
         <p class="note">No card needed. Your first audit is ready the day you upload your sales.</p>
-      </div>
-      <div class="preview" aria-label="Example of what an audit shows">
-        <small>Example audit findings</small>
-        <div class="row"><span>Discount code FLASH30</span><span class="tag t-loss">−48% profit per order</span></div>
-        <div class="row"><span>Product refunded most</span><span class="tag t-loss">87% returned</span></div>
-        <div class="row"><span>Customer-review stories</span><span class="tag t-gain">Best money per view</span></div>
-        <div class="row"><span>Trend reels</span><span class="tag t-est">Views, no buyers</span></div>
-        <small>Illustration only. Your audit uses your own numbers.</small>
       </div>
     </section>
 
