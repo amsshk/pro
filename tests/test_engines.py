@@ -97,3 +97,23 @@ def test_engines_endpoint(tmp_path, monkeypatch):
     st.ai = MetaAI(api_key="k", session=s)
     c.post("/ask/pro", json={"question": "how much can I pay per customer?"}, headers=ADMIN)
     assert "target_cpa" in json.dumps(s.calls[0]["body"])
+
+
+def test_ai_sees_proads_own_growth_and_ads(tmp_path, monkeypatch):
+    for k, v in {"PROADS_AD_ACCOUNT_ID": "123", "PROADS_PAGE_ID": "555", "PROADS_ADS_TOKEN": "tok",
+                 "PROADS_META_DATASET_ID": "777", "PROADS_PUBLIC_URL": "https://pro.example.net"}.items():
+        monkeypatch.setenv(k, v)
+    from test_ai import Session, ok
+    from paysignal.ai import MetaAI
+    app = create_app({"pro": {"api_key": "admin-key-0123456789abc"}}, str(tmp_path / "x.db"), start_worker=False)
+    st = app.extensions["paysignal"]
+    st.ads_http = FakeGraph()
+    st.launches.add("pro", {"campaign_id": "c1", "name": "Sign-ups UAE", "ad_sets": [], "ads": [], "status": "ACTIVE"})
+    c = app.test_client()
+    c.post("/auth/signup", json={"business": "Glow", "email": "o@glow.ae", "password": "first-password-1", "terms": True})
+    s = Session(lambda m, b: ok("fine"))
+    st.ai = MetaAI(api_key="k", session=s)
+    c.post("/ask/pro", json={"question": "what should I fix?"}, headers=ADMIN)
+    data = json.loads(s.calls[0]["body"]["messages"][1]["content"].split("\n", 1)[1])
+    assert data["your_business"]["last_30_days"]["Sign-ups"] == 1 and "subscriptions" in data["your_business"]["how_it_makes_money"]
+    assert data["ads_last_30_days"]["totals"]["spend"] > 0 and data["campaigns"][0]["name"] == "Sign-ups UAE"

@@ -581,7 +581,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     def ads_performance(client_id):
         """Live results of the campaigns ProAds published, where they come from, and the truth check."""
         state.require_key(client_id)
-        period = request.args.get("period", "30")
+        return ads_report_for(client_id, request.args.get("period", "30"), bool(request.args.get("fresh")))
+
+    def ads_report_for(client_id: str, period: str = "30", fresh: bool = False) -> dict:
         days = {"today": 1, "7": 7, "30": 30, "90": 90, "365": 365}.get(period, 30)
         admin = is_admin(client_id)
         with state.lock:
@@ -589,7 +591,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if not launches:
             return {"has_campaigns": False}
         hit = state.ads_cache.get((client_id, period))
-        if hit and time.time() - hit[0] < 600 and not request.args.get("fresh"):
+        if hit and time.time() - hit[0] < 600 and not fresh:
             return hit[1]
         s = state.ads_settings(client_id, admin)
         if s is None:
@@ -823,7 +825,32 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 ctx["benchmarks_from_other_businesses"] = {
                     **bench, "note": "Rounded medians across several anonymous businesses. Never describe or guess any "
                                      "single business behind them, and never say how one business differs from them."}
-            return ctx
+        # the business's ads (live from Meta, cached 10 minutes) and, for ProAds itself, its own growth numbers
+        try:
+            rep = ads_report_for(client_id, "30")
+            if rep.get("has_campaigns"):
+                ctx["ads_last_30_days"] = {k: rep.get(k) for k in ("kind", "currency", "totals", "truth", "countries", "placements",
+                                                                   "live", "error") if rep.get(k) is not None}
+            else:
+                ctx["ads_last_30_days"] = "no campaigns published through ProAds yet"
+        except Exception as e:
+            log.info("ads summary for the AI skipped: %s", e)
+        with state.lock:
+            ctx["campaigns"] = [{k: l.get(k) for k in ("name", "status", "conversion")} for l in state.launches.list(client_id)[:10]]
+        if is_admin(client_id):
+            d = proads_dashboard("30")
+            ctx["your_business"] = {
+                "what_it_is": PROADS_PRODUCT,
+                "how_it_makes_money": "software subscriptions (Pro, Premium) plus 5% of clients' ad spend; it does not sell products, "
+                                      "so there are no orders or shop sales. Judge it by sign-ups, companies that become active, "
+                                      "paying clients and its own ads.",
+                "last_30_days": {m["label"]: m["value"] for m in d["metrics"]},
+                "previous_30_days": {m["label"]: m["previous"] for m in d["metrics"] if m["key"] != "paying"},
+                "companies_total": d["accounts_total"],
+            }
+            ctx["note"] = ("This is the ProAds account itself. Empty sales and posts are expected: answer from your_business, "
+                           "campaigns and ads_last_30_days.")
+        return ctx
 
     def need_ai() -> MetaAI:
         ai = state.ai or MetaAI()
