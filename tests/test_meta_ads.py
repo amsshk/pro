@@ -34,7 +34,7 @@ class FakeGraph:
             if params.get("time_increment"):
                 row["date_start"] = "2026-10-01"          # one day inside the test billing period
             return R(200, {"data": [row]})
-        return R(200, {"name": "Mine", "currency": self.currency, "account_status": 1})
+        return R(200, {"name": "Mine", "currency": self.currency, "account_status": 1, "timezone_name": "Asia/Dubai"})
 
     def post(self, url, data, timeout):
         self.posts.append((url.split("/v25.0/")[1], data))

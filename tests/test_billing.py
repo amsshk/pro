@@ -155,58 +155,37 @@ def test_unknown_events_and_accounts_are_ignored(app):
 
 
 def test_renewal_invoice_gets_the_ad_spend_fee(app):
-    state = app.extensions["paysignal"]
-    state.billing_sync = True
-    state.ads_http = g = FakeGraph()
-    c = app.test_client()
-    tok = c.post("/auth/signup", json=ACCT).json["token"]
-    found = {"user": "Sara", "ad_accounts": [{"id": "act_11", "name": "Glow", "currency": "AED", "active": True}],
-             "pages": [{"id": "p1", "name": "Glow", "instagram_id": "", "instagram": ""}]}
-    monkey_key = "a-long-secret-key-for-tests"
-    import os
-    os.environ["PROADS_SECRET_KEY"] = monkey_key
-    try:
-        state.meta_conns.save("glow-clinic", {"access_token": "LONG", "expires_at": None}, found)
-        state.meta_conns.select("glow-clinic", "act_11", "p1", "px1", True)
-        state.launches.add("glow-clinic", {"campaign_id": "c1", "ad_sets": [], "ads": [], "status": "ACTIVE"})
-        state.billing.start_ads_trial("glow-clinic")
-        signed(c, {"type": "customer.subscription.updated", "data": {"object": {
-            "id": "sub_1", "customer": "cus_1", "status": "active", "metadata": {"client_id": "glow-clinic"},
-            "items": {"data": [{"current_period_start": 1790000000, "current_period_end": 1792600000}]}}}})
-        inv = {"id": "in_1", "customer": "cus_1", "currency": "aed", "status": "draft", "billing_reason": "subscription_cycle",
-               "period_start": 1790000000, "period_end": 1792600000}
-        assert signed(c, {"type": "invoice.created", "data": {"object": inv}}).status_code == 200
-        url, data = state.stripe_http.posts[-1]
-        assert url == "invoiceitems" and data["invoice"] == "in_1" and data["amount"] == str(billing.fee_amount(6000.50, 5))   # 5% of 6000.50 AED
-        assert "6,000.50" in data["description"] and state.stripe_http.headers == {"Idempotency-Key": "proads-fee-in_1"}
-        n = len(state.stripe_http.posts)
-        signed(c, {"type": "invoice.created", "data": {"object": inv}})                    # Stripe retries: no double fee
-        assert len(state.stripe_http.posts) == n
-        b = c.get("/billing/glow-clinic", headers={"X-API-Key": tok}).json
-        assert b["fees"][0]["fee"] == b["spend_so_far"]["fee"] == billing.fee_amount(6000.50, 5) / 100 and b["fee_percent"] == 5
-        # first invoice of a subscription and other currencies get no fee
-        signed(c, {"type": "invoice.created", "data": {"object": {**inv, "id": "in_2", "billing_reason": "subscription_create"}}})
-        assert len(state.stripe_http.posts) == n
-        # an invoice in another currency: the spend is converted at today's rate
-        monkey_rates = {"AED": 0.27}
-        billing._fx_cache["AED"] = (time.time(), {"USD": monkey_rates["AED"]})
-        signed(c, {"type": "invoice.created", "data": {"object": {**inv, "id": "in_3", "currency": "usd"}}})
-        url, data = state.stripe_http.posts[-1]
-        assert data["currency"] == "usd" and data["amount"] == str(billing.fee_amount(round(6000.50 * 0.27, 2), 5))
-        assert "about USD" in data["description"]
-        # Meta can't be reached: the invoice is held as a draft (no fee lost), then charged on retry
-        state.ledger.db.execute("DELETE FROM spend_sync")                      # pretend it was never synced
-        ok_get = g.get
-        g.get = lambda url, params, timeout: (_ for _ in ()).throw(ConnectionError("down")) if url.endswith("/insights") else ok_get(url, params, timeout)
-        signed(c, {"type": "invoice.created", "data": {"object": {**inv, "id": "in_4"}}})
-        assert state.stripe_http.posts[-1] == ("invoices/in_4", {"auto_advance": "false"})
-        assert [h["invoice_id"] for h in state.billing.held_fees()] == ["in_4"]
-        state.retry_held_fees()                                               # still down: stays held
-        assert state.billing.held_fees()[0]["tries"] == 1
-        g.get = ok_get
-        state.retry_held_fees()
-        assert [p[0] for p in state.stripe_http.posts[-2:]] == ["invoiceitems", "invoices/in_4"]
-        assert state.stripe_http.posts[-1][1] == {"auto_advance": "true"} and state.billing.held_fees() == []
-        assert state.billing.fee_logged("in_4")
-    finally:
-        os.environ.pop("PROADS_SECRET_KEY", None)
+    """Full flow: period ends -> settles 72h later -> fee goes on the next invoice, with a reference."""
+    from test_fee_safety import INV, setup
+    state, c, h, _ = setup(app, FakeGraph())
+    assert signed(c, {"type": "invoice.created", "data": {"object": INV}}).status_code == 200
+    assert not [p for p in state.stripe_http.posts if p[0] == "invoiceitems"]       # not settled yet: nothing guessed
+    state.settle_due_periods()
+    fp = state.fees.for_client("glow-clinic")[0]
+    assert fp["status"] == "ready" and fp["fee_minor"] == round(6000.50 * 5) and fp["completeness"] == "complete"
+    nxt = {**INV, "id": "in_2", "period_start": 1792600000, "period_end": 1795200000}
+    signed(c, {"type": "invoice.created", "data": {"object": nxt}})
+    url, data = state.stripe_http.posts[-1]
+    assert url == "invoiceitems" and data["invoice"] == "in_2" and data["amount"] == str(round(6000.50 * 5))
+    assert f"ref FP-{fp['id']}" in data["description"] and data["metadata[proads_ref]"] == f"proads-fee-period-{fp['id']}"
+    n = len(state.stripe_http.posts)
+    signed(c, {"type": "invoice.created", "data": {"object": nxt}})                    # Stripe retries: no double fee
+    assert len(state.stripe_http.posts) == n
+    b = c.get("/billing/glow-clinic", headers=h).json
+    assert b["fee_periods"][-1]["status"] == "billed" and b["fee_periods"][-1]["fee"] == round(6000.50 * 5) / 100
+    d = c.get(f"/billing/glow-clinic/fees/{fp['id']}", headers=h).json
+    camp = d["detail"]["campaigns"][0]
+    assert camp["time_zone"] == "Asia/Dubai" and camp["since"] == "2026-09-22" and camp["until"] == "2026-10-21"
+    assert camp["days"] == [{"day": "2026-10-01", "spend": 6000.5, "currency": "AED"}] and d["reference"] == f"FP-{fp['id']}"
+    assert c.get(f"/billing/glow-clinic/fees/{fp['id'] + 99}", headers=h).status_code == 404
+
+
+def test_fee_in_another_invoice_currency_records_the_rate(app):
+    from test_fee_safety import INV, setup
+    state, c, h, _ = setup(app, FakeGraph())
+    billing._fx_cache["AED"] = (time.time(), {"USD": 0.27})
+    signed(c, {"type": "invoice.created", "data": {"object": {**INV, "currency": "usd"}}})
+    state.settle_due_periods()
+    fp = state.fees.for_client("glow-clinic")[0]
+    assert fp["invoice_currency"] == "USD" and fp["fee_minor"] == round(6000.50 * 0.27 * 5)
+    assert fp["detail"]["fx"][0]["rate"] == 0.27 and fp["detail"]["fx"][0]["from"] == "AED"

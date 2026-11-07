@@ -148,7 +148,7 @@ def checkout_session(stripe: Stripe, client_id: str, email: str, customer_id: Op
             "tax_id_collection[enabled]": "true"}
     if fee_percent() > 0:                    # the customer sees the full price before paying
         data["custom_text[submit][message]"] = (f"Plus {fee_percent():g}% of the ad spend you run through ProAds, "
-                                                "added to each monthly invoice.")
+                                                "worked out after each month settles (in your ad account's time zone) and added to the next invoice.")
     if customer_id:
         data.update({"customer": customer_id, "customer_update[name]": "auto", "customer_update[address]": "auto"})
     elif email:
@@ -208,40 +208,6 @@ def fx_rate(src: str, dst: str, http=None) -> float:
     return float(hit[1][dst])
 
 
-class SpendUnavailable(RuntimeError):
-    """ProAds can't read the ad spend right now (e.g. Facebook disconnected). Never treat this as zero."""
-
-
-def add_spend_fee(stripe: "Stripe", invoice: dict, spend: float, currency: str, percent: float,
-                  rate: Optional[float] = None, key: Optional[str] = None, label: str = "Ad spend fee") -> Optional[dict]:
-    """Add the ad-spend fee to a draft renewal invoice. Ad spend in another currency is converted
-    at today's rate (shown on the invoice). Returns what was added, or None."""
-    inv_cur = (invoice.get("currency") or "").upper()
-    if spend <= 0 or percent <= 0 or not currency:
-        return None
-    rate = 1.0 if currency.upper() == inv_cur else (rate if rate is not None else fx_rate(currency, inv_cur))
-    converted = round(spend * rate, 2)
-    amount = fee_amount(converted, percent)
-    if amount <= 0:
-        return None
-    fmt = lambda t: time.strftime("%d %b %Y", time.gmtime(t))
-    spent = f"{currency.upper()} {spend:,.2f}" + (f" (about {inv_cur} {converted:,.2f})" if rate != 1.0 else "")
-    desc = (f"{label}: {percent:g}% of {spent} spent on campaigns published "
-            f"through ProAds ({fmt(invoice['period_start'])} - {fmt(invoice['period_end'])})")
-    ref = key or f"proads-fee-{invoice['id']}"
-    found = existing_item(stripe, invoice["customer"], ref)
-    if found:                                   # already charged (e.g. we crashed before writing it down)
-        return {"amount": found["amount"] / 100, "spend": spend, "currency": inv_cur, "description": found.get("description", desc),
-                "item": found["id"], "invoice": found.get("invoice"), "existing": True}
-    item = {"customer": invoice["customer"], "amount": str(amount), "currency": inv_cur.lower(), "description": desc,
-            "metadata[kind]": "ad_spend_fee", "metadata[spend]": f"{spend:.2f}", "metadata[proads_ref]": ref}
-    if invoice.get("id"):
-        item["invoice"] = invoice["id"]
-    made = stripe.post("invoiceitems", item, idempotency_key=ref)
-    return {"amount": amount / 100, "spend": spend, "currency": inv_cur, "description": desc,
-            "item": (made or {}).get("id"), "invoice": invoice.get("id")}
-
-
 def existing_item(stripe: "Stripe", customer: str, ref: str) -> Optional[dict]:
     """A fee item ProAds already created with this reference. Stripe's idempotency keys only last 24 hours,
     so this check is what stops a second charge for the same period later on."""
@@ -288,53 +254,6 @@ class BillingStore:
             self.db.execute("ALTER TABLE billing ADD COLUMN tier TEXT")
         if "ads_trial_started" not in cols:
             self.db.execute("ALTER TABLE billing ADD COLUMN ads_trial_started INTEGER")
-        self.db.execute(self.HELD)
-        self.db.execute(self.PENDING)
-        self.db.commit()
-
-    PENDING = """CREATE TABLE IF NOT EXISTS billing_fee_pending (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, client_id TEXT NOT NULL, invoice TEXT NOT NULL,
-        reason TEXT NOT NULL, created_at INTEGER NOT NULL, UNIQUE (client_id, invoice))"""
-
-    def add_pending(self, client_id: str, invoice: dict, reason: str) -> None:
-        """A period whose fee couldn't be worked out yet. Billed on a separate invoice once the spend is readable."""
-        keep = {k: invoice.get(k) for k in ("customer", "currency", "period_start", "period_end")}
-        keep["source_invoice"] = invoice.get("id")
-        self.db.execute("INSERT OR IGNORE INTO billing_fee_pending (client_id, invoice, reason, created_at) VALUES (?,?,?,?)",
-                        (client_id, json.dumps(keep, sort_keys=True), reason, int(time.time())))
-        self.db.commit()
-
-    def pending(self, client_id: Optional[str] = None) -> list[dict]:
-        q = "SELECT id, client_id, invoice, reason, created_at FROM billing_fee_pending"
-        rows = self.db.execute(q + (" WHERE client_id=?" if client_id else "") + " ORDER BY id",
-                               (client_id,) if client_id else ()).fetchall()
-        return [{"id": r[0], "client_id": r[1], "invoice": json.loads(r[2]), "reason": r[3], "created_at": r[4]} for r in rows]
-
-    def resolve_pending(self, pending_id: int) -> None:
-        self.db.execute("DELETE FROM billing_fee_pending WHERE id=?", (pending_id,))
-        self.db.commit()
-
-    HELD = """CREATE TABLE IF NOT EXISTS billing_fee_held (
-        invoice_id TEXT PRIMARY KEY, client_id TEXT NOT NULL, invoice TEXT NOT NULL,
-        tries INTEGER NOT NULL DEFAULT 0, held_at INTEGER NOT NULL)"""
-
-    def hold_fee(self, invoice: dict, client_id: str) -> None:
-        """Meta's spend couldn't be read: keep the invoice as a draft and try again later."""
-        keep = {k: invoice.get(k) for k in ("id", "customer", "currency", "period_start", "period_end")}
-        self.db.execute("INSERT OR IGNORE INTO billing_fee_held (invoice_id, client_id, invoice, held_at) VALUES (?,?,?,?)",
-                        (invoice["id"], client_id, json.dumps(keep), int(time.time())))
-        self.db.commit()
-
-    def held_fees(self) -> list[dict]:
-        rows = self.db.execute("SELECT invoice_id, client_id, invoice, tries, held_at FROM billing_fee_held").fetchall()
-        return [{"invoice_id": r[0], "client_id": r[1], "invoice": json.loads(r[2]), "tries": r[3], "held_at": r[4]} for r in rows]
-
-    def fee_retry(self, invoice_id: str) -> None:
-        self.db.execute("UPDATE billing_fee_held SET tries=tries+1 WHERE invoice_id=?", (invoice_id,))
-        self.db.commit()
-
-    def release_fee(self, invoice_id: str) -> None:
-        self.db.execute("DELETE FROM billing_fee_held WHERE invoice_id=?", (invoice_id,))
         self.db.commit()
 
     def start_ads_trial(self, client_id: str) -> None:
@@ -351,19 +270,6 @@ class BillingStore:
         return {"plan": plan, "trial_days": ads_trial_days(), "trial_started": started, "trial_ends": ends,
                 "in_trial": in_trial and not plan, "allowed": plan or not started or in_trial}
 
-    def fee_logged(self, invoice_id: str) -> bool:
-        return self.db.execute("SELECT 1 FROM billing_fees WHERE invoice_id=?", (invoice_id,)).fetchone() is not None
-
-    def log_fee(self, invoice_id: str, client_id: str, spend: float, currency: str, fee: float,
-                fee_currency: str = "") -> None:
-        self.db.execute("INSERT OR IGNORE INTO billing_fees (invoice_id, client_id, spend, currency, fee, fee_currency)"
-                        " VALUES (?,?,?,?,?,?)", (invoice_id, client_id, spend, currency, fee, fee_currency or currency))
-        self.db.commit()
-
-    def fees(self, client_id: str) -> list[dict]:
-        rows = self.db.execute("SELECT invoice_id, spend, currency, fee, created_at, COALESCE(fee_currency, currency)"
-                               " FROM billing_fees WHERE client_id=? ORDER BY created_at DESC LIMIT 24", (client_id,)).fetchall()
-        return [dict(zip(("invoice_id", "spend", "currency", "fee", "created_at", "fee_currency"), r)) for r in rows]
 
     def get(self, client_id: str) -> Optional[dict]:
         row = self.db.execute("SELECT customer_id, subscription_id, status, period_end, cancel_at_period_end,"

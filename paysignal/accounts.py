@@ -192,7 +192,7 @@ class AccountStore:
                 "campaigns": count("SELECT COUNT(*) FROM ad_launches WHERE client_id=?", cid),
                 "live_campaigns": count("SELECT COUNT(*) FROM ad_launches WHERE client_id=? AND status='ACTIVE'", cid),
                 "plan": text("SELECT status FROM billing WHERE client_id=?", cid),
-                "fees": count("SELECT COALESCE(SUM(fee),0) FROM billing_fees WHERE client_id=?", cid),
+                "fees": count("SELECT COALESCE(SUM(fee_minor),0)/100.0 FROM fee_periods WHERE client_id=? AND status='billed'", cid),
             })
         return out
 
@@ -255,7 +255,7 @@ class AccountStore:
         """Erase an account and every record that belongs to it."""
         counts = {}
         for table in ("payments", "posts", "promo_codes", "shopify_shops", "oauth_states", "wa_chats",
-                      "wa_conversions", "ad_launches", "campaign_drafts", "meta_connections", "billing", "billing_fees", "billing_fee_pending", "billing_fee_held", "spend_ledger", "spend_sync", "sessions", "password_resets", "accounts"):
+                      "wa_conversions", "ad_launches", "campaign_drafts", "meta_connections", "billing", "billing_fees", "billing_fee_pending", "billing_fee_held", "spend_ledger", "spend_sync", "fee_periods", "sessions", "password_resets", "accounts"):
             try:
                 counts[table] = self.db.execute(f"DELETE FROM {table} WHERE client_id=?", (client_id,)).rowcount
             except Exception:                       # table not created yet

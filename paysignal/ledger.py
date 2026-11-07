@@ -33,13 +33,33 @@ class SpendLedger:
             campaign_id TEXT PRIMARY KEY, client_id TEXT NOT NULL, synced_through TEXT, last_ok INTEGER,
             fails INTEGER NOT NULL DEFAULT 0, next_try INTEGER NOT NULL DEFAULT 0, last_error TEXT,
             gone INTEGER NOT NULL DEFAULT 0, closed INTEGER NOT NULL DEFAULT 0)""",
+        "CREATE TABLE IF NOT EXISTS ad_account_tz (ad_account TEXT PRIMARY KEY, tz TEXT NOT NULL)",
     ]
 
     def __init__(self, db):
         self.db = db
         for q in self.SCHEMA:
             self.db.execute(q)
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(spend_sync)").fetchall()}
+        for col, typ in (("ad_account", "TEXT"), ("closed_day", "TEXT")):
+            if col not in cols:
+                self.db.execute(f"ALTER TABLE spend_sync ADD COLUMN {col} {typ}")
         self.db.commit()
+
+    def set_tz(self, ad_account: str, tz: str) -> None:
+        if ad_account and tz:
+            self.db.execute("INSERT INTO ad_account_tz (ad_account, tz) VALUES (?,?) ON CONFLICT(ad_account)"
+                            " DO UPDATE SET tz=excluded.tz", (ad_account, tz))
+            self.db.commit()
+
+    def tz(self, ad_account: str) -> Optional[str]:
+        r = self.db.execute("SELECT tz FROM ad_account_tz WHERE ad_account=?", (ad_account,)).fetchone()
+        return r[0] if r else None
+
+    def days(self, campaign_id: str, since: str, until: str) -> list[dict]:
+        rows = self.db.execute("SELECT day, spend, currency FROM spend_ledger WHERE campaign_id=? AND day>=? AND day<=?"
+                               " ORDER BY day", (campaign_id, since, until)).fetchall()
+        return [{"day": d, "spend": sp, "currency": c or ""} for d, sp, c in rows]
 
     # ---- writing
     def record(self, client_id: str, campaign_id: str, ad_account: str, rows: list[dict]) -> None:
@@ -56,13 +76,14 @@ class SpendLedger:
                  r.get("account_currency") or "", now))
         self.db.commit()
 
-    def synced(self, client_id: str, campaign_id: str, through: str) -> None:
+    def synced(self, client_id: str, campaign_id: str, through: str, ad_account: str = "") -> None:
         now = int(time.time())
         self.db.execute(
-            "INSERT INTO spend_sync (campaign_id, client_id, synced_through, last_ok, fails, next_try, last_error, closed)"
-            " VALUES (?,?,?,?,0,?,NULL,0) ON CONFLICT(campaign_id) DO UPDATE SET synced_through=excluded.synced_through,"
-            " last_ok=excluded.last_ok, fails=0, next_try=excluded.next_try, last_error=NULL, closed=0",
-            (campaign_id, client_id, through, now, now + FRESH_FOR))
+            "INSERT INTO spend_sync (campaign_id, client_id, synced_through, last_ok, fails, next_try, last_error, closed,"
+            " closed_day, ad_account) VALUES (?,?,?,?,0,?,NULL,0,NULL,?) ON CONFLICT(campaign_id) DO UPDATE SET"
+            " synced_through=excluded.synced_through, last_ok=excluded.last_ok, fails=0, next_try=excluded.next_try,"
+            " last_error=NULL, closed=0, closed_day=NULL, ad_account=COALESCE(NULLIF(excluded.ad_account,''), ad_account)",
+            (campaign_id, client_id, through, now, now + FRESH_FOR, ad_account))
         self.db.commit()
 
     def failed(self, client_id: str, campaign_id: str, error: str, rate_limited: bool = False) -> None:
@@ -75,11 +96,13 @@ class SpendLedger:
             " last_error=excluded.last_error", (campaign_id, client_id, fails, int(time.time()) + wait, error[:300]))
         self.db.commit()
 
-    def mark(self, client_id: str, campaign_id: str, gone: bool = False, closed: bool = False) -> None:
-        """gone: deleted on Meta for good. closed: verified paused when Facebook was disconnected."""
-        self.db.execute("INSERT INTO spend_sync (campaign_id, client_id, gone, closed) VALUES (?,?,?,?)"
+    def mark(self, client_id: str, campaign_id: str, gone: bool = False, closed: bool = False,
+             closed_day: Optional[str] = None) -> None:
+        """gone: deleted on Meta for good. closed: verified paused when Facebook was disconnected (on closed_day)."""
+        self.db.execute("INSERT INTO spend_sync (campaign_id, client_id, gone, closed, closed_day) VALUES (?,?,?,?,?)"
                         " ON CONFLICT(campaign_id) DO UPDATE SET gone=MAX(gone, excluded.gone),"
-                        " closed=MAX(closed, excluded.closed)", (campaign_id, client_id, int(gone), int(closed)))
+                        " closed=MAX(closed, excluded.closed), closed_day=COALESCE(excluded.closed_day, closed_day)",
+                        (campaign_id, client_id, int(gone), int(closed), closed_day))
         self.db.commit()
 
     def forget_client(self, client_id: str) -> None:
@@ -89,9 +112,10 @@ class SpendLedger:
 
     # ---- reading
     def state(self, campaign_id: str) -> Optional[dict]:
-        r = self.db.execute("SELECT client_id, synced_through, last_ok, fails, next_try, last_error, gone, closed"
-                            " FROM spend_sync WHERE campaign_id=?", (campaign_id,)).fetchone()
-        return dict(zip(("client_id", "synced_through", "last_ok", "fails", "next_try", "last_error", "gone", "closed"), r)) if r else None
+        keys = ("client_id", "synced_through", "last_ok", "fails", "next_try", "last_error", "gone", "closed",
+                "closed_day", "ad_account")
+        r = self.db.execute(f"SELECT {','.join(keys)} FROM spend_sync WHERE campaign_id=?", (campaign_id,)).fetchone()
+        return dict(zip(keys, r)) if r else None
 
     def uncovered(self, campaign_ids: list[str], until_day: str) -> list[str]:
         """Campaigns whose spend isn't known through until_day (and weren't deleted or verified paused)."""
@@ -122,6 +146,11 @@ def sync(pub, ledger: SpendLedger, client_id: str, launches: list[dict], ad_acco
     today = today or day(int(time.time()))
     now = int(time.time())
     done, skipped, failed = [], [], []
+    if ad_account and not ledger.tz(ad_account) and hasattr(pub, "account"):
+        try:
+            ledger.set_tz(ad_account, (pub.account() or {}).get("timezone_name") or "")
+        except error_cls:
+            pass                                            # tried again next sync; settlement waits for it
     for l in launches:
         cid = l["campaign_id"]
         st = ledger.state(cid) or {}
@@ -144,6 +173,6 @@ def sync(pub, ledger: SpendLedger, client_id: str, launches: list[dict], ad_acco
                 failed.append(cid)
             continue
         ledger.record(client_id, cid, ad_account, rows)
-        ledger.synced(client_id, cid, today)
+        ledger.synced(client_id, cid, today, ad_account)
         done.append(cid)
     return {"synced": done, "skipped": skipped, "failed": failed}

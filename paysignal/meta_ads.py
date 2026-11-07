@@ -128,7 +128,7 @@ class Publisher:
 
     # ---------- publish ----------
     def account(self) -> dict:
-        return self._get(self.s["ad_account"], "name,currency,account_status", "reading the ad account")
+        return self._get(self.s["ad_account"], "name,currency,account_status,timezone_name", "reading the ad account")
 
     def publish(self, plan: dict, images: dict[str, str], landing_url: str, currency: str = "") -> dict:
         """Create the whole campaign PAUSED. images: "<adset index>-<ad index>" -> base64 JPEG/PNG."""
@@ -289,6 +289,13 @@ class LaunchStore:
         rows = self.db.execute("SELECT data, status, created_at FROM ad_launches WHERE client_id=?"
                                " ORDER BY created_at DESC, rowid DESC", (client_id,)).fetchall()
         return [{**json.loads(d), "status": st, "created_day": (ca or "")[:10]} for d, st, ca in rows]
+
+    def created_ts(self, campaign_id: str) -> Optional[int]:
+        r = self.db.execute("SELECT created_at FROM ad_launches WHERE campaign_id=?", (campaign_id,)).fetchone()
+        if not r or not r[0]:
+            return None
+        from datetime import datetime, timezone
+        return int(datetime.strptime(r[0][:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).timestamp())
 
     def clients(self) -> list[str]:
         return [r[0] for r in self.db.execute("SELECT DISTINCT client_id FROM ad_launches").fetchall()]
