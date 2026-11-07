@@ -273,10 +273,9 @@ class App:
     def _wa_report(self, client_id: str, p, match: dict) -> None:
         cfg = (self.clients.get(client_id) or {}).get("whatsapp") or {}
         source_id = match["utm_content"].split(":", 1)[1]
-        try:
-            value = self.engine(client_id).scorer.score(p).real_value
-        except Exception:
-            value = p.amount
+        value = round(p.amount, 2)                     # a Purchase is what was paid (or real profit, if chosen)
+        if self.signals.value_mode(client_id) == "profit" and p.cost_of_goods() is not None:
+            value = round(self.engine(client_id).scorer.margin(p), 2)
         live = bool(cfg.get("live") and cfg.get("dataset_id") and cfg.get("access_token") and cfg.get("waba_id"))
         status = "too old for Meta (over 7 days)" if whatsapp.too_old_for_meta(p) else ("sending" if live else "practice mode")
         with self.lock:

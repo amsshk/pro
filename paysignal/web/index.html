@@ -777,7 +777,7 @@ main{background:transparent}
       blocks.push(h("section", { class: "card", "aria-labelledby": "wa-sent" },
         h("h2", { id: "wa-sent" }, "WhatsApp sales reported to Meta"),
         h("div", { class: "scroll" }, h("table", {},
-          h("thead", {}, h("tr", {}, ["Sale", "Ad", "Real value", "Status"].map((x) => h("th", { scope: "col" }, x)))),
+          h("thead", {}, h("tr", {}, ["Sale", "Ad", "Value sent", "Status"].map((x) => h("th", { scope: "col" }, x)))),
           h("tbody", {}, d.recent_sales_reported.map((x) => h("tr", {}, h("td", {}, x.payment_id), h("td", {}, x.source_id),
             h("td", {}, fmt.format(Math.round(x.value)) + " " + x.currency),
             h("td", {}, h("span", { class: "badge " + (x.status === "sent" ? "b-measured" : /error/.test(x.status) ? "b-est" : "b-neutral") }, x.status)))))))));
