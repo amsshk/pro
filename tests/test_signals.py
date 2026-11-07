@@ -124,7 +124,7 @@ def test_purchase_value_is_what_was_paid_unless_profit_is_chosen():
     assert ev["o1"]["user_data"]["fbc"] == "fb.1.1.abc" and ev["o1"]["action_source"] == "website"
     assert ev["u1"]["action_source"] == "other" and ev["u1"]["custom_data"]["proads_source"] == "upload"
     ev = {e["custom_data"]["order_id"]: e for e in eng.push_to_meta("px", "tok", dry_run=True, value_mode="profit")[0]["payload"]["data"]}
-    assert ev["o1"]["custom_data"]["value"] == 180.0 and ev["o1"]["custom_data"]["proads_value_basis"] == "profit"
+    assert ev["o1"]["custom_data"]["value"] == 180.0 and ev["o1"]["custom_data"]["proads_value_basis"] == "product_cost_adjusted"
     assert ev["u1"]["custom_data"]["value"] == 200.0                            # no known cost: never a guess
 
 

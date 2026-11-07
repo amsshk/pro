@@ -69,7 +69,7 @@ def build_purchase_event(p: Payment, score: Score, default_country_code: str = "
             "value": value,
             "currency": p.currency,
             "order_id": p.external_id,
-            "proads_value_basis": "profit" if value != round(p.amount, 2) else "amount_paid",
+            "proads_value_basis": "product_cost_adjusted" if value != round(p.amount, 2) else "amount_paid",
             "proads_source": p.source,
         },
     }

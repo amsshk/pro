@@ -491,6 +491,7 @@ main{background:transparent}
     ["#/upload", "Connect & upload", "M12 16V4M6 10l6-6 6 6M4 20h16"],
     ["#/whatsapp", "WhatsApp", "M12 3a9 9 0 0 0-7.8 13.5L3 21l4.6-1.2A9 9 0 1 0 12 3z"],
     ["#/assistant", "Ask & campaigns", "M4 5h16v11H8l-4 4z"],
+    ["#/buyers", "Buyer quality", "M16 11a4 4 0 1 0-8 0 4 4 0 0 0 8 0zM4 21c1.5-4 4.5-6 8-6s6.5 2 8 6M19 3l1.5 1.5L23 2"],
     ["#/learning", "Meta learning", "M4 19V5M4 19h16M8 15l3-4 3 2 5-7"],
     ["#/engines", "Profit engine", "M12 3v3M12 18v3M4.6 6.6l2.1 2.1M17.3 15.3l2.1 2.1M3 12h3M18 12h3M4.6 17.4l2.1-2.1M17.3 8.7l2.1-2.1M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"],
     ["#/competitors", "Competitor X-ray", "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM16 16l5 5M8 11h6M11 8v6", "Premium"],
@@ -1552,6 +1553,96 @@ main{background:transparent}
       h("a", { class: "btn btn-primary", href: "#/billing" }, "Add card"));
   }
 
+  // ---------- Buyer Quality Intelligence ----------
+  async function viewBuyers() {
+    const head = h("header", {}, h("h1", {}, "Buyer quality"),
+      h("p", { class: "sub" }, "Based on the customers who actually made you money, what should you test next on Meta to get more like them?"));
+    root.replaceChildren(layout("#/buyers", [head, loading("Looking at your real buyers…")]));
+    let d;
+    try { d = await api("/buyers/" + cid()); } catch (e) { if (e.message !== "signed out") root.replaceChildren(layout("#/buyers", [head, errorCard(e.message)])); return; }
+    const a = d.analysis, cur = a.currency || "AED";
+    const m = (x) => fmt.format(Math.round(x)) + " " + cur;
+    const post = (url, body) => api(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+    const blocks = [head];
+    if (!a.ready) {
+      blocks.push(h("section", { class: "card" }, h("h2", {}, "Not enough buyers to judge yet"), h("p", { class: "sub", style: "margin:0" }, a.needs),
+        h("a", { class: "btn btn-primary", href: "#/upload", style: "align-self:flex-start" }, "Upload sales history")));
+    } else {
+      const k = (label, v, note) => h("div", { class: "ek" }, h("span", { class: "label" }, label), h("b", {}, v), note ? h("span", { class: "small" }, note) : null);
+      blocks.push(h("section", { class: "card estrip" },
+        h("div", { class: "elead" }, h("span", { class: "label" }, "Your best 20% of buyers"),
+          h("b", { class: "ebig" }, m(a.best.avg_value)), h("span", { class: "small" }, "each in their first " + a.window_days + " days" + (a.best.share_of_value != null ? ", " + Math.round(a.best.share_of_value * 100) + "% of all value" : ""))),
+        k("Average buyer", m(a.avg_value), "first " + a.window_days + " days"),
+        k("Came back", Math.round(a.repeat_rate * 100) + "%", "of all buyers (best: " + Math.round(a.best.repeat_rate * 100) + "%)"),
+        k("Buyers compared", fmt.format(a.customers), "with a full " + a.window_days + "-day window")));
+      blocks.push(h("p", { class: "small", style: "margin:-8px 0 0" }, "Value = money actually paid, " + a.value_basis + ". Only real repeat purchases count; nothing here is a prediction. A difference is only called real when its 95% range doesn't include zero, and every group needs at least 15 buyers."));
+      // suggested tests
+      const sug = d.suggestions || [];
+      blocks.push(h("section", { class: "card" }, h("div", { class: "between" }, h("h2", {}, "What to test next on Meta"), h("span", { class: "small" }, "from confident findings only")),
+        sug.length ? sug.map((x) => {
+          const ev = x.evidence;
+          const btn = h("button", { class: "btn btn-primary", type: "button", style: "align-self:flex-start" }, "Plan this test");
+          btn.addEventListener("click", async () => { btn.disabled = true; try { await post("/buyers/" + cid() + "/experiments", { dimension: x.dimension, segment: x.segment }); toast("Planned. Build the variant ad next."); viewBuyers(); } catch (e) { if (e.message !== "signed out") toast(e.message); btn.disabled = false; } });
+          return h("div", { class: "adset", style: "gap:8px" },
+            h("div", { class: "between", style: "gap:10px" }, h("b", {}, x.hypothesis), x.tried_before ? h("span", { class: "badge b-neutral" }, "Tested before, not rejected") : null),
+            h("span", { class: "small" }, ev.customers + " buyers: " + m(ev.avg_value) + " each in " + ev.window_days + " days, " + (ev.vs_rest >= 0 ? "+" : "") + m(ev.vs_rest) + " vs other buyers (95% range " + m(ev.interval[0]) + " to " + m(ev.interval[1]) + "). " + Math.round(ev.repeat_rate * 100) + "% came back, " + Math.round(ev.refund_rate * 100) + "% refunded."),
+            h("span", { style: "font-size:14px" }, h("b", {}, "One change: "), x.change),
+            h("span", { class: "small" }, "Control vs variant, equal budget" + (x.design.daily_budget_per_arm ? " (" + m(x.design.daily_budget_per_arm) + " a day each)" : "") + (x.design.min_spend_per_arm ? ", at least " + m(x.design.min_spend_per_arm) + " spend per side before deciding" : "") + ", up to " + x.design.max_days + " days. Judged on " + x.metric.toLowerCase() + "."),
+            btn);
+        }) : h("p", { class: "sub", style: "margin:0" }, "No confident finding to test yet. ProAds won't suggest a test from weak evidence.")));
+      // segments
+      a.dimensions.forEach((dm) => {
+        if (!dm.segments.length && !dm.too_small) return;
+        const V = { better: ["b-measured", "Better buyers"], worse: ["b-est", "Worse buyers"], unclear: ["b-neutral", "No clear difference"] };
+        blocks.push(h("section", { class: "card", style: "min-width:0" }, h("div", { class: "between" }, h("h2", {}, dm.label), dm.too_small ? h("span", { class: "small" }, dm.too_small + " too small to judge") : null),
+          dm.segments.length ? h("div", { class: "scroll" }, h("table", { class: "etable" },
+            h("thead", {}, h("tr", {}, ["", "Buyers", "Value each", "vs others", "Came back", "Refunded", "Of best buyers", ""].map((t) => h("th", {}, t)))),
+            h("tbody", {}, dm.segments.map((sg) => h("tr", {},
+              h("td", {}, h("b", { dir: "auto" }, sg.name)), h("td", {}, fmt.format(sg.customers)), h("td", {}, m(sg.avg_value)),
+              h("td", { style: sg.verdict === "better" ? "background:rgba(22,163,74,.12)" : sg.verdict === "worse" ? "background:rgba(220,38,38,.10)" : "" }, (sg.vs_rest >= 0 ? "+" : "") + m(sg.vs_rest)),
+              h("td", {}, Math.round(sg.repeat_rate * 100) + "%"), h("td", {}, Math.round(sg.refund_rate * 100) + "%"),
+              h("td", {}, Math.round(sg.share_of_best * 100) + "% (of all: " + Math.round(sg.share_of_all * 100) + "%)"),
+              h("td", {}, h("span", { class: "badge " + V[sg.verdict][0] }, V[sg.verdict][1]))))))) : h("p", { class: "small", style: "margin:0" }, "Each group needs at least 15 buyers.")));
+      });
+    }
+    // experiment history
+    const ex = d.experiments || [];
+    const camps = d.campaigns || [];
+    blocks.push(h("section", { class: "card" }, h("h2", {}, "Tests and decisions"),
+      ex.length ? ex.map((e) => {
+        const box = h("div", { class: "adset", style: "gap:8px" },
+          h("div", { class: "between", style: "gap:10px" }, h("b", {}, e.hypothesis),
+            h("span", { class: "badge " + (e.decision === "keep" ? "b-measured" : e.decision === "reject" ? "b-est" : "b-neutral") },
+              e.status === "decided" ? (e.decision === "keep" ? "Kept" : e.decision === "reject" ? "Rejected" : "Inconclusive") : e.status === "running" ? "Running" : "Planned")),
+          h("span", { class: "small" }, "One change: " + e.change));
+        if (e.status === "planned") {
+          const pick = (id) => h("select", { id }, h("option", { value: "" }, "Choose…"), camps.map((c) => h("option", { value: c.campaign_id }, c.name || c.campaign_id)));
+          const c1 = pick("ctl-" + e.id), c2 = pick("var-" + e.id);
+          box.append(h("div", { class: "grid2" }, h("label", { class: "f", for: "ctl-" + e.id }, "Control (current best ad)", c1), h("label", { class: "f", for: "var-" + e.id }, "Variant (the change)", c2)),
+            h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" },
+              h("button", { class: "btn btn-ghost", type: "button", onclick: () => { pendingBrief = "Experiment variant. Hypothesis: " + e.hypothesis + " Change ONE thing only: " + e.change + " Keep audience, budget and offer the same as the control."; go("#/assistant"); } }, "Build the variant ad"),
+              h("button", { class: "btn btn-primary", type: "button", onclick: async (ev) => { ev.currentTarget.disabled = true; try { await post("/buyers/" + cid() + "/experiments/" + e.id + "/start", { control_campaign: c1.value, variant_campaign: c2.value }); viewBuyers(); } catch (er) { if (er.message !== "signed out") toast(er.message); ev.target.disabled = false; } } }, "Start the test")),
+            h("span", { class: "small" }, "Tip: Meta's own A/B test (Ads Manager → Experiments) splits the audience cleanly; ProAds still judges both campaigns on real paid purchases."));
+        }
+        if (e.result && e.result.arms) {
+          const r = e.result, A = r.arms;
+          box.append(h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["", "Spend", "Real purchases", "Net value", "Value per spend"].map((t) => h("th", {}, t)))),
+            h("tbody", {}, ["control", "variant"].map((k) => h("tr", {}, h("td", {}, k === "control" ? "Control" : "Variant"), h("td", {}, m(A[k].spend)),
+              h("td", {}, fmt.format(A[k].purchases)), h("td", {}, m(A[k].value)), h("td", {}, A[k].spend ? (A[k].value / A[k].spend).toFixed(2) : "–")))))),
+            h("span", { style: "font-size:14px" }, r.why + (r.confidence_variant_better != null ? " (" + Math.round(r.confidence_variant_better * 100) + "% sure the variant is better)" : "")));
+        }
+        if (e.status !== "decided" && (e.status === "running")) {
+          const sugg = e.result && e.result.suggested;
+          box.append(h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, ["keep", "reject", "inconclusive"].map((dec) =>
+            h("button", { class: "btn " + (sugg === dec ? "btn-primary" : "btn-ghost"), type: "button", onclick: async () => { try { await post("/buyers/" + cid() + "/experiments/" + e.id + "/decide", { decision: dec }); viewBuyers(); } catch (er) { if (er.message !== "signed out") toast(er.message); } } },
+              (dec === "keep" ? "Keep the change" : dec === "reject" ? "Reject it" : "Inconclusive") + (sugg === dec ? " (ProAds' verdict)" : "")))));
+        }
+        if (e.status === "decided") box.append(h("span", { class: "small" }, "Decided " + new Date(e.decided_at * 1000).toLocaleDateString("en-GB") + (e.note ? ": " + e.note : "") + (e.decision === "reject" ? ". ProAds won't suggest it again." : "")));
+        return box;
+      }) : h("p", { class: "sub", style: "margin:0" }, "No tests yet. Plan one above; every hypothesis, result and decision is kept here.")));
+    root.replaceChildren(layout("#/buyers", blocks));
+  }
+
   // ---------- Meta Learning Accelerator ----------
   async function viewLearning() {
     const head = h("header", {}, h("h1", {}, "Meta learning"),
@@ -1587,7 +1678,7 @@ main{background:transparent}
       blocks.push(h("section", { class: "card" }, h("h2", {}, "What each purchase is worth to Meta"),
         h("div", { class: "row", style: "align-items:stretch" },
           vm("amount", "Amount paid (recommended)", "The real price the customer paid. Your ROAS in Ads Manager stays true, and Meta learns from real money."),
-          vm("profit", "Profit on that order", d.costs_known ? "Price minus the product costs you gave ProAds, for that order only. Meta then chases profitable orders; ROAS in Ads Manager will read lower." : "Needs product costs in your sales data first.")),
+          vm("profit", "Product-cost-adjusted value", d.costs_known ? "Price minus the product costs you gave ProAds, for that order only. It is not full profit: delivery, payment fees and other costs aren't taken off. Meta then leans towards higher-margin orders; ROAS in Ads Manager will read lower." : "Needs product costs in your sales data first.")),
         h("p", { class: "small", style: "margin:0" }, "Predictions (expected refunds, future purchases) are never sent as a purchase's value. They stay in ProAds.")));
       // browser ids
       const snippet = '<script>(function(){function c(n){var m=document.cookie.match("(^|;)\\s*"+n+"=([^;]+)");return m?decodeURIComponent(m[2]):""}var p=c("_fbp"),f=c("_fbc"),q=new URLSearchParams(location.search).get("fbclid");if(!f&&q){f="fb.1."+Date.now()+"."+q}if(!p&&!f)return;fetch("/cart/update.js",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({attributes:{_fbp:p,_fbc:f}})}).catch(function(){})})();<\/script>';
@@ -2427,7 +2518,7 @@ main{background:transparent}
   }
 
   // ---------- router ----------
-  const VIEWS = { "#/platforms": viewPlatforms, "#/home": viewHome, "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling, "#/competitors": viewCompetitors, "#/engines": viewEngines, "#/learning": viewLearning };
+  const VIEWS = { "#/platforms": viewPlatforms, "#/home": viewHome, "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling, "#/competitors": viewCompetitors, "#/engines": viewEngines, "#/learning": viewLearning, "#/buyers": viewBuyers };
   function go(hash) { if (location.hash !== hash) location.hash = hash; else route(); }
   async function route() {
     const [path, query] = location.hash.split("?");

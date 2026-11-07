@@ -50,7 +50,7 @@ from .attribution import make_promo_code, tag_link
 from .dashboard import build_dashboard, _realized
 from .ads_report import build_report
 from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, business_context
-from . import billing, competitors, engines, forecast, leaks, learning, meta_capi, signals, ledger, meta_ads, meta_connect, settlement
+from . import billing, buyers, competitors, engines, forecast, leaks, learning, meta_capi, signals, ledger, meta_ads, meta_connect, settlement
 from .connectors.stripe import verify_signature as stripe_signature_ok
 from .audit import audit_summary, audit_text, build_audit
 from .importers import xlsx_to_csv, import_auto
@@ -122,6 +122,7 @@ class App:
         self.economics = engines.EconomicsStore(self.store.db)
         self.unpaid = leaks.UnpaidStore(self.store.db)
         self.signals = signals.SignalLog(self.store.db)
+        self.experiments = buyers.ExperimentStore(self.store.db)
         self._nudged: dict = {}
         self.stripe_http = None                # set in tests
         self.billing_sync = False              # tests: add invoice fees inline
@@ -829,6 +830,113 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         with state.lock:
             state.signals.set_value_mode(client_id, mode)
         return {"value_mode": mode}
+
+    # ---------------- Buyer Quality Intelligence ----------------
+    def buyer_inputs(client_id):
+        with state.lock:
+            eng = state.engine(client_id)
+            promo = {p["code"].upper(): p["platform"] for p in eng.store.promos(client_id)} if hasattr(eng.store, "promos") else {}
+            launches = state.launches.list(client_id)
+            names = {meta_ads._slug(l.get("name", ""), 30): l.get("name", "") for l in launches}
+            custs, basis, last = buyers.build_customers(eng, promo, names)
+        return custs, basis, last, launches
+
+    def experiment_arms(client_id, e: dict, launches: list) -> dict:
+        """Real paid purchases (after refunds) and recorded spend per arm since the test started."""
+        start = datetime.fromtimestamp(e["started_at"], timezone.utc)
+        since_day = start.date().isoformat()
+        today = datetime.now(timezone.utc).date().isoformat()
+        slug = {l["campaign_id"]: meta_ads._slug(l.get("name", ""), 30) for l in launches}
+        out = {}
+        with state.lock:
+            eng = state.engine(client_id)
+            purchases = eng.store.purchases(client_id)
+            for arm, camp in (("control", e["control_campaign"]), ("variant", e["variant_campaign"])):
+                spend, _ = state.ledger.total([camp], since_day, today)
+                k, value = 0, 0.0
+                for p in purchases:
+                    if p.occurred_at < start or (p.utm_medium or "").lower() != "paid" or (p.utm_campaign or "") != slug.get(camp):
+                        continue
+                    ref = min(eng.store.refunded_amount(client_id, p.external_id), p.amount)
+                    if ref >= p.amount:
+                        continue
+                    k += 1
+                    value += p.amount - ref - (p.cost_of_goods() or 0.0)
+                out[arm] = {"campaign_id": camp, "spend": round(spend, 2), "purchases": k, "value": round(value, 2)}
+        return out
+
+    @flask.get("/buyers/<client_id>")
+    def buyers_view(client_id):
+        """Which real buyers made this business money, what brought them, and what to test next on Meta."""
+        state.require_key(client_id)
+        custs, basis, last, launches = buyer_inputs(client_id)
+        cur = state.config(client_id).get("currency", "AED")
+        an = buyers.analyse(custs, last, cur)
+        an["value_basis"] = basis
+        with state.lock:
+            history = state.experiments.list(client_id)
+            econ_in = state.economics.get(client_id)
+        econ = engines.economics(econ_in) if econ_in else None
+        for e in history:
+            if e["status"] == "running" and e["started_at"]:
+                arms = experiment_arms(client_id, e, launches)
+                ev = buyers.evaluate(arms, (e["design"] or {}).get("min_spend_per_arm"), e["started_at"],
+                                     (e["design"] or {}).get("max_days", 14))
+                e["result"] = {"arms": arms, **ev}
+                with state.lock:
+                    state.experiments.save_result(client_id, e["id"], e["result"])
+        names = {l["campaign_id"]: l.get("name", "") for l in launches}
+        return {"analysis": an, "suggestions": buyers.suggest(an, history, econ, (econ_in or {}).get("daily_budget")),
+                "experiments": history, "campaigns": [{"campaign_id": k, "name": v} for k, v in names.items()]}
+
+    @flask.post("/buyers/<client_id>/experiments")
+    def experiment_create(client_id):
+        """Save a suggested experiment (rebuilt on the server from real data, never taken from the browser)."""
+        state.require_key(client_id)
+        body = request.get_json(silent=True) or {}
+        custs, basis, last, _ = buyer_inputs(client_id)
+        an = buyers.analyse(custs, last, state.config(client_id).get("currency", "AED"))
+        with state.lock:
+            history = state.experiments.list(client_id)
+            econ_in = state.economics.get(client_id)
+        if any(h["dimension"] == body.get("dimension") and h["segment"] == body.get("segment")
+               and h["status"] in ("planned", "running") for h in history):
+            abort(409, "This test is already planned or running.")
+        sug = buyers.suggest(an, history, engines.economics(econ_in) if econ_in else None, (econ_in or {}).get("daily_budget"))
+        pick = next((x for x in sug if x["dimension"] == body.get("dimension") and x["segment"] == body.get("segment")), None)
+        if not pick:
+            abort(404, "That idea isn't supported by your data any more.")
+        with state.lock:
+            eid = state.experiments.add(client_id, pick)
+        return {"id": eid}
+
+    @flask.post("/buyers/<client_id>/experiments/<int:eid>/start")
+    def experiment_start(client_id, eid):
+        state.require_key(client_id)
+        body = request.get_json(silent=True) or {}
+        with state.lock:
+            ids = {l["campaign_id"] for l in state.launches.list(client_id)}
+            e = state.experiments.get(client_id, eid)
+        if not e:
+            abort(404, "no such experiment")
+        c, v = str(body.get("control_campaign") or ""), str(body.get("variant_campaign") or "")
+        if c not in ids or v not in ids or c == v:
+            abort(400, "pick two different campaigns published through ProAds: the control and the variant")
+        with state.lock:
+            state.experiments.start(client_id, eid, c, v)
+        return {"started": True}
+
+    @flask.post("/buyers/<client_id>/experiments/<int:eid>/decide")
+    def experiment_decide(client_id, eid):
+        state.require_key(client_id)
+        body = request.get_json(silent=True) or {}
+        if body.get("decision") not in ("keep", "reject", "inconclusive"):
+            abort(400, "decision must be keep, reject or inconclusive")
+        with state.lock:
+            if not state.experiments.get(client_id, eid):
+                abort(404, "no such experiment")
+            state.experiments.decide(client_id, eid, body["decision"], str(body.get("note") or ""))
+        return {"decided": body["decision"]}
 
     @flask.get("/leaks/<client_id>")
     def leaks_endpoint(client_id):
