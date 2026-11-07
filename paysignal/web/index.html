@@ -49,6 +49,11 @@ h2{margin:0;font-family:var(--head);font-size:20px;font-weight:600}
 .row{display:flex;flex-wrap:wrap;gap:24px}
 .row>.card{flex:1 1 420px}
 .between{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.uchips{display:flex;flex-wrap:wrap;gap:8px}
+.uchip{min-height:40px;padding:0 16px;border-radius:999px;border:1px solid var(--edge);background:var(--soft);color:#E6E6E6;font:inherit;font-size:14px;font-weight:600;cursor:pointer}
+.uchip:hover{border-color:var(--violet)}
+.uchip[aria-pressed=true]{background:var(--violet);border-color:var(--violet);color:#0A0A0A}
+.uchip[aria-pressed=true]::before{content:"✓ "}
 .pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
 .pcard{display:flex;flex-direction:column;align-items:flex-start;gap:10px;text-align:left;background:var(--soft);border:1px solid var(--edge);border-radius:14px;padding:16px;cursor:pointer;min-height:88px}
 .pcard:hover{border-color:var(--violet)}
@@ -1005,24 +1010,88 @@ main{background:transparent}
       h("div", { class: "grid2" }, h("label", { class: "f", for: "tname" }, "Post name", tName), h("label", { class: "f", for: "tplat" }, "Platform", tPlat)),
       h("label", { class: "f", for: "turl" }, "Page the link opens", tUrl), tBtn);
 
+    // what does this business use? only those get shown
+    const SOCIAL = [["instagram", "Instagram"], ["facebook", "Facebook"], ["tiktok", "TikTok"], ["snapchat", "Snapchat"], ["whatsapp", "WhatsApp"], ["youtube", "YouTube"], ["x", "X (Twitter)"]];
+    const SHOPS = [["shopify", "Shopify"], ["salla", "Salla"], ["zid", "Zid"], ["woo", "WooCommerce"], ["wix", "Wix"], ["noon", "noon"], ["amazon", "Amazon"],
+      ["stripe", "Stripe"], ["tap", "Tap"], ["paypal", "PayPal"], ["square", "Square"], ["foodics", "Foodics"], ["fresha", "Fresha"], ["cash", "Cash, DMs, bank transfer"]];
+    const key = "proads.uses." + cid();
+    let uses = null;
+    try { uses = JSON.parse(localStorage.getItem(key) || "null"); } catch (e) {}
+    if (!Array.isArray(uses)) {
+      uses = [];
+      if (c && c.meta_login && c.meta_login.connected) uses.push("instagram", "facebook");
+      if (c && c.shopify_app && c.shopify_app.connected) uses.push("shopify");
+    }
+    const has = (k) => uses.includes(k);
+    const chosen = h("div", { style: "display:flex;flex-direction:column;gap:20px" });
+    const chip = (k, label) => {
+      const b = h("button", { type: "button", class: "uchip", "aria-pressed": has(k) ? "true" : "false" }, label);
+      b.addEventListener("click", () => {
+        uses = has(k) ? uses.filter((x) => x !== k) : uses.concat(k);
+        b.setAttribute("aria-pressed", has(k) ? "true" : "false");
+        try { localStorage.setItem(key, JSON.stringify(uses)); } catch (e) {}
+        drawChosen();
+      });
+      return b;
+    };
+    const picker = h("section", { class: "card", "aria-labelledby": "pick-h" },
+      h("div", {}, h("h2", { id: "pick-h" }, "What do you use?"), h("p", { class: "sub", style: "margin:4px 0 0" }, "Tap everything your business uses. ProAds shows how to connect each one.")),
+      h("div", { style: "display:flex;flex-direction:column;gap:8px" }, h("b", { style: "font-size:13px;color: var(--muted)" }, "Social media"), h("div", { class: "uchips" }, SOCIAL.map(([k, l]) => chip(k, l)))),
+      h("div", { style: "display:flex;flex-direction:column;gap:8px" }, h("b", { style: "font-size:13px;color: var(--muted)" }, "Where you get paid"), h("div", { class: "uchips" }, SHOPS.map(([k, l]) => chip(k, l)))),
+      h("a", { href: "#/platforms", style: "font-size:13px;align-self:flex-start" }, "Don't see yours? More platforms by country"));
+    const NAME = Object.fromEntries(SOCIAL.concat(SHOPS));
+    const socialCard = (k) => h("section", { class: "card" },
+      h("div", { class: "between" }, h("h2", {}, NAME[k]), h("span", { class: "badge b-neutral" }, "Links & codes")),
+      h("p", { class: "sub", style: "margin:0" }, k === "whatsapp"
+        ? "Read your WhatsApp chats to see which posts brought people who paid, and give each post its own code."
+        : "Give each " + NAME[k] + " post its own tracking link (for the bio, sticker or caption) and a code for people who message you. ProAds then shows which " + NAME[k] + " posts bring buyers, not just views."),
+      h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" },
+        k === "whatsapp" ? h("a", { class: "btn btn-primary", href: "#/whatsapp" }, "Open WhatsApp") :
+          h("button", { class: "btn btn-primary", type: "button", onclick: () => { tPlat.value = ["tiktok", "snapchat", "youtube"].includes(k) ? k : "instagram"; document.getElementById("s3").scrollIntoView({ behavior: "smooth" }); tName.focus(); } }, "Create " + (/^[AEIOU]/.test(NAME[k]) ? "an " : "a ") + NAME[k] + " link"),
+        k === "tiktok" || k === "snapchat" ? h("span", { class: "sub", style: "font-size:13px;align-self:center" }, "Upload your " + NAME[k] + " sales below too.") : null));
+    const shopCard = (k) => {
+      const info = P[k];
+      return h("section", { class: "card" },
+        h("div", { class: "between" }, h("h2", {}, NAME[k]), h("span", { class: "badge b-neutral" }, k === "stripe" ? "Connects live" : k === "cash" ? "Sheet + codes" : "Upload an export")),
+        k === "cash" ? h("p", { class: "sub", style: "margin:0" }, "Keep a simple sheet: date, amount, phone, and the code the customer gave you. Upload it below whenever you like.")
+          : k === "stripe" ? h("p", { class: "sub", style: "margin:0" }, "Add ProAds' webhook address in Stripe (under Connect live payments below) and every payment and refund comes in by itself.")
+          : h("p", { class: "sub", style: "margin:0" }, (info ? info[2] : "Export your orders as CSV or Excel.") + " Then drop the file below."),
+        k === "cash" ? h("button", { class: "btn btn-ghost", type: "button", onclick: templateCsv, style: "align-self:flex-start" }, "Download sales sheet template") : null);
+    };
+    function drawChosen() {
+      const out = [];
+      const meta = has("instagram") || has("facebook") ? metaCard(params) : null;
+      if (meta) out.push(meta);
+      for (const [k] of SOCIAL) if (has(k) && (!["instagram", "facebook"].includes(k) || !meta)) out.push(socialCard(k));
+      if (has("shopify") && status && status.connections.shopify_app.available) out.push(shopifyCard(params));
+      for (const [k] of SHOPS) if (k !== "shopify" && has(k)) out.push(shopCard(k));
+      chosen.replaceChildren(...out.filter(Boolean));
+      chosen.style.display = out.length ? "" : "none";
+      liveRows();
+    }
+    const liveBox = h("div", { style: "display:flex;flex-direction:column;gap:0" });
+    function liveRows() {
+      if (!c) { liveBox.replaceChildren(loading()); return; }
+      liveBox.replaceChildren(...[
+        has("shopify") ? (c.shopify_app.connected
+          ? connRow("Shopify", "Connected through the Shopify app above · " + when(c.shopify), true, null)
+          : connRow("Shopify", c.shopify.configured ? when(c.shopify) : (c.shopify_app.available ? "Advanced: add this address as a webhook in Shopify instead of the button above" : "Add this address as a webhook for orders/paid and refunds/create"), c.shopify.configured, status.webhooks.shopify)) : null,
+        has("stripe") ? connRow("Stripe", c.stripe.configured ? when(c.stripe) : "Add this address as a webhook for charge.succeeded and charge.refunded", c.stripe.configured, status.webhooks.stripe) : null,
+        connRow("Meta Conversions API", c.meta_capi.live ? "Sending real profit, not checkout totals" : c.meta_capi.configured ? "Practice mode: nothing is sent yet" : "Connect Facebook & Instagram above and pick your Pixel", c.meta_capi.live, null),
+      ].filter(Boolean));
+    }
+
     root.replaceChildren(layout("#/upload", [
-      h("header", {}, h("h1", {}, "Connect & upload"), h("p", { class: "sub" }, "Connect your store, or upload your sales history. Your audit is ready right after.")),
-      metaCard(params),
-      status && status.connections.shopify_app.available ? shopifyCard(params) : null,
+      h("header", {}, h("h1", {}, "Connect & upload"), h("p", { class: "sub" }, "Pick what you use, connect it, or upload your sales history. Your audit is ready right after.")),
+      picker, chosen,
       h("section", { class: "card", "aria-labelledby": "s1" },
-        h("div", { class: "srow", style: "gap:12px" }, h("span", { class: "num-dot" }, "1"), h("h2", { id: "s1" }, status && status.connections.shopify_app.available ? "Or upload your history" : "Upload your history")),
+        h("div", { class: "srow", style: "gap:12px" }, h("span", { class: "num-dot" }, "1"), h("h2", { id: "s1" }, "Upload your sales history")),
         drop, results,
         h("a", { class: "btn btn-primary", href: "#/audit", style: "align-self:flex-start" }, "See my audit")),
       h("div", { class: "row" },
         h("section", { class: "card", "aria-labelledby": "s2" },
           h("div", { class: "srow", style: "gap:12px" }, h("span", { class: "num-dot" }, "2"), h("h2", { id: "s2" }, "Connect live payments")),
-          c ? [
-            c.shopify_app.connected
-              ? connRow("Shopify", "Connected through the Shopify app above · " + when(c.shopify), true, null)
-              : connRow("Shopify", c.shopify.configured ? when(c.shopify) : (c.shopify_app.available ? "Advanced: add this address as a webhook in Shopify instead of the button above" : "Add this address as a webhook for orders/paid and refunds/create"), c.shopify.configured, status.webhooks.shopify),
-            connRow("Stripe", c.stripe.configured ? when(c.stripe) : "Add this address as a webhook for charge.succeeded and charge.refunded", c.stripe.configured, status.webhooks.stripe),
-            connRow("Meta Conversions API", c.meta_capi.live ? "Sending real profit, not checkout totals" : c.meta_capi.configured ? "Practice mode: nothing is sent yet" : "Connect Facebook & Instagram above and pick your Pixel", c.meta_capi.live, null),
-          ] : loading(),
+          liveBox,
           h("p", { class: "sub", style: "margin:0;font-size:13px" }, "Webhook signing secrets are added in the server settings, never in this page.")),
         h("section", { class: "card", "aria-labelledby": "s3" },
           h("div", { class: "srow", style: "gap:12px" }, h("span", { class: "num-dot" }, "3"), h("h2", { id: "s3" }, "Track every new post")),
@@ -1030,6 +1099,7 @@ main{background:transparent}
       clearSalesCard(),
       status && status.self_serve ? deleteCard() : null,
     ]));
+    drawChosen();
     loadCodes();
   }
 
