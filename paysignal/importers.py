@@ -107,6 +107,7 @@ def import_shopify_orders(text: str, client_id: str, costs: dict[str, float] | N
         status = _pick(r, "Financial Status").lower()
         if status in ("pending", "voided", "authorized", "expired"):
             skipped += 1
+            _note_unpaid(_date(_pick(r, "Created at"), tz), _money(_pick(r, "Total")), status, "shopify", name)
             continue
         when = _date(_pick(r, "Paid at", "Created at"), tz)
         if when is None:
@@ -135,6 +136,18 @@ def import_shopify_orders(text: str, client_id: str, costs: dict[str, float] | N
     return payments, errors
 
 
+# ---------------- unpaid orders (kept for the money-leak detector, never imported as sales) ----------------
+import contextvars
+_UNPAID: contextvars.ContextVar = contextvars.ContextVar("proads_unpaid", default=None)
+
+
+def _note_unpaid(when, amount: float, status: str, source: str, ref: str = "") -> None:
+    box = _UNPAID.get()
+    if box is not None and when is not None and amount and amount > 0:
+        box.append({"date": when.date().isoformat(), "amount": round(amount, 2), "status": (status or "unpaid")[:30],
+                    "source": source, "ref": str(ref)[:60]})
+
+
 # ---------------- Stripe ----------------
 
 def import_stripe_payments(text: str, client_id: str, tz=timezone.utc) -> tuple[list[Payment], list[str]]:
@@ -148,6 +161,8 @@ def import_stripe_payments(text: str, client_id: str, tz=timezone.utc) -> tuple[
         captured = _pick(r, "Captured").lower()
         if status in ("failed", "canceled", "requires_payment_method") or captured == "false":
             skipped += 1
+            _note_unpaid(_date(_pick(r, "Created date (UTC)", "Created (UTC)", "Created"), timezone.utc),
+                         _money(_pick(r, "Amount")), status or "uncaptured", "stripe", r.get("id", ""))
             continue
         when = _date(_pick(r, "Created date (UTC)", "Created (UTC)", "Created"), timezone.utc)
         if when is None:
@@ -217,6 +232,11 @@ def import_posts(text: str, platform: str = "instagram", tz=timezone.utc) -> tup
 
 # ---------------- auto ----------------
 
+SIMPLE_CSV_COLUMNS = {"id", "date", "amount", "currency", "kind", "cost", "email", "phone", "customer_id", "fbclid",
+                      "ttclid", "discount", "refund_of", "channel", "promo_code", "utm_source", "utm_medium",
+                      "utm_campaign", "utm_content", ""}
+
+
 def detect(text: str) -> str:
     header, _ = _rows(text.split("\n", 1)[0] + "\n")
     if _has(header, "Financial Status") or (_has(header, "Name") and _has(header, "Lineitem name")):
@@ -226,7 +246,9 @@ def detect(text: str) -> str:
     low = {h.lower() for h in header}
     if any(n in low for n in POST_COLUMNS["views"]) and any(n in low for n in POST_COLUMNS["post_id"]):
         return "posts"
-    if {"id", "date", "amount", "currency"} <= low:
+    # ProAds' own simple format, only when every column is one it understands; anything else (a status,
+    # product or refund column) goes to the general importer, which skips cancelled/failed orders
+    if {"id", "date", "amount", "currency"} <= low and low <= SIMPLE_CSV_COLUMNS:
         return "csv"
     if looks_like_sales(header):
         return "sales"
@@ -285,6 +307,10 @@ def import_generic_sales(text: str, client_id: str, default_currency: str = "AED
         status = get("status").lower()
         if status and any(b in status for b in _BAD):
             skipped += 1
+            try:
+                _note_unpaid(_date(get("date"), tz), _money(get("amount")), status, "upload", get("id"))
+            except ValueError:
+                pass
             continue
         when = _date(get("date"), tz)
         if when is None:
@@ -330,7 +356,18 @@ def xlsx_to_csv(data: bytes) -> str:
 
 def import_auto(text: str, client_id: str, costs: dict | None = None, platform: str = "instagram",
                 default_currency: str = "AED") -> dict:
-    """Returns {"kind", "payments", "posts", "errors"}."""
+    """Returns {"kind", "payments", "posts", "errors", "unpaid"}."""
+    box: list = []
+    token = _UNPAID.set(box)
+    try:
+        out = _import_auto(text, client_id, costs, platform, default_currency)
+    finally:
+        _UNPAID.reset(token)
+    out["unpaid"] = box
+    return out
+
+
+def _import_auto(text: str, client_id: str, costs: dict | None, platform: str, default_currency: str) -> dict:
     from .connectors import parse_csv
     kind = detect(text)
     if kind == "shopify":

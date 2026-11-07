@@ -50,7 +50,7 @@ from .attribution import make_promo_code, tag_link
 from .dashboard import build_dashboard, _realized
 from .ads_report import build_report
 from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, business_context
-from . import billing, competitors, engines, forecast, learning, ledger, meta_ads, meta_connect, settlement
+from . import billing, competitors, engines, forecast, leaks, learning, ledger, meta_ads, meta_connect, settlement
 from .connectors.stripe import verify_signature as stripe_signature_ok
 from .audit import audit_summary, audit_text, build_audit
 from .importers import xlsx_to_csv, import_auto
@@ -120,6 +120,7 @@ class App:
         self.ledger = ledger.SpendLedger(self.store.db)
         self.fees = settlement.FeePeriods(self.store.db)
         self.economics = engines.EconomicsStore(self.store.db)
+        self.unpaid = leaks.UnpaidStore(self.store.db)
         self.stripe_http = None                # set in tests
         self.billing_sync = False              # tests: add invoice fees inline
         self.ads_cache: dict = {}              # (client, period) -> (time, report)
@@ -463,6 +464,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if res["kind"] == "unknown":
             return jsonify({"errors": res["errors"]}), 400
         out = {"kind": res["kind"], "errors": res["errors"]}
+        if res.get("unpaid"):
+            with state.lock:
+                out["unpaid_kept"] = state.unpaid.add(client_id, res["unpaid"])
         if res["payments"]:
             out.update(state.ingest(client_id, res["payments"]))
             state.trained_at.pop(client_id, None)       # retrain with the new history
@@ -534,6 +538,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 state.learnings.forget(client_id)
             n = state.store.db.execute("DELETE FROM payments WHERE client_id=?", (client_id,)).rowcount
             posts = state.store.db.execute("DELETE FROM posts WHERE client_id=?", (client_id,)).rowcount
+            state.unpaid.clear(client_id)
             state.store.db.commit()
             for cache in (state.engines, state.posts, state.trained_at):
                 cache.pop(client_id, None)
@@ -668,6 +673,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     def engines_view(client_id):
         """Max affordable cost per customer, each campaign judged against it, and its autopsy."""
         state.require_key(client_id)
+        return engines_for(client_id, bool(request.args.get("fresh")))
+
+    def engines_for(client_id: str, fresh: bool = False) -> dict:
         admin = is_admin(client_id)
         econ = economics_for(client_id)
         out = {"economics": econ, "hints": {} if econ else economics_hints(client_id), "campaigns": [],
@@ -677,7 +685,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if not launches:
             return out
         hit = state.ads_cache.get(("engines", client_id))
-        if hit and time.time() - hit[0] < 600 and not request.args.get("fresh"):
+        if hit and time.time() - hit[0] < 600 and not fresh:
             return {**out, **hit[1]}
         s = state.ads_settings(client_id, admin)
         if s is None:
@@ -728,6 +736,25 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         result = {"campaigns": camps, "real_ratio": ratio, "period_days": 30, "updated_at": int(time.time())}
         state.ads_cache[("engines", client_id)] = (time.time(), result)
         return {**out, **result}
+
+    @flask.get("/leaks/<client_id>")
+    def leaks_endpoint(client_id):
+        """Where the business loses money outside winning new customers, ranked by AED a month."""
+        state.require_key(client_id)
+        cur = state.config(client_id).get("currency", "AED")
+        losing = []
+        try:
+            eng_out = engines_for(client_id)
+            losing = [{"campaign_id": c["campaign_id"], "name": c.get("name", ""), "spend": c["spend"],
+                       **{k: c["verdict"].get(k) for k in ("label", "confidence", "cpa")}}
+                      for c in eng_out.get("campaigns", []) if c.get("verdict", {}).get("verdict") == "losing" and c.get("spend")]
+        except Exception as e:
+            log.info("losing ads for leaks skipped: %s", e)
+        econ = economics_for(client_id)                       # takes the lock itself: not nested
+        with state.lock:
+            eng = state.engine(client_id)
+            since = (datetime.now(timezone.utc).date() - timedelta(days=leaks.LOOKBACK_DAYS - 1)).isoformat()
+            return leaks.build_leaks(eng, cur, state.unpaid.since(client_id, since), econ, losing)
 
     @flask.get("/forecast/<client_id>")
     def forecast_endpoint(client_id):

@@ -69,6 +69,11 @@ h2{margin:0;font-family:var(--head);font-size:20px;font-weight:600}
 .grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
 .etable{font-size:14px}
 @media (max-width:900px){.estrip{grid-template-columns:1fr}.egrid{grid-template-columns:1fr}.epanel{position:static}.ek{border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:12px}}
+.leaks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:16px}
+.leaks li{display:flex;flex-direction:column;gap:6px;padding-bottom:16px;border-bottom:1px solid var(--line)}
+.leaks li:last-child{border-bottom:0;padding-bottom:0}
+.leakbar{height:6px;border-radius:99px;background:var(--line);overflow:hidden}
+.leakbar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#F59E9E,var(--amber))}
 .pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
 .pcard{display:flex;flex-direction:column;align-items:flex-start;gap:10px;text-align:left;background:var(--soft);border:1px solid var(--edge);border-radius:14px;padding:16px;cursor:pointer;min-height:88px}
 .pcard:hover{border-color:var(--violet)}
@@ -528,6 +533,32 @@ main{background:transparent}
   const money = (n, cur) => [fmt.format(Math.round(n || 0)), " ", h("small", {}, cur)];
 
   // ---------- audit ----------
+  // ---------- Money Leak Detector ----------
+  function leaksCard(lk) {
+    if (!lk || !lk.leaks || !lk.leaks.length) return null;
+    const cur = lk.currency, top = Math.max(...lk.leaks.map((l) => l.per_month), 1);
+    const m = (x) => fmt.format(Math.round(x)) + " " + cur;
+    return h("section", { class: "card", "aria-labelledby": "leaks-h", style: "gap:18px" },
+      h("div", { class: "between", style: "align-items:flex-start" },
+        h("div", { style: "display:flex;flex-direction:column;gap:4px" }, h("h2", { id: "leaks-h" }, "Money leaks"),
+          h("span", { class: "sub", style: "font-size:14px" }, "Where you lose money without spending more on ads, biggest first.")),
+        h("div", { style: "display:flex;gap:22px;flex-wrap:wrap" },
+          lk.measured_per_month ? h("div", { style: "display:flex;flex-direction:column;text-align:right" }, h("span", { class: "label" }, "Losing, measured"),
+            h("b", { style: "font-family:var(--head);font-size:26px;color:var(--amber)" }, m(lk.measured_per_month)), h("span", { class: "small" }, "a month")) : null,
+          lk.at_stake_per_month ? h("div", { style: "display:flex;flex-direction:column;text-align:right" }, h("span", { class: "label" }, "Also at stake"),
+            h("b", { style: "font-family:var(--head);font-size:26px" }, "up to " + m(lk.at_stake_per_month)), h("span", { class: "small" }, "a month")) : null)),
+      h("ol", { class: "leaks" }, lk.leaks.map((l, i) => h("li", {},
+        h("div", { class: "between", style: "gap:12px" },
+          h("div", { style: "display:flex;gap:10px;align-items:center;min-width:0" }, h("span", { class: "num-dot" }, String(i + 1)), h("b", { dir: "auto" }, l.title)),
+          h("div", { style: "display:flex;gap:8px;align-items:center;flex-shrink:0" },
+            h("span", { class: "badge " + (l.how === "measured" ? "b-est" : "b-neutral") }, l.how === "measured" ? "Measured" : "Up to"),
+            h("b", { style: "white-space:nowrap" }, m(l.per_month) + " / mo"))),
+        h("div", { class: "leakbar" }, h("i", { style: "width:" + Math.max(3, Math.round(100 * l.per_month / top)) + "%" + (l.how === "measured" ? "" : ";opacity:.45") })),
+        h("span", { class: "small" }, l.evidence),
+        h("span", { style: "font-size:14px" }, h("b", {}, "Fix: "), l.fix)))),
+      h("p", { class: "small", style: "margin:0" }, "Measured = taken straight from your orders, refunds and ads. Up to = the money at stake; usually only part of it can be won back. Last " + Math.round(lk.lookback_days / 30) + " months."));
+  }
+
   async function viewAudit() {
     const body = h("div", { style: "display:contents" }, loading("Building your audit…"));
     root.replaceChildren(layout("#/audit", [
@@ -535,6 +566,7 @@ main{background:transparent}
         h("div", {}, h("h1", {}, "Audit"), h("p", { class: "sub" }, "What your sales history says, measured from real orders.")),
       ), body]));
     let data;
+    const leaksP = api("/leaks/" + cid()).catch(() => null);
     try { data = await api("/audit/" + cid()); }
     catch (e) {
       if (e.message === "signed out") return;
@@ -568,12 +600,14 @@ main{background:transparent}
       document.body.appendChild(link); link.click(); link.remove();
     };
     const c = a.customers;
+    const lk = await leaksP;
     const blocks = [
       h("div", { class: "between" },
         h("span", { class: "sub" }, a.period.from + " – " + a.period.to + " · " + a.period.days + " days of history"),
         h("div", { style: "display:flex;gap:10px;flex-wrap:wrap" }, sumBtn("English", "AI summary"),
           h("button", { class: "btn btn-primary", onclick: download }, "Download report"))),
       summaryBox,
+      leaksCard(lk),
       h("section", { class: "kpis", "aria-label": "Key numbers" },
         h("div", { class: "kpi" }, h("span", { class: "label" }, "Sales"), h("span", { class: "num" }, money(a.gross, cur)), h("span", { class: "note" }, fmt.format(a.orders) + " paid orders")),
         h("div", { class: "kpi" }, h("span", { class: "label" }, "Refunds"), h("span", { class: "num", style: "color: var(--amber)" }, money(a.refunds, cur)), h("span", { class: "note" }, pct(a.refund_rate) + " of sales returned")),
@@ -2176,9 +2210,13 @@ main{background:transparent}
       draw();
       return;
     }
-    const [adsBox, fcBox] = await Promise.all([adsSection(homePeriod), forecastSection()]);
+    const [adsBox, fcBox, lk] = await Promise.all([adsSection(homePeriod), forecastSection(), api("/leaks/" + cid()).catch(() => null)]);
+    const leakNote = lk && lk.leaks && lk.leaks.length ? h("a", { href: "#/audit", class: "result err", style: "text-decoration:none;color:inherit" },
+      h("span", {}, h("b", {}, "Money leaks: "), (lk.measured_per_month ? "about " + fmt.format(Math.round(lk.measured_per_month)) + " " + lk.currency + " a month measured" : "")
+        + (lk.at_stake_per_month ? (lk.measured_per_month ? ", " : "") + "up to " + fmt.format(Math.round(lk.at_stake_per_month)) + " " + lk.currency + " more at stake" : "")
+        + ". Biggest: " + lk.leaks[0].title + "."), h("span", { class: "ok" }, "See all →")) : null;
     body.replaceChildren(
-      ...[adsBanner(d.ads_access)].filter(Boolean),
+      ...[adsBanner(d.ads_access), leakNote].filter(Boolean),
       strip, adsBox,
       h("section", { class: "card", "aria-label": "Chart" },
         h("div", { class: "between" }, h("h2", {}, label + " over time"),
