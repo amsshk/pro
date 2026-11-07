@@ -50,7 +50,7 @@ from .attribution import make_promo_code, tag_link
 from .dashboard import build_dashboard, _realized
 from .ads_report import build_report
 from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, business_context
-from . import autopilot, billing, buyers, competitors, engines, forecast, leaks, learning, meta_capi, proads_revenue, signals, ledger, meta_ads, meta_connect, settlement
+from . import autopilot, billing, buyers, competitors, engines, forecast, leaks, learning, meta_capi, proads_revenue, purchase_funnel, signals, ledger, meta_ads, meta_connect, settlement
 from .connectors.stripe import verify_signature as stripe_signature_ok
 from .audit import audit_summary, audit_text, build_audit
 from .importers import xlsx_to_csv, import_auto
@@ -125,6 +125,7 @@ class App:
         self.signals = signals.SignalLog(self.store.db)
         self.experiments = buyers.ExperimentStore(self.store.db)
         self.revenue = proads_revenue.RevenueStore(self.store.db)
+        self.funnel = purchase_funnel.FunnelStore(self.store.db)
         self._nudged: dict = {}
         self.stripe_http = None                # set in tests
         self.billing_sync = False              # tests: add invoice fees inline
@@ -2074,6 +2075,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             b = state.billing.get(client_id) or {}
         if b.get("status") in billing.ACTIVE:
             abort(409, "You already have an active plan. Use the switch button to change it.")
+        with state.lock:
+            state.funnel.mark(client_id, "checkout", int(time.time()))
         acct = state.accounts.get(client_id) or {}
         try:
             url = billing.checkout_session(stripe, client_id, acct.get("email", ""), b.get("customer_id"),
@@ -2130,6 +2133,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             abort(400, "bad JSON")
         with state.lock:
             cid = state.billing.handle(event, state.known)
+        if cid and event.get("type") == "checkout.session.completed":
+            with state.lock:
+                state.funnel.mark(cid, "plan", int(time.time()))
         if cid:
             log.info("billing %s for %s", event.get("type"), cid)
             if state.billing_sync:
@@ -2328,6 +2334,174 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                        "- campaign spend per new subscriber - service cost per subscriber. "
                        + ("Service cost is an ESTIMATE until actual costs are set." if is_estimate else "Service cost is actual."))
         return out
+
+    # ---------- Purchase Funnel Optimiser ----------
+    META_SOURCES = ("meta", "facebook", "instagram", "fb", "ig")
+
+    def from_meta_ads(u: dict) -> bool:
+        return (u.get("utm_medium") or "").lower() == "paid" and (u.get("utm_source") or "").lower() in META_SOURCES
+
+    @flask.post("/t/visit")
+    def landing_visit():
+        """One landing page load, counted per day and campaign only: no cookies, no IP, nothing about the person."""
+        body = request.get_json(silent=True) or {}
+        clean = lambda k: re.sub(r"[^a-z0-9_.\-]", "", str(body.get(k) or "").lower())[:80]
+        with state.lock:
+            state.funnel.visit(datetime.now(timezone.utc).date().isoformat(), clean("utm_campaign"), clean("utm_source"),
+                               clean("utm_medium"))
+        return ("", 204)
+
+    def meta_rows(client_id: str, launches: list, since: str, until: str) -> dict:
+        """campaign_id -> engines.funnel() counts from Meta for the window (cached 10 minutes)."""
+        key = ("funnel-meta", client_id, since, until)
+        hit = state.ads_cache.get(key)
+        if hit and time.time() - hit[0] < 600:
+            return hit[1]
+        s = state.ads_settings(client_id, is_admin(client_id))
+        if not s or not launches:
+            return {}
+        pub = meta_ads.Publisher(state.ads_http, s)
+        out = {}
+        for l in launches:
+            try:
+                data = pub.insights([l["campaign_id"]], since, until,
+                                    fields="spend,impressions,clicks,inline_link_clicks,actions,action_values,account_currency")
+            except meta_ads.PublishError as e:
+                log.info("funnel insights for %s skipped: %s", l["campaign_id"], e)
+                continue
+            out[l["campaign_id"]] = engines.funnel(data[0] if data else {})
+        state.ads_cache[key] = (time.time(), out)
+        return out
+
+    def proads_funnel(period: int, pick: str) -> dict:
+        """ProAds' own funnel: Meta clicks -> landing visits -> sign-ups -> active -> checkout -> plan -> first payment.
+        Everything after the click follows the people who signed up in the window (a cohort), whenever they went on."""
+        admin = proads_admin()
+        today = datetime.now(timezone.utc).date()
+        with state.lock:
+            started = state.funnel.started_at()
+            launches = state.launches.list(admin)
+            marks = state.funnel.marks()
+            firsts = {r["client_id"]: r for r in state.revenue.all() if r["kind"] == "first"}
+        start = max(today - timedelta(days=period - 1), datetime.fromtimestamp(started, timezone.utc).date())
+        since = start.isoformat()
+        days = (today - start).days + 1
+        slug_of = {l["campaign_id"]: l.get("utm_slug") or meta_ads._slug(l.get("name", ""), 30) for l in launches}
+        names = {}
+        for l in launches:
+            names.setdefault(slug_of[l["campaign_id"]], l.get("name") or slug_of[l["campaign_id"]])
+        meta = meta_rows(admin, launches, since, today.isoformat())
+        with state.lock:
+            visits = state.funnel.visits(since)
+            signed = state.store.db.execute("SELECT client_id, activated_at, attribution FROM accounts WHERE created_at >= ?",
+                                            (since,)).fetchall()
+        try:
+            trial_days = max(0, int(os.environ.get("PROADS_TRIAL_DAYS", "0") or 0))
+        except ValueError:
+            trial_days = 0
+        people = []
+        for cid, activated, attr in signed:
+            try:
+                u = json.loads(attr) if attr else {}
+            except ValueError:
+                u = {}
+            m = marks.get(cid, {})
+            with state.lock:
+                plan = "plan" in m or (state.billing.get(cid) or {}).get("subscription_id") is not None
+            plan_at = m.get("plan")
+            people.append({"meta": from_meta_ads(u), "slug": u.get("utm_campaign") or "", "active": bool(activated),
+                           "checkout": "checkout" in m or plan, "plan": plan, "paid": cid in firsts,
+                           # old enough to have been charged: trial over plus a few days for retries
+                           "plan_mature": plan and (plan_at is None or plan_at < time.time() - (trial_days + 3) * 86400)})
+
+        def stages_for(slug: Optional[str]) -> list[dict]:
+            ids = [c for c, sl in slug_of.items() if slug is None or sl == slug]
+            clicks = sum(meta[c]["link_clicks"] for c in ids if c in meta) if meta else None
+            v = sum(n for camp, src, med, n in visits if med == "paid" and src in META_SOURCES and (slug is None or camp == slug))
+            ppl = [p for p in people if p["meta"] and (slug is None or p["slug"] == slug)]
+            src_meta, src_us, src_stripe = "Meta (link clicks)", "ProAds", "Stripe (money collected)"
+            return [{"key": "clicks", "label": "Ad clicks", "count": int(clicks) if clicks is not None else None, "source": src_meta},
+                    {"key": "visits", "label": "Landing visits", "count": v, "source": "ProAds landing page (page loads from Meta ads)"},
+                    {"key": "signups", "label": "Sign-ups", "count": len(ppl), "source": src_us},
+                    {"key": "active", "label": "Active (brought in data)", "count": sum(p["active"] for p in ppl), "source": src_us},
+                    {"key": "checkout", "label": "Checkout started", "count": sum(p["checkout"] for p in ppl), "source": src_us},
+                    {"key": "plan", "label": "Plan started (card added)", "count": sum(p["plan"] for p in ppl), "source": "Stripe"},
+                    {"key": "paid", "label": "First payment collected", "count": sum(p["paid"] for p in ppl), "source": src_stripe,
+                     "mature": (sum(p["plan_mature"] for p in ppl), sum(p["paid"] and p["plan_mature"] for p in ppl)),
+                     "mature_note": f"judged only on plans started over {trial_days + 3} days ago (free trial plus card retries)"}]
+
+        slugs = sorted({s for s in slug_of.values()})
+        per = {s: stages_for(s) for s in slugs}
+        chosen = pick if pick in per else "all"
+        stages = per[chosen] if chosen != "all" else stages_for(None)
+        peers = [[{**x, "campaign": names.get(s, s)} for x in st] for s, st in per.items() if s != chosen] if len(per) > 1 else []
+        vals = [r["amount"] for r in firsts.values()]
+        cur = (next(iter(firsts.values()))["currency"] if firsts else "AED")
+        out = purchase_funnel.analyse(stages, "saas", peers, days, round(sum(vals) / len(vals), 2) if vals else None, cur,
+                                      unit="paying subscribers")
+        meta_lpv = sum(meta[c]["landing_views"] for c in slug_of if c in meta and (chosen == "all" or slug_of[c] == chosen)) if meta else None
+        out.update(campaigns=[{"slug": s, "name": names.get(s, s)} for s in slugs], selected=chosen, counted_since=since,
+                   ads_connected=bool(state.ads_settings(admin, True)), meta_landing_views=meta_lpv,
+                   cohort_note="Sign-ups and every step after them follow people who signed up in this window, "
+                               "even if they paid later. People who signed up recently may still pay.")
+        return out
+
+    def shop_funnel(client_id: str, period: int, pick: str) -> dict:
+        """A client's funnel from Meta (clicks, page views, cart, checkout) ending in VERIFIED purchases when their sales
+        data carries ad tracking; otherwise Meta's reported purchases, labelled as such."""
+        today = datetime.now(timezone.utc).date()
+        start = today - timedelta(days=period - 1)
+        with state.lock:
+            launches = [l for l in state.launches.list(client_id) if (l.get("conversion") or "purchase") == "purchase"]
+        slug_of = {l["campaign_id"]: l.get("utm_slug") or meta_ads._slug(l.get("name", ""), 30) for l in launches}
+        names = {}
+        for l in launches:
+            names.setdefault(slug_of[l["campaign_id"]], l.get("name") or slug_of[l["campaign_id"]])
+        meta = meta_rows(client_id, launches, start.isoformat(), today.isoformat())
+        with state.lock:
+            eng = state.engine(client_id)
+            purchases = list(eng.store.purchases(client_id))
+            tracked = any(from_meta_ads({"utm_medium": p.utm_medium, "utm_source": p.utm_source}) for p in purchases)
+            verified = [(p.utm_campaign or "", p.amount - min(p.amount, eng.store.refunded_amount(client_id, p.external_id)))
+                        for p in purchases if start <= p.occurred_at.date() <= today
+                        and from_meta_ads({"utm_medium": p.utm_medium, "utm_source": p.utm_source})]
+        verified = [(c, v) for c, v in verified if v > 0]
+
+        def stages_for(slug: Optional[str]) -> list[dict]:
+            ids = [c for c, sl in slug_of.items() if slug is None or sl == slug]
+            g = lambda k: int(sum(meta[c][k] for c in ids if c in meta)) if meta else None
+            if tracked:
+                paid, src = sum(1 for c, _ in verified if slug is None or c == slug), "Your sales data (paid, after refunds)"
+            else:
+                paid, src = g("purchase"), "Meta (reported, not verified)"
+            return [{"key": "clicks", "label": "Ad clicks", "count": g("link_clicks"), "source": "Meta"},
+                    {"key": "visits", "label": "Landing page views", "count": g("landing_views"), "source": "Meta"},
+                    {"key": "cart", "label": "Added to cart", "count": g("add_to_cart"), "source": "Meta"},
+                    {"key": "checkout", "label": "Checkout started", "count": g("checkout"), "source": "Meta"},
+                    {"key": "paid", "label": "Verified purchases" if tracked else "Purchases (Meta)", "count": paid, "source": src}]
+        slugs = sorted(set(slug_of.values()))
+        per = {s: stages_for(s) for s in slugs}
+        chosen = pick if pick in per else "all"
+        stages = per[chosen] if chosen != "all" else stages_for(None)
+        peers = [[{**x, "campaign": names.get(s, s)} for x in st] for s, st in per.items() if s != chosen] if len(per) > 1 else []
+        vals = [v for _, v in verified]
+        out = purchase_funnel.analyse(stages, "shop", peers, period, round(sum(vals) / len(vals), 2) if vals else None,
+                                      state.config(client_id).get("currency", "AED"), unit="purchases")
+        out.update(campaigns=[{"slug": s, "name": names.get(s, s)} for s in slugs], selected=chosen,
+                   counted_since=start.isoformat(), verified=tracked, ads_connected=bool(state.ads_settings(client_id, False)))
+        return out
+
+    @flask.get("/funnel/<client_id>")
+    def funnel_view(client_id):
+        state.require_key(client_id)
+        try:
+            period = int(request.args.get("period") or 30)
+        except ValueError:
+            period = 30
+        period = period if period in (7, 30, 90) else 30
+        pick = (request.args.get("campaign") or "all")[:80]
+        return proads_funnel(period, pick) if is_admin(client_id) else shop_funnel(client_id, period, pick)
+    state.funnel_for = lambda cid, period=30, pick="all": proads_funnel(period, pick) if is_admin(cid) else shop_funnel(cid, period, pick)
 
     @flask.get("/acquisition/<client_id>")
     def acquisition_endpoint(client_id):

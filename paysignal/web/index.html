@@ -119,6 +119,14 @@ h2{margin:0;font-family:var(--head);font-size:20px;font-weight:600}
 .kpi .note{font-size:13px;color:var(--muted)}
 .navtag{margin-left:auto;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:999px;color:#fff;background:#5E9400}
 .badge{font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;white-space:nowrap}
+.funnel{display:flex;flex-direction:column;gap:6px}
+.fstage{display:flex;flex-direction:column;gap:6px;padding:10px 0}
+.fstage .track{height:14px;border-radius:7px;background:var(--soft);overflow:hidden}
+.fstage .track>div{height:100%;border-radius:7px;background:linear-gradient(90deg,#C8DCA3,#8CB85A 40%,#5E9400 75%,#3F6800)}
+.fnum{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
+.fstep{display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:13px;color:var(--muted);padding:6px 12px;border-left:2px solid var(--line, #e5e7eb);margin-left:6px}
+.fstep b{color:var(--text)}
+.fstep.hot{border-left-color:var(--loss-txt)}
 .b-measured{color:var(--win-txt);background:var(--win-bg)}
 .b-est{color:var(--amber-txt);background:var(--amber-chip)}
 .b-neutral{color:#4A4A4A;background:var(--line)}
@@ -491,6 +499,7 @@ main{background:transparent}
     ["#/upload", "Connect & upload", "M12 16V4M6 10l6-6 6 6M4 20h16"],
     ["#/whatsapp", "WhatsApp", "M12 3a9 9 0 0 0-7.8 13.5L3 21l4.6-1.2A9 9 0 1 0 12 3z"],
     ["#/assistant", "Ask & campaigns", "M4 5h16v11H8l-4 4z"],
+    ["#/funnel", "Purchase funnel", "M3 4h18l-7 8v6l-4 2v-8z"],
     ["#/experiments", "Experiments", "M9 3h6M10 3v6L5 19a1.5 1.5 0 0 0 1.3 2h11.4a1.5 1.5 0 0 0 1.3-2L14 9V3M7.5 15h9"],
     ["#/buyers", "Buyer quality", "M16 11a4 4 0 1 0-8 0 4 4 0 0 0 8 0zM4 21c1.5-4 4.5-6 8-6s6.5 2 8 6M19 3l1.5 1.5L23 2"],
     ["#/learning", "Meta learning", "M4 19V5M4 19h16M8 15l3-4 3 2 5-7"],
@@ -785,6 +794,75 @@ main{background:transparent}
             h("td", {}, h("span", { class: "badge " + (x.status === "sent" ? "b-measured" : /error/.test(x.status) ? "b-est" : "b-neutral") }, x.status)))))))));
     }
     body.replaceChildren(...blocks);
+  }
+
+  // ---------- Purchase Funnel Optimiser ----------
+  let funnelPeriod = 30, funnelCampaign = "all";
+  async function viewFunnel() {
+    const head = h("header", {}, h("h1", {}, "Purchase funnel"),
+      h("p", { class: "sub" }, "Where people drop out between your ad and a verified payment, and the one test most likely to bring more paying customers."));
+    root.replaceChildren(layout("#/funnel", [head, loading()]));
+    let d;
+    try { d = await api("/funnel/" + cid() + "?period=" + funnelPeriod + "&campaign=" + encodeURIComponent(funnelCampaign)); }
+    catch (e) { if (e.message !== "signed out") root.replaceChildren(layout("#/funnel", [head, errorCard(e.message)])); return; }
+    const cur = d.currency || "AED";
+    const p1 = (x) => x == null ? "–" : (Math.round(x * 1000) / 10) + "%";
+    const chips = h("div", { style: "display:flex;gap:8px;flex-wrap:wrap;align-items:center" },
+      ...[7, 30, 90].map((n) => h("button", { type: "button", class: "btn " + (n === funnelPeriod ? "btn-primary" : "btn-ghost"), "aria-pressed": n === funnelPeriod ? "true" : "false",
+        onclick: () => { funnelPeriod = n; viewFunnel(); } }, n + " days")),
+      d.campaigns && d.campaigns.length ? h("select", { "aria-label": "Campaign", style: "min-width:180px", onchange: (ev) => { funnelCampaign = ev.target.value; viewFunnel(); } },
+        h("option", { value: "all" }, "All Meta ad campaigns"),
+        ...d.campaigns.map((c) => h("option", { value: c.slug, selected: c.slug === d.selected ? true : null }, c.name))) : null);
+    const known = d.stages.filter((x) => x.count !== null && x.count !== undefined);
+    const top = Math.max(1, ...known.map((x) => x.count));
+    const stepTo = {}; (d.steps || []).forEach((x) => stepTo[x.to] = x);
+    const best = d.opportunity && d.opportunity.to;
+    const rows = [];
+    d.stages.forEach((x, i) => {
+      const st = stepTo[x.key];
+      if (st) {
+        const tag = !st.judged ? h("span", { class: "badge b-neutral" }, "Not enough data yet")
+          : st.weak ? h("span", { class: "badge", style: "background:var(--loss-bg);color:var(--loss-txt)" }, st.to === best ? "Biggest opportunity" : "Below reference")
+          : h("span", { class: "badge b-measured" }, "OK");
+        rows.push(h("div", { class: "fstep" + (st.to === best ? " hot" : "") },
+          h("span", {}, "↓ ", h("b", {}, p1(st.rate)), " get through"),
+          st.reference != null ? h("span", { class: "small" }, "reference " + p1(st.reference) + " (" + st.reference_source + ")") : null,
+          st.judged ? h("span", { class: "small" }, "likely " + p1(st.range[0]) + "–" + p1(st.range[1])) : null, tag,
+          st.mature_note ? h("span", { class: "small", style: "flex-basis:100%" }, "Rate " + st.mature_note + ": " + fmt.format(st.reached) + " of " + fmt.format(st.top) + ".") : null));
+      }
+      const unknown = x.count === null || x.count === undefined;
+      rows.push(h("div", { class: "fstage" },
+        h("div", { class: "between", style: "gap:12px" }, h("span", { style: "font-weight:600" }, x.label),
+          h("span", { class: "fnum" }, unknown ? "–" : fmt.format(x.count))),
+        h("div", { class: "track", role: "img", "aria-label": x.label + ": " + (unknown ? "unknown" : x.count) },
+          h("div", { style: "width:" + (unknown ? 0 : Math.max(1.5, 100 * x.count / top)) + "%" })),
+        h("span", { class: "small" }, unknown ? (x.key === "clicks" ? "Unknown: connect your ad account to read clicks from Meta." : "Unknown") : "From " + x.source)));
+    });
+    const funnelCard = h("section", { class: "card", "aria-label": "Funnel" }, h("div", { class: "between" }, h("h2", {}, "From click to " + (d.kind === "saas" ? "payment" : "purchase")), chips),
+      h("div", { class: "funnel" }, rows));
+    const ex = d.next_experiment;
+    const sizing = ex && ex.people_per_version ? h("p", { class: "small", style: "margin:0" },
+      "Test size: about " + fmt.format(ex.people_per_version) + " people per version" + (ex.days_needed ? ", roughly " + fmt.format(ex.days_needed) + " days at today's traffic." : ".") +
+      " Success: " + ex.success_when) : null;
+    const where = ex && { meta: "In Meta: a new ad version", site: d.kind === "saas" ? "On your landing page" : "On your shop or landing page", product: "Inside ProAds (onboarding)", billing: "In billing and reminders" }[ex.where];
+    const exCard = ex ? h("section", { class: "card", style: "display:flex;flex-direction:column;gap:10px" },
+      h("div", { class: "between" }, h("h2", {}, "Next experiment: " + ex.title), where ? h("span", { class: "badge b-neutral" }, where) : null),
+      h("p", { style: "margin:0;font-size:14px" }, h("b", {}, "Why: "), ex.why),
+      h("p", { style: "margin:0;font-size:14px" }, h("b", {}, "Change one thing: "), ex.change),
+      h("p", { style: "margin:0;font-size:14px" }, h("b", {}, "Keep the same: "), ex.keep),
+      h("p", { style: "margin:0;font-size:14px" }, h("b", {}, "Measure: "), ex.measure || "Click-through, then verified payments"),
+      sizing,
+      ex.where === "meta" ? h("button", { class: "btn btn-primary", type: "button", style: "align-self:flex-start", onclick: () => {
+        pendingBrief = "Funnel experiment. " + ex.why + " Change ONE thing only: " + ex.change + " " + ex.keep; go("#/assistant"); } }, "Build the new ad version") : null) : null;
+    const tone = d.status === "opportunity" ? "result err" : "result";
+    const summary = h("div", { class: tone }, h("span", {}, d.summary));
+    const notes = h("p", { class: "sub", style: "margin:0;font-size:12px" },
+      "Counted since " + new Date(d.counted_since + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) + ". " +
+      (d.cohort_note ? d.cohort_note + " " : "") +
+      (d.kind === "shop" && !d.verified ? "Purchases are Meta's count until your sales data carries ProAds ad links; then only paid, unrefunded orders count. " : "") +
+      (d.meta_landing_views != null ? "Meta counted " + fmt.format(d.meta_landing_views) + " landing page views (only visitors who accepted cookies). " : "") +
+      "A step is only called weak when the evidence is clear; references marked 'rule of thumb' are rough, a rate proven by another of your campaigns replaces them.");
+    root.replaceChildren(layout("#/funnel", [head, summary, funnelCard, exCard, notes].filter(Boolean)));
   }
 
   // ---------- ProAds' own paying subscribers (from paid Stripe invoices) ----------
@@ -2707,7 +2785,7 @@ main{background:transparent}
   }
 
   // ---------- router ----------
-  const VIEWS = { "#/platforms": viewPlatforms, "#/home": viewHome, "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling, "#/competitors": viewCompetitors, "#/engines": viewEngines, "#/learning": viewLearning, "#/buyers": viewBuyers, "#/experiments": viewExperiments };
+  const VIEWS = { "#/platforms": viewPlatforms, "#/home": viewHome, "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling, "#/competitors": viewCompetitors, "#/engines": viewEngines, "#/learning": viewLearning, "#/buyers": viewBuyers, "#/experiments": viewExperiments, "#/funnel": viewFunnel };
   function go(hash) { if (location.hash !== hash) location.hash = hash; else route(); }
   async function route() {
     const [path, query] = location.hash.split("?");

@@ -189,6 +189,11 @@ footer{border-top:1px solid var(--soft);padding:28px 0 40px;color:var(--muted);f
     const prev = (() => { try { return JSON.parse(get("proads.utm") || "null"); } catch (e) { return null; } })();
     if (!prev || Date.now() - prev.t > 90 * 864e5) set("proads.utm", JSON.stringify({ v: Object.fromEntries(UTM.map((k) => [k, params.get(k) || ""])), t: Date.now() }));
   }
+  // Count this page load for the funnel: only the campaign tags in the link, nothing about the visitor.
+  try {
+    fetch("/t/visit", { method: "POST", keepalive: true, headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ utm_source: params.get("utm_source") || "", utm_medium: params.get("utm_medium") || "", utm_campaign: params.get("utm_campaign") || "" }) }).catch(() => {});
+  } catch (e) {}
   function utm() {
     try { const x = JSON.parse(get("proads.utm") || "null"); return x && Date.now() - x.t < 90 * 864e5 ? x.v : {}; } catch (e) { return {}; }
   }
