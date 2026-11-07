@@ -50,7 +50,7 @@ from .attribution import make_promo_code, tag_link
 from .dashboard import build_dashboard, _realized
 from .ads_report import build_report
 from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, business_context
-from . import billing, competitors, engines, learning, ledger, meta_ads, meta_connect, settlement
+from . import billing, competitors, engines, forecast, learning, ledger, meta_ads, meta_connect, settlement
 from .connectors.stripe import verify_signature as stripe_signature_ok
 from .audit import audit_summary, audit_text, build_audit
 from .importers import xlsx_to_csv, import_auto
@@ -726,6 +726,24 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         result = {"campaigns": camps, "real_ratio": ratio, "period_days": 30, "updated_at": int(time.time())}
         state.ads_cache[("engines", client_id)] = (time.time(), result)
         return {**out, **result}
+
+    @flask.get("/forecast/<client_id>")
+    def forecast_endpoint(client_id):
+        """Next 30 days of real revenue (sales minus refunds), with a tested range."""
+        state.require_key(client_id)
+        cur = state.config(client_id).get("currency", "AED")
+        with state.lock:
+            eng = state.engine(client_id)
+            purchases = list(eng.store.purchases(client_id))
+            rows = [(p.occurred_at.date(), p.amount - eng.store.refunded_amount(client_id, p.external_id)) for p in purchases]
+        if not rows:
+            return forecast.build_forecast([], 0, datetime.now(timezone.utc).date(), cur)
+        today = datetime.now(timezone.utc).date()
+        last = max(d for d, _ in rows)
+        end = today if (today - last).days < 30 else last          # old uploads: forecast from where the data ends
+        out = forecast.build_forecast([r for r in rows if r[0] <= end], len(purchases), end, cur)
+        out["live"] = end == today
+        return out
 
     @flask.get("/dashboard/<client_id>")
     def dashboard_endpoint(client_id):

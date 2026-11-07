@@ -1925,6 +1925,62 @@ main{background:transparent}
       results.map((v, i) => h("rect", { x: i * (W / n), y: H - 4 - (H - 10) * v / max, width: bw, height: Math.max(2, (H - 10) * v / max), rx: 2,
         fill: v ? "#5E9400" : "#2F2F2F" }, h("title", {}, dates[i] + ": " + fmt.format(v) + " results · " + fmt.format(spend[i]) + " " + cur + " spent"))));
   }
+  // ---------- revenue forecast ----------
+  async function forecastSection() {
+    let f;
+    try { f = await api("/forecast/" + cid()); } catch (e) { return null; }
+    const head = (extra) => h("div", { class: "between" }, h("h2", {}, "Revenue forecast"), extra);
+    if (!f.ready) return h("section", { class: "card" }, head(h("span", { class: "badge b-neutral" }, "Next 30 days")),
+      h("p", { class: "sub", style: "margin:0" }, f.needs));
+    const cur = f.currency, money = (x) => fmt.format(Math.round(x)) + " " + cur;
+    const W = 900, H = 260, L = 56, R = 12, T = 14, B = 30;
+    const all = f.history.map((p) => ({ d: p.date, a: p.actual })).concat(f.forecast.map((p) => ({ d: p.date, e: p.expected, lo: p.low, hi: p.high })));
+    const n = all.length, max = Math.max(1, ...all.map((p) => Math.max(p.a || 0, p.hi || 0))) * 1.08;
+    const X = (i) => L + (W - L - R) * i / (n - 1), Y = (v) => T + (H - T - B) * (1 - v / max);
+    const hist = f.history.length;
+    const line = (pts) => pts.map(([i, v], k) => (k ? "L" : "M") + X(i).toFixed(1) + " " + Y(v).toFixed(1)).join(" ");
+    const actual = line(f.history.map((p, i) => [i, p.actual]));
+    const exp = line([[hist - 1, f.history[hist - 1].actual]].concat(f.forecast.map((p, i) => [hist + i, p.expected])));
+    const band = f.forecast.map((p, i) => [hist + i, p.high]);
+    const bandPath = line(band) + " " + f.forecast.slice().reverse().map((p, k) => "L" + X(hist + f.forecast.length - 1 - k).toFixed(1) + " " + Y(p.low).toFixed(1)).join(" ") + " Z";
+    const ticks = [0, 0.5, 1].map((t) => h("g", {}, h("line", { x1: L, x2: W - R, y1: Y(max * t / 1.08), y2: Y(max * t / 1.08), stroke: "#E8E9E3" }),
+      h("text", { x: L - 8, y: Y(max * t / 1.08) + 4, "text-anchor": "end", fill: "#6B6B6B", "font-size": 11 }, fmt.format(Math.round(max * t / 1.08)))));
+    const day = (iso) => new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    const xl = [0, hist - 1, n - 1].map((i, k) => h("text", { x: X(i), y: H - 8, "text-anchor": k === 0 ? "start" : k === 2 ? "end" : "middle", fill: "#6B6B6B", "font-size": 11 },
+      k === 1 ? (f.live ? "Today" : day(all[i].d)) : day(all[i].d)));
+    const svg = h("svg", { viewBox: "0 0 " + W + " " + H, style: "width:100%;height:auto;display:block", role: "img",
+      "aria-label": "Revenue for the last 60 days and the forecast for the next 30 days: about " + money(f.total.expected) },
+      ...ticks,
+      h("path", { d: bandPath, fill: "rgba(94,148,0,.13)", stroke: "none" }),
+      h("line", { x1: X(hist - 1), x2: X(hist - 1), y1: T, y2: H - B, stroke: "#B5B8AE", "stroke-dasharray": "3 4" }),
+      h("path", { d: actual, fill: "none", stroke: "#141414", "stroke-width": 1.8, "stroke-linejoin": "round" }),
+      h("path", { d: exp, fill: "none", stroke: "#5E9400", "stroke-width": 2.4, "stroke-dasharray": "6 5", "stroke-linejoin": "round" }),
+      ...xl);
+    const ch = f.change_vs_last_30;
+    const acc = f.accuracy.average_error;
+    const chip = (t) => h("span", { class: "badge b-neutral", style: "font-weight:500" }, t);
+    const dr = f.drivers;
+    return h("section", { class: "card", "aria-label": "Revenue forecast" },
+      head(h("div", { style: "display:flex;gap:14px;flex-wrap:wrap" }, h("span", { class: "key" }, h("i", { style: "border-top-color:#141414" }), "Real revenue"),
+        h("span", { class: "key" }, h("i", { class: "prev", style: "border-top-color:#5E9400" }), "Forecast"),
+        h("span", { class: "key" }, h("i", { style: "border-top:8px solid rgba(94,148,0,.18)" }), "Likely range"))),
+      h("div", { style: "display:flex;gap:28px;flex-wrap:wrap;align-items:flex-end" },
+        h("div", { style: "display:flex;flex-direction:column;gap:2px" }, h("span", { class: "label" }, "Next 30 days" + (f.live ? "" : " after your latest data")),
+          h("b", { style: "font-family:var(--head);font-size:32px" }, "about " + money(f.total.expected)),
+          h("span", { class: "small" }, "likely between " + money(f.total.low) + " and " + money(f.total.high))),
+        ch != null ? h("div", { style: "display:flex;flex-direction:column;gap:2px" }, h("span", { class: "label" }, "vs the last 30 days"),
+          h("b", { style: "font-family:var(--head);font-size:22px;color:" + (ch >= 0 ? "var(--win)" : "var(--amber)") }, (ch >= 0 ? "+" : "") + Math.round(ch * 100) + "%"),
+          h("span", { class: "small" }, money(f.last_30_days) + " last 30 days")) : null,
+        h("div", { style: "display:flex;flex-direction:column;gap:2px" }, h("span", { class: "label" }, "How reliable"),
+          h("b", { style: "font-family:var(--head);font-size:22px" }, acc == null ? "New" : "±" + Math.round(acc * 100) + "%"),
+          h("span", { class: "small" }, acc == null ? "not enough history to test yet" : "average miss when tested on your past " + f.accuracy.tests + " months"))),
+      svg,
+      h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" },
+        chip("Trend: " + (dr.trend_per_month >= 0 ? "+" : "") + Math.round(dr.trend_per_month * 100) + "% a month over the last 3 months"),
+        dr.best_day_lift > 0.05 ? chip("Best day: " + dr.best_day + " (+" + Math.round(dr.best_day_lift * 100) + "%)") : null),
+      h("p", { class: "small", style: "margin:0" }, f.note));
+  }
+
   async function adsSection(period) {
     const box = h("section", { class: "card", "aria-labelledby": "ads-h" },
       h("div", { class: "between" }, h("h2", { id: "ads-h" }, "Ads performance"), h("span", { class: "badge b-neutral" }, "Live from Meta")), loading("Reading your ads from Meta…"));
@@ -2062,7 +2118,7 @@ main{background:transparent}
       draw();
       return;
     }
-    const adsBox = await adsSection(homePeriod);
+    const [adsBox, fcBox] = await Promise.all([adsSection(homePeriod), forecastSection()]);
     body.replaceChildren(
       ...[adsBanner(d.ads_access)].filter(Boolean),
       strip, adsBox,
@@ -2070,6 +2126,7 @@ main{background:transparent}
         h("div", { class: "between" }, h("h2", {}, label + " over time"),
           h("div", { style: "display:flex;gap:14px" }, h("span", { class: "key" }, h("i"), "This period"), h("span", { class: "key" }, h("i", { class: "prev" }), "Previous period"))),
         chartHost, extra),
+      ...[fcBox].filter(Boolean),
       h("div", { class: "row", style: "align-items:flex-start" },
         h("div", { style: "flex:3 1 420px;display:flex;flex-direction:column;gap:24px;min-width:0" }, sources, products),
         h("div", { style: "flex:2 1 300px;display:flex;flex-direction:column;gap:24px;min-width:0" }, guide, camps)));
