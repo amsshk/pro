@@ -48,6 +48,13 @@ class Payment:
     client_user_agent: Optional[str] = None
     client_ip_address: Optional[str] = None
     event_source_url: Optional[str] = None
+    fbp: Optional[str] = None             # Meta browser id (_fbp cookie), when the checkout passed it on
+    # Address details from the order, used only as hashed match keys for Meta
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    city: Optional[str] = None
+    zip: Optional[str] = None
+    country: Optional[str] = None         # two-letter code
 
     @property
     def event_id(self) -> str:

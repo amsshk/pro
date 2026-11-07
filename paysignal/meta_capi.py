@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Iterable, Optional
 
-from .identity import fbc_from_fbclid, hash_email, hash_phone
+from .identity import _sha256, fbc_from_fbclid, hash_email, hash_field, hash_phone
 from .models import Payment
 from .scoring import Score
 
@@ -24,15 +24,29 @@ def _action_source(p: Payment) -> str:
     return "website"
 
 
-def build_purchase_event(p: Payment, score: Score, default_country_code: str = "971") -> dict:
-    user_data = {k: v for k, v in {
-        "em": [hash_email(p.email)] if hash_email(p.email) else None,
-        "ph": [hash_phone(p.phone, default_country_code)] if hash_phone(p.phone, default_country_code) else None,
-        "external_id": [p.customer_id] if p.customer_id else None,
+MATCH_KEYS = ("em", "ph", "external_id", "fbc", "fbp", "client_ip_address", "fn", "ln", "ct", "zp", "country")
+
+
+def user_data_for(p: Payment, default_country_code: str = "971") -> dict:
+    """Everything Meta can match a buyer on. Personal details are SHA-256 hashed; click/browser ids are not
+    (Meta's rules). Nothing raw ever leaves the server."""
+    one = lambda v: [v] if v else None
+    return {k: v for k, v in {
+        "em": one(hash_email(p.email)),
+        "ph": one(hash_phone(p.phone, default_country_code)),
+        "external_id": one(_sha256(str(p.customer_id).strip().lower())) if p.customer_id else None,
         "fbc": fbc_from_fbclid(p.fbclid, p.occurred_at),
+        "fbp": p.fbp,
         "client_user_agent": p.client_user_agent,
         "client_ip_address": p.client_ip_address,
+        "fn": one(hash_field(p.first_name, "name")), "ln": one(hash_field(p.last_name, "name")),
+        "ct": one(hash_field(p.city, "city")), "zp": one(hash_field(p.zip, "zip")),
+        "country": one(hash_field(p.country, "country")),
     }.items() if v}
+
+
+def build_purchase_event(p: Payment, score: Score, default_country_code: str = "971") -> dict:
+    user_data = user_data_for(p, default_country_code)
 
     event = {
         "event_name": "Purchase",
@@ -53,23 +67,23 @@ def build_purchase_event(p: Payment, score: Score, default_country_code: str = "
     return event
 
 
-def build_refund_event(refund: Payment) -> dict:
+def build_refund_event(refund: Payment, original: Optional[Payment] = None) -> dict:
     """Custom event (Meta has no standard refund). Positive value; the name says it's a refund.
-    Useful for exclusion audiences and visibility; it does not reduce Ads Manager ROAS."""
+    Matched on the original buyer, so it can feed exclusion audiences; it does not reduce Ads Manager ROAS."""
+    who = original or refund
     return {
         "event_name": "Refund",
         "event_time": int(refund.occurred_at.timestamp()),
         "event_id": refund.event_id,
         "action_source": "system_generated",
-        "user_data": {k: v for k, v in {"em": [hash_email(refund.email)] if hash_email(refund.email) else None,
-                                        "ph": [hash_phone(refund.phone)] if hash_phone(refund.phone) else None}.items() if v},
+        "user_data": user_data_for(who),
         "custom_data": {"value": refund.amount, "currency": refund.currency, "order_id": refund.refund_of},
     }
 
 
 def has_match_key(event: dict) -> bool:
     """Meta can't match an event with no customer identifier; skip those."""
-    return any(k in event["user_data"] for k in ("em", "ph", "external_id", "fbc"))
+    return any(k in event["user_data"] for k in ("em", "ph", "external_id", "fbc", "fbp"))
 
 
 def send(events: Iterable[dict], dataset_id: str, access_token: str, version: str = "v25.0",
@@ -88,5 +102,5 @@ def send(events: Iterable[dict], dataset_id: str, access_token: str, version: st
         import requests
         r = requests.post(GRAPH_URL.format(version=version, dataset_id=dataset_id),
                           params={"access_token": access_token}, json=payload, timeout=30)
-        results.append({"status": r.status_code, "body": r.json() if r.content else {}})
+        results.append({"status": r.status_code, "body": r.json() if r.content else {}, "count": len(payload["data"])})
     return results

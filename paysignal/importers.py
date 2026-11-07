@@ -121,7 +121,11 @@ def import_shopify_orders(text: str, client_id: str, costs: dict[str, float] | N
             currency=currency, occurred_at=when, email=_pick(r, "Email") or None,
             phone=_pick(r, "Phone", "Billing Phone", "Shipping Phone") or None,
             discount=_money(_pick(r, "Discount Amount")), promo_code=_pick(r, "Discount Code") or None,
-            items=o["items"]))
+            items=o["items"],
+            first_name=(_pick(r, "Billing Name") or "").split(" ")[0] or None,
+            last_name=" ".join((_pick(r, "Billing Name") or "").split(" ")[1:]) or None,
+            city=_pick(r, "Billing City") or None, zip=_pick(r, "Billing Zip") or None,
+            country=(_pick(r, "Billing Country") or "")[:2] or None))
         refunded = _money(_pick(r, "Refunded Amount"))
         if status in ("refunded", "partially_refunded", "partially refunded") and not refunded:
             refunded = total if status == "refunded" else 0.0

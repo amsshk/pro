@@ -143,6 +143,16 @@ class PaymentStore:
                         (client_id, source, external_id))
         self.db.commit()
 
+    def unsent_refunds(self, client_id: str) -> list[Payment]:
+        rows = self.db.execute("SELECT data FROM payments WHERE client_id=? AND kind='refund'"
+                               " AND sent_to_meta=0 ORDER BY occurred_at", (client_id,))
+        return [self._load(r) for r in rows]
+
+    def purchase(self, client_id: str, external_id: str) -> Optional[Payment]:
+        r = self.db.execute("SELECT data FROM payments WHERE client_id=? AND kind='purchase' AND external_id=?",
+                            (client_id, external_id)).fetchone()
+        return self._load(r) if r else None
+
     def unsent(self, client_id: str) -> list[Payment]:
         rows = self.db.execute("SELECT data FROM payments WHERE client_id=? AND kind='purchase'"
                                " AND sent_to_meta=0 ORDER BY occurred_at", (client_id,))

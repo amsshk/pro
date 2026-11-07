@@ -74,6 +74,8 @@ h2{margin:0;font-family:var(--head);font-size:20px;font-weight:600}
 .leaks li:last-child{border-bottom:0;padding-bottom:0}
 .leakbar{height:6px;border-radius:99px;background:var(--line);overflow:hidden}
 .leakbar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#F59E9E,var(--amber))}
+.mkeys{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px 22px}
+.mkey{display:flex;flex-direction:column;gap:6px;font-size:14px}
 .pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
 .pcard{display:flex;flex-direction:column;align-items:flex-start;gap:10px;text-align:left;background:var(--soft);border:1px solid var(--edge);border-radius:14px;padding:16px;cursor:pointer;min-height:88px}
 .pcard:hover{border-color:var(--violet)}
@@ -489,6 +491,7 @@ main{background:transparent}
     ["#/upload", "Connect & upload", "M12 16V4M6 10l6-6 6 6M4 20h16"],
     ["#/whatsapp", "WhatsApp", "M12 3a9 9 0 0 0-7.8 13.5L3 21l4.6-1.2A9 9 0 1 0 12 3z"],
     ["#/assistant", "Ask & campaigns", "M4 5h16v11H8l-4 4z"],
+    ["#/learning", "Meta learning", "M4 19V5M4 19h16M8 15l3-4 3 2 5-7"],
     ["#/engines", "Profit engine", "M12 3v3M12 18v3M4.6 6.6l2.1 2.1M17.3 15.3l2.1 2.1M3 12h3M18 12h3M4.6 17.4l2.1-2.1M17.3 8.7l2.1-2.1M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"],
     ["#/competitors", "Competitor X-ray", "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM16 16l5 5M8 11h6M11 8v6", "Premium"],
   ];
@@ -1549,6 +1552,75 @@ main{background:transparent}
       h("a", { class: "btn btn-primary", href: "#/billing" }, "Add card"));
   }
 
+  // ---------- Meta Learning Accelerator ----------
+  async function viewLearning() {
+    const head = h("header", {}, h("h1", {}, "Meta learning"),
+      h("p", { class: "sub" }, "Meta learns who buys from the purchases it receives. This page shows what reached Meta, how well Meta can match it, and what's slowing your campaigns' learning."));
+    root.replaceChildren(layout("#/learning", [head, loading("Checking with Meta…")]));
+    let d;
+    try { d = await api("/learning/" + cid()); } catch (e) { if (e.message !== "signed out") root.replaceChildren(layout("#/learning", [head, errorCard(e.message)])); return; }
+    const sg = d.signals || {};
+    const ago = (t) => { if (!t) return "never"; const m = Math.round((Date.now() / 1000 - t) / 60); return m < 1 ? "just now" : m < 60 ? m + " min ago" : m < 1440 ? Math.round(m / 60) + " h ago" : Math.round(m / 1440) + " days ago"; };
+    const k = (label, v, note, color) => h("div", { class: "ek" }, h("span", { class: "label" }, label), h("b", { style: color ? "color:" + color : "" }, v), note ? h("span", { class: "small" }, note) : null);
+    const blocks = [head];
+    if (d.admin) {
+      blocks.push(h("div", { class: "result" }, h("span", {}, "Your own sign-ups and active users are sent to Meta by ProAds' sign-up tracking (CompleteRegistration and StartTrial). Below is how Meta is learning on your campaigns.")));
+    } else {
+      const mode = sg.mode === "live" ? ["b-measured", "Sending live"] : sg.mode === "practice" ? ["b-neutral", "Practice mode: nothing sent"] : ["b-neutral", "Nothing sent yet"];
+      const acc = sg.sent ? sg.accepted / sg.sent : null;
+      blocks.push(h("section", { class: "card estrip" },
+        h("div", { class: "elead" }, h("span", { class: "label" }, "Purchases Meta learned from · 7 days"),
+          h("b", { class: "ebig" }, fmt.format(sg.accepted || 0)),
+          h("span", { class: "badge " + mode[0], style: "align-self:flex-start" }, mode[1])),
+        k("Sales received", fmt.format(sg.purchases || 0), "verified paid orders"),
+        k("Accepted by Meta", acc == null ? "–" : Math.round(acc * 100) + "%", "last accepted " + ago(sg.last_accepted_at), acc != null && acc < 0.95 ? "var(--amber)" : null),
+        k("Refunds sent", fmt.format(sg.refunds || 0), "so Meta knows who sent things back"),
+        k("Couldn't be matched", fmt.format(sg.no_identifier || 0), "no email, phone or click ID", sg.no_identifier ? "var(--amber)" : null),
+        k("Too old to send", fmt.format(sg.too_old || 0), "Meta only takes the last 7 days")));
+      if (sg.last_error) blocks.push(h("div", { class: "result err" }, h("span", {}, "Meta rejected a delivery " + ago(sg.last_error.at) + ": " + sg.last_error.message), h("span", { class: "ok" }, "ProAds retries automatically")));
+      if (d.last_sale_at && sg.mode === "live" && sg.last_accepted_at && d.last_sale_at - sg.last_accepted_at > 3600 && Date.now() / 1000 - d.last_sale_at < 6 * 86400)
+        blocks.push(h("div", { class: "result err" }, h("span", {}, "Your newest sale hasn't reached Meta yet."), h("span", { class: "ok" }, "Check the Facebook connection")));
+      // match keys
+      const keys = (sg.match_keys || []);
+      blocks.push(h("section", { class: "card" },
+        h("div", { class: "between" }, h("h2", {}, "How well Meta can match your buyers"), h("span", { class: "small" }, fmt.format(sg.events_with_keys || 0) + " purchases checked")),
+        h("p", { class: "sub", style: "margin:0;font-size:14px" }, "The more of these each purchase carries, the more buyers Meta can recognise, and the faster it learns. Personal details are scrambled (hashed) before sending."),
+        sg.events_with_keys ? h("div", { class: "mkeys" }, keys.map((x) => h("div", { class: "mkey" },
+          h("div", { class: "between" }, h("span", {}, x.label), h("b", {}, Math.round(x.share * 100) + "%")),
+          h("div", { class: "leakbar" }, h("i", { style: "width:" + Math.max(2, Math.round(x.share * 100)) + "%;background:" + (x.share >= 0.6 ? "var(--win)" : x.share >= 0.2 ? "var(--violet)" : "var(--amber)") })))))
+          : h("p", { class: "small", style: "margin:0" }, "Shows up after ProAds sends its first purchases."),
+        h("p", { class: "small", style: "margin:0" }, "Meta's own score is in Events Manager → your Pixel → Overview → Event match quality.")));
+      if (d.double_count) {
+        const dc = d.double_count;
+        blocks.push(h("section", { class: "card", style: dc.status === "warning" ? "border-color: var(--amber)" : "" },
+          h("div", { class: "between" }, h("h2", {}, "Counted twice?"), h("span", { class: "badge " + (dc.status === "warning" ? "b-est" : dc.status === "ok" ? "b-measured" : "b-neutral") },
+            dc.status === "warning" ? "Possible double counting" : dc.status === "ok" ? "Looks clean" : "Can't tell yet")),
+          h("p", { style: "margin:0" }, dc.message), dc.fix ? h("p", { class: "sub", style: "margin:0" }, h("b", {}, "Fix: "), dc.fix) : null));
+      }
+    }
+    // learning status per campaign
+    const camps = d.campaigns || [];
+    const LS = { learning: ["b-neutral", "Learning"], learned: ["b-measured", "Learned"], limited: ["b-est", "Learning limited"], unknown: ["b-neutral", "–"] };
+    blocks.push(camps.length ? h("section", { class: "card" },
+      h("div", { class: "between" }, h("h2", {}, "Learning status"), h("span", { class: "small" }, "from Meta · ad sets usually need about 50 results a week")),
+      camps.map((c) => h("div", { class: "adset", style: "gap:10px" },
+        h("div", { class: "between" }, h("b", {}, c.name || c.campaign_id), h("span", { class: "small" }, c.status === "ACTIVE" ? "Live" : "Paused")),
+        c.error ? h("span", { class: "small" }, c.error) : [
+          (c.adsets || []).map((a) => h("div", { style: "display:flex;flex-direction:column;gap:4px" },
+            h("div", { class: "between", style: "gap:10px;flex-wrap:wrap" }, h("span", {}, a.name),
+              h("div", { style: "display:flex;gap:8px;align-items:center" }, h("span", { class: "small" }, fmt.format(a.daily_budget) + " a day"),
+                h("span", { class: "badge " + LS[a.learning][0] }, LS[a.learning][1]))),
+            a.conversions_week != null ? h("div", { class: "leakbar", title: a.conversions_week + " of 50 this week" },
+              h("i", { style: "width:" + Math.min(100, Math.round(a.conversions_week / 50 * 100)) + "%;background:var(--violet)" })) : null,
+            a.conversions_week != null ? h("span", { class: "small" }, a.conversions_week + " of about 50 results this week") : null)),
+          (c.advice || []).map((x) => h("div", { class: "result" + (x.level === "high" ? " err" : ""), style: "flex-direction:column;align-items:flex-start;gap:4px" },
+            h("b", {}, x.title), h("span", { style: "font-size:14px" }, x.detail), h("span", { style: "font-size:14px" }, h("b", {}, "Do: "), x.action)))].flat()))) 
+      : h("section", { class: "card" }, h("h2", {}, "Learning status"), h("p", { class: "sub", style: "margin:0" }, "Publish a campaign and ProAds will show here how Meta is learning on it."),
+        h("a", { class: "btn btn-primary", href: "#/assistant", style: "align-self:flex-start" }, "Build a campaign")));
+    blocks.push(h("p", { class: "small", style: "margin:0" }, "ProAds can't force Meta to learn faster. It can send cleaner, complete purchase data and help you avoid campaign setups that slow learning down."));
+    root.replaceChildren(layout("#/learning", blocks));
+  }
+
   // ---------- Profit engine: Zero-Waste Budget + Ad Autopsy ----------
   function gauge(pct, label) {
     const p = Math.max(0, Math.min(1, pct || 0)), r = 34, c = Math.PI * r;
@@ -2334,7 +2406,7 @@ main{background:transparent}
   }
 
   // ---------- router ----------
-  const VIEWS = { "#/platforms": viewPlatforms, "#/home": viewHome, "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling, "#/competitors": viewCompetitors, "#/engines": viewEngines };
+  const VIEWS = { "#/platforms": viewPlatforms, "#/home": viewHome, "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling, "#/competitors": viewCompetitors, "#/engines": viewEngines, "#/learning": viewLearning };
   function go(hash) { if (location.hash !== hash) location.hash = hash; else route(); }
   async function route() {
     const [path, query] = location.hash.split("?");

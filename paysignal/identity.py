@@ -15,6 +15,23 @@ def _sha256(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
+def hash_field(value: Optional[str], kind: str = "text") -> Optional[str]:
+    """Meta's normalising rules before hashing: lowercase; names keep letters only; city/zip lose spaces
+    and punctuation; country is the 2-letter code."""
+    if not value:
+        return None
+    v = str(value).strip().lower()
+    if kind == "name":
+        v = re.sub(r"[^\w]", "", v)
+    elif kind in ("city", "zip"):
+        v = re.sub(r"[\s\W_]", "", v)
+    elif kind == "country":
+        v = re.sub(r"[^a-z]", "", v)[:2]
+        if len(v) != 2:
+            return None
+    return _sha256(v) if v else None
+
+
 def normalize_email(email: Optional[str]) -> Optional[str]:
     if not email:
         return None

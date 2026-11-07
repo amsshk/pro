@@ -50,7 +50,7 @@ from .attribution import make_promo_code, tag_link
 from .dashboard import build_dashboard, _realized
 from .ads_report import build_report
 from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, business_context
-from . import billing, competitors, engines, forecast, leaks, learning, ledger, meta_ads, meta_connect, settlement
+from . import billing, competitors, engines, forecast, leaks, learning, signals, ledger, meta_ads, meta_connect, settlement
 from .connectors.stripe import verify_signature as stripe_signature_ok
 from .audit import audit_summary, audit_text, build_audit
 from .importers import xlsx_to_csv, import_auto
@@ -121,6 +121,8 @@ class App:
         self.fees = settlement.FeePeriods(self.store.db)
         self.economics = engines.EconomicsStore(self.store.db)
         self.unpaid = leaks.UnpaidStore(self.store.db)
+        self.signals = signals.SignalLog(self.store.db)
+        self._nudged: dict = {}
         self.stripe_http = None                # set in tests
         self.billing_sync = False              # tests: add invoice fees inline
         self.ads_cache: dict = {}              # (client, period) -> (time, report)
@@ -233,7 +235,23 @@ class App:
                         wa_matches.append((p, match))
         for p, match in wa_matches:
             self._wa_report(client_id, p, match)
+        if new and getattr(self, "instant_meta", False):
+            self.nudge_meta(client_id)
         return {"received": len(payments), "new": new, "duplicates": len(payments) - new}
+
+    def nudge_meta(self, client_id: str) -> None:
+        """Send new sales to Meta now instead of waiting for the 10-minute cycle (at most every 20 seconds)."""
+        now = time.time()
+        if now - self._nudged.get(client_id, 0) < 20:
+            return
+        self._nudged[client_id] = now
+
+        def run():
+            try:
+                self.sync_meta(client_id)
+            except Exception:
+                log.exception("instant meta send failed for %s", client_id)
+        threading.Thread(target=run, daemon=True, name="meta-now").start()
 
     # ----- WhatsApp -----
     def waba_client(self, waba_id: str) -> Optional[str]:
@@ -355,10 +373,13 @@ class App:
             results = self.engine(client_id).push_to_meta(
                 dataset_id=meta.get("dataset_id", ""), access_token=meta.get("access_token", ""),
                 dry_run=not live, test_event_code=meta.get("test_event_code"))
+        with self.lock:
+            self.signals.log(client_id, "live" if live else "practice", results)
+        batches = [r for r in results if not r.get("report")]
         sent = sum(r["count"] if r.get("dry_run") else int(r.get("body", {}).get("events_received", 0) or 0)
-                   for r in results)
-        errors = [r["body"] for r in results if not r.get("dry_run") and r.get("status") != 200]
-        return {"mode": "live" if live else "dry_run", "batches": len(results), "events": sent, "errors": errors}
+                   for r in batches)
+        errors = [r["body"] for r in batches if not r.get("dry_run") and r.get("status") != 200]
+        return {"mode": "live" if live else "dry_run", "batches": len(batches), "events": sent, "errors": errors}
 
 
 def _admins(state: "App") -> set[str]:
@@ -736,6 +757,63 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         result = {"campaigns": camps, "real_ratio": ratio, "period_days": 30, "updated_at": int(time.time())}
         state.ads_cache[("engines", client_id)] = (time.time(), result)
         return {**out, **result}
+
+    @flask.get("/learning/<client_id>")
+    def learning_view(client_id):
+        """Meta Learning Accelerator: what reached Meta, how well it can be matched, double counting, learning status."""
+        state.require_key(client_id)
+        admin = is_admin(client_id)
+        cfg = state.config(client_id)
+        meta = cfg.get("meta", {})
+        with state.lock:
+            sig = state.signals.summary(client_id)
+            last_sale = max((p.occurred_at for p in state.engine(client_id).store.purchases(client_id)), default=None)
+            launches = state.launches.list(client_id)
+            econ_in = state.economics.get(client_id)
+            sent7 = state.signals.sent_purchases_since(client_id, int(time.time()) - 7 * 86400)
+        out = {"signals": sig, "pixel": meta.get("dataset_id") or None, "live": bool(meta.get("live")),
+               "last_sale_at": int(last_sale.timestamp()) if last_sale else None, "admin": admin}
+        hit = state.ads_cache.get(("learning", client_id))
+        if hit and time.time() - hit[0] < 600 and not request.args.get("fresh"):
+            return {**out, **hit[1]}
+        s = state.ads_settings(client_id, admin)
+        extra = {"double_count": None, "campaigns": []}
+        if s:
+            version = meta_ads.settings()["version"]
+            token = s.get("token")
+            if meta.get("dataset_id") and not admin:
+                n = signals.pixel_purchases(state.ads_http, token, meta["dataset_id"], version, int(time.time()) - 7 * 86400)
+                extra["double_count"] = signals.double_count_check(n, sent7)
+            target = engines.economics(econ_in)["target_cpa"] if econ_in else None
+            for l in launches:
+                kind = "signup" if admin else (l.get("conversion") or "purchase")
+                try:
+                    r = state.ads_http.get(f"https://graph.facebook.com/{version}/{l['campaign_id']}/adsets",
+                                           params={"access_token": token, "limit": 50,
+                                                   "fields": "name,effective_status,daily_budget,learning_stage_info"}, timeout=20)
+                    body = r.json()
+                except Exception as e:
+                    extra["campaigns"].append({"campaign_id": l["campaign_id"], "name": l.get("name", ""), "error": str(e)[:150]})
+                    continue
+                if r.status_code != 200 or "error" in body:
+                    extra["campaigns"].append({"campaign_id": l["campaign_id"], "name": l.get("name", ""),
+                                               "error": ((body.get("error") or {}).get("message") or "Meta refused")[:150]})
+                    continue
+                cur = (s.get("currency") or ads_currency(client_id) or "").upper()
+                div = 1 if cur in meta_ads.ZERO_DECIMAL else 100
+                sets = []
+                for a in body.get("data") or []:
+                    li = a.get("learning_stage_info") or {}
+                    st = (li.get("status") or "").upper()
+                    sets.append({"name": a.get("name", ""), "effective_status": a.get("effective_status"),
+                                 "daily_budget": float(a.get("daily_budget") or 0) / div,
+                                 "learning": {"LEARNING": "learning", "SUCCESS": "learned", "FAIL": "limited"}.get(st, "unknown"),
+                                 "conversions_week": li.get("conversions"), "last_edit": li.get("last_sig_edit_ts")})
+                extra["campaigns"].append({"campaign_id": l["campaign_id"], "name": l.get("name", ""), "status": l["status"],
+                                           "kind": kind, "adsets": sets,
+                                           "advice": signals.learning_advice(sets, target, kind)})
+        state.ads_cache[("learning", client_id)] = (time.time(), extra)
+        return {**out, **extra}
 
     @flask.get("/leaks/<client_id>")
     def leaks_endpoint(client_id):
@@ -2234,6 +2312,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         return jsonify({"error": e.description}), e.code
 
     if start_worker if start_worker is not None else os.environ.get("PAYSIGNAL_WORKER", "1") == "1":
+        state.instant_meta = True
         _start_worker(state, int(os.environ.get("PAYSIGNAL_SYNC_SECONDS", "600")))
     return flask
 

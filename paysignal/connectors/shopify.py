@@ -29,6 +29,20 @@ def _tracking(order: dict) -> dict:
     return {k: (qs.get(k) or [None])[0] or notes.get(k) for k in _TRACKED}
 
 
+def _person(order: dict, customer: dict) -> dict:
+    """Browser and address details Shopify keeps on the order: they help Meta match the buyer (sent hashed)."""
+    addr = order.get("billing_address") or order.get("shipping_address") or customer.get("default_address") or {}
+    client = order.get("client_details") or {}
+    notes = {n.get("name"): n.get("value") for n in order.get("note_attributes") or []}
+    return {"first_name": addr.get("first_name") or customer.get("first_name"),
+            "last_name": addr.get("last_name") or customer.get("last_name"),
+            "city": addr.get("city"), "zip": addr.get("zip"), "country": addr.get("country_code"),
+            "client_ip_address": order.get("browser_ip") or client.get("browser_ip"),
+            "client_user_agent": client.get("user_agent"),
+            "event_source_url": order.get("order_status_url") or None,
+            "fbp": notes.get("_fbp") or notes.get("fbp")}
+
+
 def _ts(value: str | None) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00")) if value else datetime.now().astimezone()
 
@@ -52,7 +66,7 @@ def parse_shopify_webhook(topic: str, body: dict, client_id: str,
             phone=body.get("phone") or customer.get("phone"),
             customer_id=str(customer["id"]) if customer.get("id") else None,
             discount=float(body.get("total_discounts", 0) or 0), items=items,
-            promo_code=(codes[0].get("code") if codes else None), **track,
+            promo_code=(codes[0].get("code") if codes else None), **track, **_person(body, customer),
         )]
 
     if topic == "refunds/create":
