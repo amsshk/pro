@@ -50,7 +50,7 @@ from .attribution import make_promo_code, tag_link
 from .dashboard import build_dashboard, _realized
 from .ads_report import build_report
 from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, business_context
-from . import billing, competitors, learning, ledger, meta_ads, meta_connect, settlement
+from . import billing, competitors, engines, learning, ledger, meta_ads, meta_connect, settlement
 from .connectors.stripe import verify_signature as stripe_signature_ok
 from .audit import audit_summary, audit_text, build_audit
 from .importers import xlsx_to_csv, import_auto
@@ -119,6 +119,7 @@ class App:
         self.billing = billing.BillingStore(self.store.db)
         self.ledger = ledger.SpendLedger(self.store.db)
         self.fees = settlement.FeePeriods(self.store.db)
+        self.economics = engines.EconomicsStore(self.store.db)
         self.stripe_http = None                # set in tests
         self.billing_sync = False              # tests: add invoice fees inline
         self.ads_cache: dict = {}              # (client, period) -> (time, report)
@@ -630,6 +631,102 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         state.ads_cache[(client_id, period)] = (time.time(), rep)
         return rep
 
+    # ---------------- Profit engines: Zero-Waste Budget + Ad Autopsy ----------------
+    def economics_hints(client_id) -> dict:
+        """Numbers ProAds already knows from the sales history, to prefill the form."""
+        with state.lock:
+            eng = state.engine(client_id)
+            audit = build_audit(eng, None, currency=state.config(client_id).get("currency", "AED"))
+        if "error" in audit or not audit.get("orders"):
+            return {}
+        out = {"price": round(audit["gross"] / audit["orders"], 2), "refund_rate": audit.get("refund_rate", 0)}
+        cu = audit.get("customers") or {}
+        if cu.get("known"):
+            out["orders_per_customer"] = round(audit["orders"] / cu["known"], 2)
+        return out
+
+    def economics_for(client_id) -> Optional[dict]:
+        with state.lock:
+            inp = state.economics.get(client_id)
+        return engines.economics(inp) if inp else None
+
+    @flask.post("/engines/<client_id>/economics")
+    def economics_save(client_id):
+        state.require_key(client_id)
+        try:
+            inp = engines.clean_inputs(request.get_json(silent=True) or {})
+        except ValueError as e:
+            abort(400, str(e))
+        with state.lock:
+            state.economics.save(client_id, inp)
+        state.ads_cache.pop(("engines", client_id), None)
+        return engines.economics(inp)
+
+    @flask.get("/engines/<client_id>")
+    def engines_view(client_id):
+        """Max affordable cost per customer, each campaign judged against it, and its autopsy."""
+        state.require_key(client_id)
+        admin = is_admin(client_id)
+        econ = economics_for(client_id)
+        out = {"economics": econ, "hints": {} if econ else economics_hints(client_id), "campaigns": [],
+               "currency": ads_currency(client_id)}
+        with state.lock:
+            launches = state.launches.list(client_id)
+        if not launches:
+            return out
+        hit = state.ads_cache.get(("engines", client_id))
+        if hit and time.time() - hit[0] < 600 and not request.args.get("fresh"):
+            return {**out, **hit[1]}
+        s = state.ads_settings(client_id, admin)
+        if s is None:
+            return {**out, "error": "Connect Facebook & Instagram again to judge your campaigns."}
+        today = datetime.now(timezone.utc).date()
+        since = (today - timedelta(days=29)).isoformat()
+        pub = meta_ads.Publisher(state.ads_http, s)
+        rows = []
+        for l in launches:
+            kind = "signup" if admin else (l.get("conversion") or "purchase")
+            try:
+                data = pub.insights([l["campaign_id"]], since, today.isoformat(),
+                                    fields="spend,impressions,clicks,inline_link_clicks,frequency,cpm,actions,action_values,account_currency")
+            except meta_ads.PublishError as e:
+                rows.append({"campaign_id": l["campaign_id"], "name": l.get("name", ""), "error": str(e)[:200]})
+                continue
+            f = engines.funnel(data[0] if data else {})
+            rows.append({"campaign_id": l["campaign_id"], "name": l.get("name", ""), "status": l["status"], "kind": kind,
+                         "f": f, "currency": (data[0].get("account_currency") if data else "") or ""})
+        # real paying orders from Meta ads (after refunds), to see how much of Meta's count is real money
+        meta_total = sum((r["f"]["purchase"] if r.get("kind") == "purchase" else r["f"]["signup"]) for r in rows if "f" in r)
+        real = None
+        if not admin and meta_total:
+            with state.lock:
+                eng = state.engine(client_id)
+                start = today - timedelta(days=29)
+                from_meta = lambda p: (p.utm_medium or "").lower() == "paid" and \
+                    (p.utm_source or "").lower() in ("meta", "facebook", "instagram", "fb", "ig")
+                purchases = list(eng.store.purchases(client_id))
+                # only compare when this business's sales data actually carries ad tracking; otherwise "unknown", not zero
+                if any(from_meta(p) for p in purchases):
+                    real = sum(1 for p in purchases if start <= p.occurred_at.date() <= today and from_meta(p)
+                               and eng.store.refunded_amount(client_id, p.external_id) < p.amount)
+        ratio = round(real / meta_total, 2) if real is not None and meta_total else None
+        camps = []
+        for r in rows:
+            if "f" not in r:
+                camps.append(r)
+                continue
+            f, kind = r.pop("f"), r["kind"]
+            goal = f["purchase"] if kind == "purchase" else f["signup"]
+            item = {**r, "spend": f["spend"], "results": goal, "autopsy": engines.autopsy(f, kind, econ, ratio)}
+            if econ and kind == "purchase":
+                sales = goal * ratio if ratio is not None else goal
+                item["verdict"] = engines.verdict(f["spend"], sales, econ["target_cpa"], econ["break_even_cpa"])
+                item["verdict"]["based_on"] = "real paid sales (estimated from your sales data)" if ratio is not None else "Meta's reported purchases"
+            camps.append(item)
+        result = {"campaigns": camps, "real_ratio": ratio, "period_days": 30, "updated_at": int(time.time())}
+        state.ads_cache[("engines", client_id)] = (time.time(), result)
+        return {**out, **result}
+
     @flask.get("/dashboard/<client_id>")
     def dashboard_endpoint(client_id):
         """Home: a period vs the one before (?period=today|7|30|90|365), plus a setup guide."""
@@ -698,6 +795,12 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             org = OrganicEngine(eng, posts) if posts else None
             ctx = business_context(eng, org, state.config(client_id).get("currency", "AED"))
             bench = state.learnings.benchmarks()
+            econ_in = state.economics.get(client_id)
+            if econ_in:
+                e = engines.economics(econ_in)
+                ctx["unit_economics"] = {k: e.get(k) for k in ("break_even_cpa", "target_cpa", "lifetime_break_even_cpa", "viable")} | \
+                    {"note": "Max the business can pay per customer. Plan budgets, ad counts and stop rules around target_cpa; "
+                             "with a small budget, use one ad set and at most 2 ads."}
             if bench:      # rebuilt from the table on every request, so opt-outs and deletions apply at once
                 ctx["benchmarks_from_other_businesses"] = {
                     **bench, "note": "Rounded medians across several anonymous businesses. Never describe or guess any "

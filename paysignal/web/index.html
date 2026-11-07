@@ -54,6 +54,21 @@ h2{margin:0;font-family:var(--head);font-size:20px;font-weight:600}
 .uchip:hover{border-color:var(--violet)}
 .uchip[aria-pressed=true]{background:var(--violet);border-color:var(--violet);color:#0A0A0A}
 .uchip[aria-pressed=true]::before{content:"✓ "}
+.estrip{display:grid;grid-template-columns:minmax(220px,1.4fr) repeat(auto-fit,minmax(150px,1fr));gap:18px;align-items:stretch}
+.elead,.ek{display:flex;flex-direction:column;gap:6px;justify-content:center}
+.ek{border-left:1px solid var(--line);padding-left:18px}
+.ebig{font-family:var(--head);font-size:34px;line-height:1.1;color:#EDEDED}
+.ek b{font-family:var(--head);font-size:22px}
+.egrid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
+.epanel{display:flex;flex-direction:column;gap:12px;position:sticky;top:16px}
+.etable td,.etable th{text-align:center;white-space:nowrap}
+.etable td:first-child,.etable th:first-child{text-align:left;white-space:normal;min-width:140px}
+.erow{cursor:pointer}.erow:hover td{background-blend-mode:lighten;filter:brightness(1.15)}
+.erow.sel td{box-shadow:inset 0 1px 0 var(--violet),inset 0 -1px 0 var(--violet)}
+.erow.sel td:first-child{box-shadow:inset 1px 1px 0 var(--violet),inset 0 -1px 0 var(--violet)}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.etable{font-size:14px}
+@media (max-width:900px){.estrip{grid-template-columns:1fr}.egrid{grid-template-columns:1fr}.epanel{position:static}.ek{border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:12px}}
 .pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
 .pcard{display:flex;flex-direction:column;align-items:flex-start;gap:10px;text-align:left;background:var(--soft);border:1px solid var(--edge);border-radius:14px;padding:16px;cursor:pointer;min-height:88px}
 .pcard:hover{border-color:var(--violet)}
@@ -417,6 +432,7 @@ main{background:transparent}
     ["#/upload", "Connect & upload", "M12 16V4M6 10l6-6 6 6M4 20h16"],
     ["#/whatsapp", "WhatsApp", "M12 3a9 9 0 0 0-7.8 13.5L3 21l4.6-1.2A9 9 0 1 0 12 3z"],
     ["#/assistant", "Ask & campaigns", "M4 5h16v11H8l-4 4z"],
+    ["#/engines", "Profit engine", "M12 3v3M12 18v3M4.6 6.6l2.1 2.1M17.3 15.3l2.1 2.1M3 12h3M18 12h3M4.6 17.4l2.1-2.1M17.3 8.7l2.1-2.1M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"],
     ["#/competitors", "Competitor X-ray", "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM16 16l5 5M8 11h6M11 8v6", "Premium"],
   ];
   function statusRows() {
@@ -1130,6 +1146,7 @@ main{background:transparent}
   }
 
   // ---------- assistant ----------
+  let pendingBrief = "";
   const chatHistory = [];
   function viewAssistant() {
     const chat = h("div", { class: "chat", "aria-live": "polite" });
@@ -1165,8 +1182,9 @@ main{background:transparent}
     const budget = h("input", { id: "budget", type: "number", min: 10, step: 5, value: status && status.admin ? (adsCurrency() === "THB" ? 350 : 35) : 300, required: true });
     const goals = (status && status.admin ? [["Sign-ups for ProAds", "signup"]] : []).concat([["Paying customers who stay", "purchase"], ["More bookings", "purchase"], ["Bring past customers back", "purchase"], ["Sign-ups or leads", "signup"]]);
     const goal = h("select", { id: "goal" }, goals.map(([label, conv], i) => h("option", { value: String(i) }, label)));
+    const brief = pendingBrief; pendingBrief = "";
     const notes = h("textarea", { id: "notes", placeholder: "What you sell, your offer, who to reach, what to avoid…", dir: "auto" },
-      status && status.admin ? "Target business owners, shop owners, clinics, restaurants and marketing agencies in the UAE who already sell online or on Instagram. Main message: stop paying for likes and views, find the posts and ads that bring paying customers. Offer: free sales audit in the first week, free to start, test ads free for 3 days, no card needed. Tone: confident, short, direct. English only. Do not promise specific results or numbers. Avoid students and job seekers." : "");
+      brief ? brief : status && status.admin ? "Target business owners, shop owners, clinics, restaurants and marketing agencies in the UAE who already sell online or on Instagram. Main message: stop paying for likes and views, find the posts and ads that bring paying customers. Offer: free sales audit in the first week, free to start, test ads free for 3 days, no card needed. Tone: confident, short, direct. English only. Do not promise specific results or numbers. Avoid students and job seekers." : "");
     const out = h("div", { style: "display:flex;flex-direction:column;gap:12px" });
     const build = h("button", { class: "btn btn-primary", type: "submit" }, "Build campaign");
     const campForm = h("form", { style: "display:flex;flex-direction:column;gap:12px", onsubmit: async (e) => {
@@ -1437,6 +1455,141 @@ main{background:transparent}
     return h("div", { class: "result" + (a.in_trial ? "" : " err") },
       h("span", {}, a.in_trial ? "Free ad test: " + timeLeft(left) + " left. Add your card so your ads keep running." : "Your free ad test has ended and your ads are paused. Add your card and they start again automatically."),
       h("a", { class: "btn btn-primary", href: "#/billing" }, "Add card"));
+  }
+
+  // ---------- Profit engine: Zero-Waste Budget + Ad Autopsy ----------
+  function gauge(pct, label) {
+    const p = Math.max(0, Math.min(1, pct || 0)), r = 34, c = Math.PI * r;
+    const col = p >= 0.9 ? "#5DBB7A" : p >= 0.7 ? "#7DB21C" : "#8F8F8F";
+    return h("div", { style: "display:flex;flex-direction:column;align-items:center;gap:2px" },
+      h("svg", { width: 92, height: 54, viewBox: "0 0 92 54", "aria-label": Math.round(p * 100) + "% confidence" },
+        h("path", { d: "M12 46 A34 34 0 0 1 80 46", fill: "none", stroke: "#262626", "stroke-width": 8, "stroke-linecap": "round" }),
+        h("path", { d: "M12 46 A34 34 0 0 1 80 46", fill: "none", stroke: col, "stroke-width": 8, "stroke-linecap": "round",
+          "stroke-dasharray": (c * p).toFixed(1) + " " + c.toFixed(1) }),
+        h("text", { x: 46, y: 44, "text-anchor": "middle", fill: "#EDEDED", "font-size": 15, "font-weight": 700 }, (p >= 0.995 ? "99%+" : Math.round(p * 100) + "%"))),
+      h("span", { class: "small", style: "color:" + col }, label || "confidence"));
+  }
+  const HEAT = { // step -> [good, bad] share moving on from the step before
+    Clicked: [0.01, 0.006], "Reached the page": [0.7, 0.5], "Added to cart": [0.08, 0.03], Checkout: [0.5, 0.3], Paid: [0.5, 0.3], "Signed up": [0.1, 0.03] };
+  function heat(step, v) {
+    const t = HEAT[step];
+    if (!t || v == null) return "";
+    if (v >= t[0]) return "background:rgba(93,187,122,.28)";
+    if (v < t[1]) return "background:rgba(248,113,113,.22)";
+    return "background:rgba(125,178,28,.12)";
+  }
+  const VCOL = { profitable: "b-measured", break_even: "b-neutral", too_early: "b-neutral", likely_losing: "b-est", losing: "b-est", no_room: "b-est" };
+
+  async function viewEngines() {
+    const head = h("header", {}, h("h1", {}, "Profit engine"),
+      h("p", { class: "sub" }, "What one customer can cost you, every campaign judged against it, and why the weak ones fail."));
+    root.replaceChildren(layout("#/engines", [head, loading()]));
+    let d;
+    try { d = await api("/engines/" + cid()); } catch (e) { if (e.message !== "signed out") root.replaceChildren(layout("#/engines", [head, errorCard(e.message)])); return; }
+    const cur = d.currency || "AED";
+    const money = (x) => x == null ? "–" : fmt.format(Math.round(x * 100) / 100) + " " + cur;
+    const e = d.economics;
+
+    // --- your numbers (form)
+    const val = (k) => e && e.inputs[k] != null ? e.inputs[k] : d.hints && d.hints[k] != null ? d.hints[k] : "";
+    const field = (k, label, hint, attrs) => {
+      const i = h("input", Object.assign({ id: "ue-" + k, type: "number", step: "any", min: 0, value: k === "refund_rate" && val(k) !== "" ? Math.round(val(k) * 1000) / 10 : val(k) }, attrs || {}));
+      return [i, h("label", { class: "f", for: "ue-" + k }, label, i, hint ? h("span", { class: "small" }, hint) : null)];
+    };
+    const F = {};
+    const rowsF = [["price", "Selling price of one sale", d.hints && d.hints.price ? "Your average order: " + money(d.hints.price) : ""],
+      ["product_cost", "Product or treatment cost", ""], ["delivery_cost", "Delivery cost", ""], ["payment_fee_pct", "Payment fee %", "e.g. 2.9"],
+      ["other_costs", "Other costs per sale", "packaging, commission…"], ["desired_profit", "Profit you want to keep per sale", ""],
+      ["refund_rate", "Refunds %", d.hints && d.hints.refund_rate != null ? "From your sales: " + (d.hints.refund_rate * 100).toFixed(1) + "%" : ""],
+      ["orders_per_customer", "Orders per customer (lifetime)", d.hints && d.hints.orders_per_customer ? "From your sales: " + d.hints.orders_per_customer : "optional"],
+      ["daily_budget", "Daily ad budget (" + cur + ")", ""]].map(([k, l, hnt]) => { const [i, lab] = field(k, l, hnt); F[k] = i; return lab; });
+    const saveBtn = h("button", { class: "btn btn-primary", type: "submit", style: "align-self:flex-start" }, "Work it out");
+    const form = h("form", { style: "display:flex;flex-direction:column;gap:14px", onsubmit: async (ev) => {
+      ev.preventDefault(); saveBtn.disabled = true;
+      const body = {};
+      for (const k in F) if (F[k].value !== "") body[k] = k === "refund_rate" ? Number(F[k].value) / 100 : Number(F[k].value);
+      try { await api("/engines/" + cid() + "/economics", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); viewEngines(); }
+      catch (err) { if (err.message !== "signed out") toast(err.message); saveBtn.disabled = false; }
+    } }, h("div", { class: "grid3" }, rowsF), saveBtn);
+    const numbers = h("section", { class: "card" }, h("details", e ? {} : { open: true },
+      h("summary", { style: "cursor:pointer" }, h("b", { style: "font-size:17px" }, e ? "Your numbers" : "Start here: your numbers")),
+      h("p", { class: "sub", style: "margin:10px 0 14px" }, "Only you know your costs. ProAds uses them to work out the most you can pay Meta for one customer and still keep your profit."), form));
+
+    // --- top strip
+    let top = null;
+    if (e) {
+      const k = (label, v, note, color) => h("div", { class: "ek" }, h("span", { class: "label" }, label), h("b", { style: color ? "color:" + color : "" }, v), note ? h("span", { class: "small" }, note) : null);
+      const camps = (d.campaigns || []).filter((c) => c.verdict);
+      const best = camps.filter((c) => c.verdict.verdict === "profitable").sort((a, b) => (a.verdict.cpa || 1e9) - (b.verdict.cpa || 1e9))[0];
+      top = h("section", { class: "card estrip" },
+        h("div", { class: "elead" }, h("span", { class: "label" }, e.viable ? "Most you can pay per customer" : "Advertising can't pay off yet"),
+          h("b", { class: "ebig", style: e.viable ? "" : "color:#F87171" }, e.viable ? money(e.target_cpa) : "Fix the numbers"),
+          h("span", { class: "small" }, e.viable ? "keeps your " + money(e.inputs.desired_profit || 0) + " profit per sale" : e.warning)),
+        k("Break-even per customer", money(e.break_even_cpa), "above this, every sale loses money"),
+        k("Margin per sale", money(e.margin_per_sale), "before ads"),
+        e.lifetime_break_even_cpa ? k("If they come back", money(e.lifetime_break_even_cpa), "break-even counting repeat orders", "#7DB21C") : null,
+        e.budget ? k("Sales a week at target", fmt.format(e.budget.sales_per_week_at_target), "first fair verdict in ~" + e.budget.days_to_first_verdict + " days") : null,
+        best ? h("div", { class: "ek", style: "align-items:center" }, gauge(best.verdict.confidence, "sure it makes money"), h("span", { class: "small" }, best.name || "Best campaign")) : null);
+    }
+
+    // --- survival mode
+    const survival = e && e.budget && e.budget.survival_mode ? h("section", { class: "card", style: "background: var(--violet-card); border-color: var(--violet-edge)" },
+      h("div", { class: "between" }, h("h2", {}, "Small-budget mode"), h("span", { class: "badge b-measured" }, "On")),
+      h("p", { class: "sub", style: "margin:0" }, "At about " + fmt.format(e.budget.sales_per_week_at_target) + " sales a week, every dirham has to work. ProAds plans your campaigns with these rules:"),
+      h("ul", { class: "list" }, e.budget.rules.map((r) => h("li", {}, r)))) : null;
+
+    // --- campaigns x journey heat-map + autopsy panel
+    const camps = d.campaigns || [];
+    const panel = h("aside", { class: "card epanel" });
+    const showPanel = (c) => {
+      const a = c.autopsy || {}, v = c.verdict;
+      const first = (a.findings || [])[0];
+      panel.replaceChildren(...[
+        h("span", { class: "label" }, "Ad autopsy"),
+        h("h2", { style: "margin:0;font-size:19px" }, c.name || "Campaign " + c.campaign_id),
+        v ? h("div", { style: "display:flex;gap:12px;align-items:center" }, v.confidence != null ? gauge(v.confidence, "sure") : null,
+          h("div", { style: "display:flex;flex-direction:column;gap:4px" }, h("span", { class: "badge " + (VCOL[v.verdict] || "b-neutral") }, v.label),
+            v.cpa ? h("span", { class: "small" }, "Cost per sale " + money(v.cpa) + " · target " + money(e.target_cpa)) : null,
+            h("span", { class: "small" }, "Based on " + v.based_on))) : null,
+        v ? h("p", { style: "margin:0;font-weight:600" }, v.action) : null,
+        h("b", { style: "margin-top:4px" }, a.status === "healthy" ? "No weak step found" : a.status === "too_early" ? "Too early to diagnose" : "Where it breaks"),
+        (a.findings || []).length ? null : h("p", { class: "sub", style: "margin:0" }, a.summary),
+        (a.findings || []).map((x) => h("div", { class: "adset", style: "gap:6px" }, h("b", { style: "font-size:14px" }, x.likely_cause),
+          h("span", { class: "small" }, x.evidence))),
+        first ? h("div", { class: "result", style: "flex-direction:column;align-items:flex-start;gap:8px" },
+          h("span", { class: "label" }, "Next experiment"), h("b", {}, first.next_experiment),
+          h("button", { class: "btn btn-primary", type: "button", onclick: () => {
+            pendingBrief = "Experiment for campaign '" + (c.name || c.campaign_id) + "'. Problem found: " + first.likely_cause + " Evidence: " + first.evidence +
+              " Change ONE thing only: " + first.next_experiment + (e && e.viable ? " Keep cost per customer under " + money(e.target_cpa) + "." : "");
+            go("#/assistant");
+          } }, "Build this experiment")) : null,
+        h("p", { class: "small", style: "margin:0" }, "Causes are likely explanations from the numbers, not certainties.")].flat().filter(Boolean));
+    };
+    const stepNames = camps.find((c) => c.autopsy) ? (camps.find((c) => c.autopsy).autopsy.steps || []).slice(1).map((s) => s.step) : [];
+    const table = camps.length ? h("section", { class: "card", style: "min-width:0" },
+      h("div", { class: "between" }, h("h2", {}, "Campaigns × customer journey"), h("span", { class: "small" }, "last " + (d.period_days || 30) + " days · share who moved on")),
+      h("div", { class: "scroll" }, h("table", { class: "etable" },
+        h("thead", {}, h("tr", {}, h("th", {}, "Campaign"), stepNames.map((n) => h("th", {}, n)), h("th", {}, "Spend"), h("th", {}, "Per result"), h("th", {}, "Verdict"))),
+        h("tbody", {}, camps.map((c, i) => {
+          if (c.error) return h("tr", {}, h("td", {}, c.name || c.campaign_id), h("td", { colspan: stepNames.length + 3, class: "small" }, c.error));
+          const st = (c.autopsy.steps || []).slice(1);
+          const tr = h("tr", { class: "erow", tabindex: 0 },
+            h("td", {}, h("b", {}, c.name || c.campaign_id), h("span", { class: "small", style: "display:block" }, c.status === "ACTIVE" ? "Live" : "Paused")),
+            st.map((s) => h("td", { style: heat(s.step, s.from_previous) }, s.from_previous == null ? "–" : (s.from_previous * 100).toFixed(s.from_previous < 0.1 ? 2 : 0) + "%",
+              h("span", { class: "small", style: "display:block" }, fmt.format(s.count)))),
+            h("td", {}, money(c.spend)), h("td", {}, c.results ? money(c.spend / c.results) : "–"),
+            h("td", {}, c.verdict ? h("span", { class: "badge " + (VCOL[c.verdict.verdict] || "b-neutral") }, c.verdict.label) : h("span", { class: "small" }, e ? "–" : "add your numbers")));
+          const pick = () => { panel.querySelectorAll; for (const r of tr.parentNode.children) r.classList.remove("sel"); tr.classList.add("sel"); showPanel(c); };
+          tr.addEventListener("click", pick); tr.addEventListener("keydown", (ev) => { if (ev.key === "Enter") pick(); });
+          if (i === 0) setTimeout(pick, 0);
+          return tr;
+        })))),
+      d.real_ratio != null ? h("p", { class: "small", style: "margin:0" }, "Of the purchases Meta reports, about " + Math.round(d.real_ratio * 100) + "% show up as real paid, unrefunded sales in your data. Verdicts use the real number.") : null)
+      : h("section", { class: "card" }, h("h2", {}, "No campaigns yet"), h("p", { class: "sub", style: "margin:0" }, "Build and publish a campaign; ProAds will judge it here against your numbers."),
+        h("a", { class: "btn btn-primary", href: "#/assistant", style: "align-self:flex-start" }, "Build a campaign"));
+
+    root.replaceChildren(layout("#/engines", [head, top, d.error ? errorCard(d.error) : null, survival,
+      camps.length ? h("div", { class: "egrid" }, table, panel) : table, numbers]));
   }
 
   // ---------- Competitor X-ray (Premium) ----------
@@ -2028,7 +2181,7 @@ main{background:transparent}
   }
 
   // ---------- router ----------
-  const VIEWS = { "#/platforms": viewPlatforms, "#/home": viewHome, "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling, "#/competitors": viewCompetitors };
+  const VIEWS = { "#/platforms": viewPlatforms, "#/home": viewHome, "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling, "#/competitors": viewCompetitors, "#/engines": viewEngines };
   function go(hash) { if (location.hash !== hash) location.hash = hash; else route(); }
   async function route() {
     const [path, query] = location.hash.split("?");

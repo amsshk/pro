@@ -235,11 +235,11 @@ class Publisher:
         return round(total, 2), currency
 
     def insights(self, campaign_ids: list[str], since: str, until: str, breakdowns: str = "",
-                 daily: bool = False) -> list[dict]:
+                 daily: bool = False, fields: str = "spend,impressions,reach,clicks,actions,account_currency") -> list[dict]:
         """Raw insight rows for these campaigns (dates are YYYY-MM-DD, ad account time zone)."""
         rows = []
         for cid in campaign_ids:
-            params = {"fields": "spend,impressions,reach,clicks,actions,account_currency",
+            params = {"fields": fields,
                       "time_range": json.dumps({"since": since, "until": until}), "limit": 500,
                       "access_token": self.s["token"]}
             if breakdowns:
