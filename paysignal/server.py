@@ -164,9 +164,19 @@ class App:
         ProAds admin without one) the ad account in the server settings."""
         c = self.meta_conns.get(client_id)
         if c and meta_connect.public_view(c)["ready"]:
-            return meta_connect.ads_settings(c, meta_connect.decrypt(c["token"]))
+            def dead(cid=client_id):
+                got = self.lock.acquire(timeout=2)     # may be called while this thread already holds the lock
+                try:
+                    self.meta_conns.mark_expired(cid)
+                finally:
+                    if got:
+                        self.lock.release()
+                log.warning("Facebook session for %s was invalidated: marked for reconnect", cid)
+            return {**meta_connect.ads_settings(c, meta_connect.decrypt(c["token"])), "on_token_invalid": dead}
         if is_admin and not meta_ads.missing():
-            return meta_ads.settings()
+            return {**meta_ads.settings(), "token_invalid_message":
+                    "Facebook cancelled the token in Render's PROADS_ADS_TOKEN (a password change or security check). "
+                    "Replace it with a System User token from Business Settings, which isn't tied to your password."}
         return None
 
     def maybe_activate(self, client_id: str) -> None:

@@ -82,3 +82,25 @@ def test_proads_funnel_end_to_end(app):
     # a client gets their own shop funnel, never ProAds' numbers
     mine = c.get("/funnel/glow-clinic", headers=H).json
     assert mine["kind"] == "shop" and mine["status"] == "no_data"
+
+
+def test_dead_facebook_session_asks_for_reconnect(app):
+    from paysignal import meta_ads
+
+    class R:
+        status_code = 400
+        def json(self):
+            return {"error": {"code": 190, "error_subcode": 460, "message": "Error validating access token: The session has been invalidated"}}
+
+    class H:
+        def get(self, *a, **k):
+            return R()
+    hit = []
+    pub = meta_ads.Publisher(H(), {"ad_account": "act_1", "page_id": "p", "token": "t", "pixel_id": "x", "version": "v25.0",
+                                   "on_token_invalid": lambda: hit.append(1)})
+    try:
+        pub._get("123", "id", "reading results")
+        assert False
+    except meta_ads.PublishError as e:
+        assert e.token_invalid and "Reconnect Facebook" in str(e)
+    assert hit == [1]

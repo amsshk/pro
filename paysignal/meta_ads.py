@@ -106,6 +106,19 @@ class Publisher:
             e = body.get("error") or {}
             msg = e.get("error_user_msg") or e.get("message") or f"HTTP {r.status_code}"
             title = e.get("error_user_title")
+            if e.get("code") == 190:                   # the login itself is dead: password change, security reset, removed app
+                hook = self.s.get("on_token_invalid")
+                if callable(hook):
+                    try:
+                        hook()
+                    except Exception:
+                        pass
+                err = PublishError(self.s.get("token_invalid_message") or
+                                   "Facebook signed ProAds out (a password change or a Facebook security check). "
+                                   "Reconnect Facebook in Connect & upload; your campaigns keep running meanwhile.")
+                err.code = 190
+                err.token_invalid = True
+                raise err
             err = PublishError(f"Meta refused {step}: {title + ' - ' if title else ''}{msg}")
             err.code = e.get("code")
             raise err

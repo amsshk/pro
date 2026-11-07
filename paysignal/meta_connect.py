@@ -191,6 +191,11 @@ class ConnectionStore:
         self.db.commit()
         return self.get(client_id)
 
+    def mark_expired(self, client_id: str) -> None:
+        """Facebook killed the session: show 'Reconnect Facebook' instead of failing on every read."""
+        self.db.execute("UPDATE meta_connections SET expires_at=? WHERE client_id=?", (time.time() - 1, client_id))
+        self.db.commit()
+
     def get(self, client_id: str) -> Optional[dict]:
         row = self.db.execute("SELECT token, expires_at, user_name, assets, ad_account, page_id, instagram_id,"
                               " pixel_id, send_sales, connected_at FROM meta_connections WHERE client_id=?",
