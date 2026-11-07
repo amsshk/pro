@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import re
+import json
 import secrets
 import threading
 import time
@@ -199,6 +200,21 @@ class AccountStore:
     def __init__(self, db):
         self.db = db
         self.db.executescript(self.SCHEMA)
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(accounts)").fetchall()}
+        if "attribution" not in cols:
+            self.db.execute("ALTER TABLE accounts ADD COLUMN attribution TEXT")
+            self.db.commit()
+
+    def set_attribution(self, client_id: str, utm: dict) -> None:
+        self.db.execute("UPDATE accounts SET attribution=? WHERE client_id=?", (json.dumps(utm), client_id))
+        self.db.commit()
+
+    def attribution(self, client_id: str) -> dict:
+        r = self.db.execute("SELECT attribution FROM accounts WHERE client_id=?", (client_id,)).fetchone()
+        try:
+            return json.loads(r[0]) if r and r[0] else {}
+        except ValueError:
+            return {}
 
     def create(self, clean: dict, reserved: set[str], ads_ctx: str = "") -> str:
         base = slugify(clean["name"])

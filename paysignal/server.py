@@ -50,13 +50,14 @@ from .attribution import make_promo_code, tag_link
 from .dashboard import build_dashboard, _realized
 from .ads_report import build_report
 from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, business_context
-from . import autopilot, billing, buyers, competitors, engines, forecast, leaks, learning, meta_capi, signals, ledger, meta_ads, meta_connect, settlement
+from . import autopilot, billing, buyers, competitors, engines, forecast, leaks, learning, meta_capi, proads_revenue, signals, ledger, meta_ads, meta_connect, settlement
 from .connectors.stripe import verify_signature as stripe_signature_ok
 from .audit import audit_summary, audit_text, build_audit
 from .importers import xlsx_to_csv, import_auto
 from .labeler import label_posts, make_labeler
 from .organic import OrganicEngine, load_posts_csv
 from .store import PaymentStore
+from .models import LineItem, Payment
 
 log = logging.getLogger("paysignal")
 RETRAIN_SECONDS = 24 * 3600
@@ -123,6 +124,7 @@ class App:
         self.unpaid = leaks.UnpaidStore(self.store.db)
         self.signals = signals.SignalLog(self.store.db)
         self.experiments = buyers.ExperimentStore(self.store.db)
+        self.revenue = proads_revenue.RevenueStore(self.store.db)
         self._nudged: dict = {}
         self.stripe_http = None                # set in tests
         self.billing_sync = False              # tests: add invoice fees inline
@@ -1352,6 +1354,14 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 "previous_30_days": {m["label"]: m["previous"] for m in d["metrics"] if m["key"] != "paying"},
                 "companies_total": d["accounts_total"],
             }
+            try:
+                a = acquisition_for()
+                ctx["your_business"]["paying_subscribers_from_stripe"] = {
+                    k: a[k] for k in ("new_subscribers", "first_payments", "renewals", "fees", "refunds",
+                                      "service_cost_each", "service_cost_is_estimate")}
+                ctx["your_business"]["customer_acquisition_profit_by_campaign"] = a["campaigns"][:10]
+            except Exception as e:
+                log.info("acquisition summary for the AI skipped: %s", e)
             ctx["note"] = ("This is the ProAds account itself. Empty sales and posts are expected: answer from your_business, "
                            "campaigns and ads_last_30_days.")
         return ctx
@@ -1682,8 +1692,17 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if state.accounts.by_email(clean["email"]):
             return jsonify({"errors": ["An account with this email already exists. Sign in instead."]}), 409
         ctx = growth.capture_context(body, request.headers, request.remote_addr)
+        # which campaign/ad brought them: from the tags kept on the first visit, or the sign-up page's own address
+        from urllib.parse import parse_qsl, urlparse
+        raw_utm = body.get("utm") if isinstance(body.get("utm"), dict) else {}
+        from_url = dict(parse_qsl(urlparse(str(body.get("source_url") or "")).query))
+        utm = {k: str(raw_utm.get(k) or from_url.get(k) or "")[:120] for k in
+               ("utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term")}
+        utm = {k: v for k, v in utm.items() if v}
         with state.lock:
             cid = state.accounts.create(clean, set(state.clients), json.dumps(ctx) if ctx else "")
+            if utm:
+                state.accounts.set_attribution(cid, utm)
             token = state.accounts.new_session(cid)
         state.signup_limiter.fail(ip_key)              # counts sign-ups per connection
         event_id = f"signup:{cid}"
@@ -2130,7 +2149,193 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             end = int(obj.get("ended_at") or obj.get("canceled_at") or time.time())
             with state.lock:
                 state.fees.open(cid, obj.get("customer") or "", (obj.get("currency") or "").upper(), start, end)
+        try:
+            if event.get("type") == "invoice.paid":
+                record_proads_invoice(obj)
+            elif event.get("type") == "charge.refunded":
+                record_proads_refund(obj)
+            elif event.get("type") == "charge.dispute.closed" and obj.get("status") == "lost":
+                record_proads_chargeback(obj)
+        except Exception as e:                       # never fail the webhook (Stripe would retry forever)
+            log.warning("ProAds revenue record for %s failed: %s", event.get("type"), e)
         return {"received": True}
+
+    # ---------- ProAds' own revenue: paid invoices become ProAds' purchase data ----------
+    REV_SOURCE = "proads_billing"
+
+    def proads_admin() -> str:
+        return next(iter(sorted(_admins(state))), "pro")
+
+    def record_proads_invoice(inv: dict) -> Optional[dict]:
+        """One paid Stripe invoice. First paid subscription invoice = a new customer (sent to Meta as a Purchase,
+        with the collected value); renewals and ad-spend fees are revenue only. Idempotent by invoice ID."""
+        inv_id = inv.get("id")
+        amount_paid = int(inv.get("amount_paid") or 0)
+        if not inv_id or amount_paid <= 0 or inv.get("status") not in (None, "paid"):
+            return None
+        with state.lock:
+            sub_details = inv.get("subscription_details") or ((inv.get("parent") or {}).get("subscription_details")) or {}
+            cid = state.billing.by_customer(inv.get("customer") or "") or (sub_details.get("metadata") or {}).get("client_id")
+            if not cid or is_admin(cid) or not state.known(cid) or state.revenue.get(inv_id):
+                return None
+            currency = (inv.get("currency") or "").upper()
+            net_minor = max(0, amount_paid - proads_revenue.invoice_tax(inv))
+            meta = inv.get("metadata") or {}
+            if meta.get("kind") == "ad_spend_fee":
+                kind = "fee"
+            elif inv.get("billing_reason") in ("subscription_create", "subscription_cycle", "subscription_update",
+                                               "subscription") or inv.get("subscription") or sub_details.get("subscription"):
+                kind = "renewal" if state.revenue.has_first(cid) else "first"
+            else:
+                kind = "fee"
+            acct = state.accounts.get(cid) or {}
+            utm = state.accounts.attribution(cid) or {}
+            ctx = growth.load_ctx(acct.get("ads_ctx")) or {}
+            charge, pi = proads_revenue.invoice_payment_refs(inv)
+            paid_at = int(((inv.get("status_transitions") or {}).get("paid_at")) or time.time())
+            row = {"invoice_id": inv_id, "client_id": cid, "kind": kind, "tier": state.billing.tier(cid),
+                   "amount": round(proads_revenue.major(net_minor, currency), 2),
+                   "tax": round(proads_revenue.major(amount_paid - net_minor, currency), 2),
+                   "currency": currency, "paid_at": paid_at, "charge_id": charge, "payment_intent": pi, "utm": utm}
+            if not state.revenue.add(row):
+                return None
+            admin = proads_admin()
+            fbclid = None
+            if ctx.get("fbc") and ctx["fbc"].count(".") >= 3:
+                fbclid = ctx["fbc"].split(".", 3)[3]
+            p = Payment(client_id=admin, source=REV_SOURCE, external_id=inv_id, kind="purchase", amount=row["amount"],
+                        currency=currency, occurred_at=datetime.fromtimestamp(paid_at, timezone.utc),
+                        email=acct.get("email"), phone=acct.get("phone"), customer_id=cid, fbclid=fbclid,
+                        items=[LineItem(sku=f"proads-{kind}", name=f"ProAds {row['tier'].title()} ({kind})", quantity=1,
+                                        unit_price=row["amount"])],
+                        utm_source=utm.get("utm_source") or None, utm_medium=utm.get("utm_medium") or None,
+                        utm_campaign=utm.get("utm_campaign") or None, utm_content=utm.get("utm_content") or None,
+                        client_user_agent=ctx.get("ua"), client_ip_address=ctx.get("ip"),
+                        event_source_url=ctx.get("url"), fbp=ctx.get("fbp"), fbc=ctx.get("fbc"))
+            state.store.add(p)
+            # ProAds' own Pixel gets these directly below; the admin's general pipeline must never send them again
+            state.store.mark_sent(admin, REV_SOURCE, inv_id)
+        if kind == "first" and ctx:                  # only with the visitor's ads consent, like sign-up events
+            ev = growth.build_event("Purchase", acct, ctx, f"proads:first:{inv_id}", value=row["amount"], currency=currency,
+                                    custom={"content_name": f"ProAds {row['tier'].title()}", "proads_source": "stripe_first_payment"},
+                                    event_time=paid_at if paid_at > time.time() - 6 * 86400 else None)
+            growth.send_later(ev, state.growth_http, state.growth_sent)
+            with state.lock:
+                state.store.db.execute("UPDATE proads_revenue SET sent_to_meta=1 WHERE invoice_id=?", (inv_id,))
+                state.store.db.commit()
+        log.info("ProAds revenue: %s %s %s from %s (%s)", kind, row["amount"], currency, cid, inv_id)
+        return row
+
+    def _net_share(rec: dict, gross_minor: int, currency: str) -> float:
+        """A refund in Stripe includes tax; take out the same tax share the invoice had."""
+        gross = proads_revenue.major(gross_minor, currency)
+        total = rec["amount"] + rec["tax"]
+        return round(gross * (rec["amount"] / total) if total else gross, 2)
+
+    def _record_reversal(rec: dict, ext_id: str, amount: float, why: str) -> None:
+        admin = proads_admin()
+        acct = state.accounts.get(rec["client_id"]) or {}
+        p = Payment(client_id=admin, source=REV_SOURCE, external_id=ext_id, kind="refund", amount=amount,
+                    currency=rec["currency"], occurred_at=datetime.now(timezone.utc), email=acct.get("email"),
+                    phone=acct.get("phone"), customer_id=rec["client_id"], refund_of=rec["invoice_id"])
+        if state.store.add(p):
+            state.store.mark_sent(admin, REV_SOURCE, ext_id)
+        if rec["kind"] == "first":
+            ctx = growth.load_ctx(acct.get("ads_ctx"))
+            if ctx:
+                growth.send_later(growth.build_event("Refund", acct, ctx, f"proads:{ext_id}", value=amount,
+                                                     currency=rec["currency"], custom={"proads_source": why}),
+                                  state.growth_http, state.growth_sent)
+
+    def record_proads_refund(charge: dict) -> Optional[dict]:
+        """charge.refunded carries the running total refunded: record only the increase, once."""
+        inv = charge.get("invoice") if isinstance(charge.get("invoice"), str) else None
+        with state.lock:
+            rec = state.revenue.find_payment(charge.get("id"), charge.get("payment_intent"), inv)
+            if not rec:
+                return None
+            total = _net_share(rec, int(charge.get("amount_refunded") or 0), rec["currency"])
+            total = min(total, rec["amount"])
+            delta = round(total - rec["refunded"], 2)
+            if delta <= 0:
+                return None
+            state.revenue.set_refunded(rec["invoice_id"], total)
+            _record_reversal(rec, f"refund:{charge.get('id')}:{int(charge.get('amount_refunded') or 0)}", delta, "stripe_refund")
+        log.info("ProAds refund %s on %s", delta, rec["invoice_id"])
+        return {**rec, "refunded": total}
+
+    def record_proads_chargeback(dispute: dict) -> Optional[dict]:
+        with state.lock:
+            ext = f"chargeback:{dispute.get('id')}"
+            if state.store.db.execute("SELECT 1 FROM payments WHERE source=? AND external_id=?", (REV_SOURCE, ext)).fetchone():
+                return None
+            rec = state.revenue.find_payment(dispute.get("charge"), dispute.get("payment_intent"), None)
+            if not rec:
+                return None
+            amount = min(_net_share(rec, int(dispute.get("amount") or 0), rec["currency"]),
+                         round(rec["amount"] - rec["refunded"] - rec["chargeback"], 2))
+            if amount <= 0:
+                return None
+            state.revenue.add_chargeback(rec["invoice_id"], amount)
+            _record_reversal(rec, ext, amount, "stripe_chargeback")
+        log.info("ProAds chargeback %s on %s", amount, rec["invoice_id"])
+        return rec
+    state.record_proads_invoice = record_proads_invoice
+
+    def acquisition_for() -> dict:
+        """Customer Acquisition Profit for ProAds itself, per campaign that brought paying subscribers."""
+        admin = proads_admin()
+        econ_in = None
+        with state.lock:
+            rows = state.revenue.all()
+            launches = state.launches.list(admin)
+            econ_in = state.economics.get(admin)
+        slug_to = {}
+        for l in launches:
+            slug_to.setdefault(l.get("utm_slug") or meta_ads._slug(l.get("name", ""), 30), []).append(l)
+        spend, names, raw = {}, {}, {}
+        today = datetime.now(timezone.utc).date().isoformat()
+        rev_cur = (rows[0]["currency"] if rows else "AED") or "AED"
+        with state.lock:
+            for slug, ls in slug_to.items():
+                try:
+                    raw[slug] = state.ledger.total([l["campaign_id"] for l in ls], "2000-01-01", today)
+                except ValueError:
+                    continue
+                names[slug] = ls[0].get("name") or slug
+        for slug, (amt, cur) in raw.items():         # e.g. THB ad spend vs AED subscriptions: compare in one currency
+            try:
+                spend[slug] = round(amt * billing.fx_rate(cur or rev_cur, rev_cur), 2)
+            except Exception as e:
+                log.info("no exchange rate %s->%s for acquisition cost: %s", cur, rev_cur, e)
+        env_cost = os.environ.get("PROADS_SERVICE_COST_PER_CLIENT", "").strip()
+        service, is_estimate, cost_source = None, True, "not set"
+        if env_cost:
+            try:
+                service = float(env_cost)
+                is_estimate = os.environ.get("PROADS_SERVICE_COST_IS_ACTUAL", "") not in ("1", "true", "yes")
+                cost_source = "server setting"
+            except ValueError:
+                pass
+        if service is None and econ_in:
+            service = round(float(econ_in.get("product_cost", 0)) + float(econ_in.get("other_costs", 0)) +
+                            float(econ_in.get("delivery_cost", 0)), 2)
+            cost_source = "Profit engine inputs"
+        out = proads_revenue.acquisition_profit(rows, spend, names, service, is_estimate)
+        out["service_cost_source"] = cost_source
+        out["spend_converted_from"] = sorted({c for _, c in raw.values() if c and c != rev_cur})
+        out["note"] = ("Acquisition contribution = first payment collected (after tax, discounts, refunds and lost chargebacks) "
+                       "- campaign spend per new subscriber - service cost per subscriber. "
+                       + ("Service cost is an ESTIMATE until actual costs are set." if is_estimate else "Service cost is actual."))
+        return out
+
+    @flask.get("/acquisition/<client_id>")
+    def acquisition_endpoint(client_id):
+        state.require_key(client_id)
+        if not is_admin(client_id):
+            abort(403, "only for the ProAds account")
+        return acquisition_for()
+    state.acquisition_for = acquisition_for
 
     def enforce_ads_trials() -> list[str]:
         """Pause live campaigns of clients whose free test ended without a plan; resume them once they pay."""

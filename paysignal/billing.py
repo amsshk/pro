@@ -15,6 +15,11 @@ Settings:
   PROADS_ADS_TRIAL_DAYS         free ad test before paying (default 3). Signing up and organic
                                 tools are always free; the test starts at a client's first Go live.
                                 When it ends without a plan, their live campaigns are paused.
+  PROADS_SERVICE_COST_PER_CLIENT  optional cost of serving one subscriber (for Customer Acquisition Profit);
+                                shown as an estimate unless PROADS_SERVICE_COST_IS_ACTUAL=1.
+
+Webhook events: checkout.session.completed, customer.subscription.created/updated/deleted,
+invoice.created, invoice.paid (ProAds' own revenue), charge.refunded and charge.dispute.closed (reversals).
 """
 from __future__ import annotations
 

@@ -787,6 +787,41 @@ main{background:transparent}
     body.replaceChildren(...blocks);
   }
 
+  // ---------- ProAds' own paying subscribers (from paid Stripe invoices) ----------
+  function acquisitionCard(a) {
+    if (!a) return null;
+    const cur = (a.campaigns[0] && a.campaigns[0].currency) || "AED";
+    const m = (v) => v === null || v === undefined ? "—" : money0(v, cur);
+    const est = a.service_cost_is_estimate;
+    const head = h("div", { class: "between" }, h("h2", {}, "Customer Acquisition Profit"),
+      h("span", { class: "badge b-neutral" }, "From paid Stripe invoices"));
+    if (!a.new_subscribers) return h("section", { class: "card" }, head,
+      h("p", { class: "sub", style: "margin:0;font-size:14px" }, "No paying subscribers yet. When someone's first subscription invoice is paid, it shows here with the campaign that brought them, and Meta gets it as a Purchase with the amount actually collected."));
+    const kpi = (l, v, n) => h("div", { class: "kpi" }, h("span", { class: "label" }, l), h("span", { class: "num" }, v), n ? h("span", { class: "note" }, n) : null);
+    const kpis = h("section", { class: "kpis", "aria-label": "Paying subscribers" },
+      kpi("New paying subscribers", fmt.format(a.new_subscribers)),
+      kpi("First payments kept", m(a.first_payments), "after tax, discounts and refunds"),
+      kpi("Renewals", m(a.renewals), "recurring, not new customers"),
+      kpi("Refunds and chargebacks", m(a.refunds)));
+    const th = (t) => h("th", { style: "text-align:left;padding:6px 8px;font-weight:600;font-size:12px;color:var(--muted)" }, t);
+    const td = (t, tone) => h("td", { style: "padding:6px 8px;font-size:13px;" + (tone ? "color:var(--" + tone + ")" : "") }, t);
+    const rows = a.campaigns.map((g) => h("tr", {},
+      td(g.campaign), td(fmt.format(g.subscribers)), td(m(g.first_payment_each)), td(m(g.acquisition_cost)),
+      td(g.service_cost_each === null ? "not set" : m(g.service_cost_each) + (est ? " (est.)" : "")),
+      td(g.acquisition_contribution_each === null ? "needs spend" : m(g.acquisition_contribution_each) + (est ? " (est.)" : ""),
+        g.acquisition_contribution_each === null ? null : g.acquisition_contribution_each >= 0 ? "win-txt" : "loss-txt"),
+      td(m(g.renewals))));
+    const table = h("div", { style: "overflow-x:auto" }, h("table", { style: "width:100%;border-collapse:collapse" },
+      h("thead", {}, h("tr", {}, th("Campaign"), th("New subscribers"), th("First payment each"), th("Ad cost each"), th("Service cost each"), th("Contribution each"), th("Renewals so far"))),
+      h("tbody", {}, rows)));
+    const note = h("p", { class: "sub", style: "margin:0;font-size:12px" },
+      "Contribution = first payment collected − ad cost per new subscriber − service cost. " +
+      (a.service_cost_each === null ? "Service cost isn't set yet: add it in the Profit engine (product and other costs) or the PROADS_SERVICE_COST_PER_CLIENT setting." :
+        est ? "Service cost is an estimate (" + a.service_cost_source + ") until your actual costs are known." : "Service cost is your actual cost.") +
+      ((a.spend_converted_from || []).length ? " Ad cost converted from " + a.spend_converted_from.join(", ") + " to " + cur + " at today's rate." : ""));
+    return h("section", { class: "card", style: "display:flex;flex-direction:column;gap:14px" }, head, kpis, table, note);
+  }
+
   // ---------- admin ----------
   async function viewAdmin() {
     if (!status || !status.admin) return viewAudit();
@@ -2538,7 +2573,8 @@ main{background:transparent}
         d.campaigns.length ? d.campaigns.map((x) => h("div", { class: "between", style: "font-size:14px;gap:8px" }, h("span", {}, x.name || x.campaign_id),
           h("span", { class: "badge " + (x.status === "ACTIVE" ? "b-measured" : "b-neutral") }, x.status === "ACTIVE" ? "Live" : "Paused"))) :
           h("p", { class: "sub", style: "margin:0;font-size:14px" }, "None yet."));
-      body.replaceChildren(strip, await adsSection(homePeriod),
+      const [adsBox, acq] = await Promise.all([adsSection(homePeriod), api("/acquisition/" + cid()).catch(() => null)]);
+      body.replaceChildren(strip, adsBox, acquisitionCard(acq),
         h("section", { class: "card", "aria-label": "Chart" }, h("div", { class: "between" }, h("h2", {}, label + " over time"),
           h("div", { style: "display:flex;gap:14px" }, h("span", { class: "key" }, h("i"), "This period"), h("span", { class: "key" }, h("i", { class: "prev" }), "Previous period"))), chartHost),
         h("div", { class: "row", style: "align-items:flex-start" }, h("div", { style: "flex:1 1 380px;display:flex;flex-direction:column;gap:24px;min-width:0" }, newest),

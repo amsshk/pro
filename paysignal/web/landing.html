@@ -183,6 +183,15 @@ footer{border-top:1px solid var(--soft);padding:28px 0 40px;color:var(--muted);f
   if (params.get("fbclid")) {
     set("proads.fbclid", JSON.stringify({ v: params.get("fbclid"), t: Date.now() }));
   }
+  // Remember which campaign/ad brought the visitor (first touch, 90 days). Campaign tags aren't personal data.
+  const UTM = ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"];
+  if (UTM.some((k) => params.get(k))) {
+    const prev = (() => { try { return JSON.parse(get("proads.utm") || "null"); } catch (e) { return null; } })();
+    if (!prev || Date.now() - prev.t > 90 * 864e5) set("proads.utm", JSON.stringify({ v: Object.fromEntries(UTM.map((k) => [k, params.get(k) || ""])), t: Date.now() }));
+  }
+  function utm() {
+    try { const x = JSON.parse(get("proads.utm") || "null"); return x && Date.now() - x.t < 90 * 864e5 ? x.v : {}; } catch (e) { return {}; }
+  }
   function fbclid() {
     try { const x = JSON.parse(get("proads.fbclid") || "null"); return x && Date.now() - x.t < 90 * 864e5 ? x.v : ""; } catch (e) { return ""; }
   }
@@ -231,6 +240,7 @@ footer{border-top:1px solid var(--soft);padding:28px 0 40px;color:var(--muted);f
         business: v("business"), email: v("email"), password: v("password"), phone: v("phone"), currency: v("currency"),
         website: v("website"), terms: true, ads_consent: ads,
         fbp: ads ? cookie("_fbp") : "", fbc: ads ? cookie("_fbc") : "", fbclid: ads ? fbclid() : "", source_url: location.href,
+        utm: utm(),
       }) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((data.errors && data.errors.join(" ")) || data.error || "Something went wrong. Please try again.");

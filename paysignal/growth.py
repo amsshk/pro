@@ -51,7 +51,8 @@ def capture_context(body: dict, headers, remote_addr: str) -> Optional[dict]:
             "url": (body.get("source_url") or "").split("#")[0][:500] or None}
 
 
-def build_event(name: str, account: dict, ctx: dict, event_id: str, value: Optional[float] = None) -> dict:
+def build_event(name: str, account: dict, ctx: dict, event_id: str, value: Optional[float] = None,
+                currency: str = "USD", custom: Optional[dict] = None, event_time: Optional[int] = None) -> dict:
     user = {k: v for k, v in {
         "em": [hash_email(account.get("email"))] if hash_email(account.get("email")) else None,
         "ph": [hash_phone(account.get("phone"))] if hash_phone(account.get("phone")) else None,
@@ -59,12 +60,14 @@ def build_event(name: str, account: dict, ctx: dict, event_id: str, value: Optio
         "fbp": ctx.get("fbp"), "fbc": ctx.get("fbc"),
         "client_user_agent": ctx.get("ua"), "client_ip_address": ctx.get("ip"),
     }.items() if v}
-    event = {"event_name": name, "event_time": int(time.time()), "event_id": event_id,
+    event = {"event_name": name, "event_time": int(event_time or time.time()), "event_id": event_id,
              "action_source": "website", "user_data": user}
     if ctx.get("url"):
         event["event_source_url"] = ctx["url"]
     if value is not None:
-        event["custom_data"] = {"value": round(float(value), 2), "currency": "USD"}
+        event["custom_data"] = {"value": round(float(value), 2), "currency": (currency or "USD").upper()}
+    if custom:
+        event.setdefault("custom_data", {}).update(custom)
     return event
 
 
