@@ -143,6 +143,40 @@ class Publisher:
     def account(self) -> dict:
         return self._get(self.s["ad_account"], "name,currency,account_status,timezone_name", "reading the ad account")
 
+    def _image(self, data: str, label: str) -> str:
+        up = self._post(f"{self.s['ad_account']}/adimages", {"bytes": decode_image(data)}, f"uploading the image for {label}")
+        image_hash = next(iter((up.get("images") or {}).values()), {}).get("hash")
+        if not image_hash:
+            raise PublishError(f"Meta did not return an image for {label}")
+        return image_hash
+
+    def _video(self, chosen: dict, label: str, ad: dict, cta: dict) -> dict:
+        """Meta downloads the video from its address; wait until it's processed, then use it with a thumbnail."""
+        if not re.match(r"^https://", chosen.get("video_url") or ""):
+            raise PublishError(f"the video for {label} must be on an https:// address")
+        vid = self._post(f"{self.s['ad_account']}/advideos", {"file_url": chosen["video_url"], "name": label[:100]},
+                         f"uploading the video for {label}")["id"]
+        sleep = getattr(self, "sleep", time.sleep)
+        for _ in range(30):
+            st = self._get(vid, "status,picture", f"checking the video for {label}")
+            vs = ((st.get("status") or {}).get("video_status") or "").lower()
+            if vs == "ready":
+                break
+            if vs == "error":
+                raise PublishError(f"Meta couldn't process the video for {label}. Try another video or a photo.")
+            sleep(3)
+        else:
+            raise PublishError(f"Meta is still processing the video for {label}. Try publishing again in a few minutes.")
+        data = {"video_id": vid, "message": ad.get("primary_text", ""), "title": ad.get("headline", ""),
+                "call_to_action": cta}
+        if chosen.get("thumb"):
+            data["image_hash"] = self._image(chosen["thumb"], label + " (thumbnail)")
+        elif st.get("picture"):
+            data["image_url"] = st["picture"]
+        else:
+            raise PublishError(f"no thumbnail for the video in {label}")
+        return data
+
     def publish(self, plan: dict, images: dict[str, str], landing_url: str, currency: str = "") -> dict:
         """Create the whole campaign PAUSED. images: "<adset index>-<ad index>" -> base64 JPEG/PNG."""
         if missing(self.s):
@@ -205,17 +239,18 @@ class Publisher:
                 created["ad_sets"].append(adset["id"])
                 for j, ad in enumerate(s["ads"]):
                     label = f"ad {j + 1} in ad set {i + 1}"
-                    up = self._post(f"{self.s['ad_account']}/adimages",
-                                    {"bytes": decode_image(images[f"{i}-{j}"])}, f"uploading the image for {label}")
-                    image_hash = next(iter((up.get("images") or {}).values()), {}).get("hash")
-                    if not image_hash:
-                        raise PublishError(f"Meta did not return an image for {label}")
+                    chosen = images[f"{i}-{j}"]
                     link = tag_link(landing_url, "meta", f"{campaign_slug}-{i + 1}-{j + 1}",
                                     campaign=campaign_slug, medium="paid")
-                    story = {"page_id": self.s["page_id"], "link_data": {
-                        "link": link, "message": ad.get("primary_text", ""), "name": ad.get("headline", ""),
-                        "image_hash": image_hash,
-                        "call_to_action": {"type": ad.get("call_to_action") or "LEARN_MORE", "value": {"link": link}}}}
+                    cta = {"type": ad.get("call_to_action") or "LEARN_MORE", "value": {"link": link}}
+                    if isinstance(chosen, dict) and chosen.get("video_url"):
+                        story = {"page_id": self.s["page_id"],
+                                 "video_data": self._video(chosen, label, ad, cta)}
+                    else:
+                        image_hash = self._image(chosen, label)
+                        story = {"page_id": self.s["page_id"], "link_data": {
+                            "link": link, "message": ad.get("primary_text", ""), "name": ad.get("headline", ""),
+                            "image_hash": image_hash, "call_to_action": cta}}
                     if self.s["instagram_id"]:
                         story["instagram_user_id"] = self.s["instagram_id"]
                     creative = self._post(f"{self.s['ad_account']}/adcreatives", {

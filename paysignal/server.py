@@ -23,6 +23,7 @@ Production:    gunicorn "paysignal.server:create_app()" --workers 1 --threads 8
 """
 from __future__ import annotations
 
+import base64
 import hmac
 import json
 import logging
@@ -50,7 +51,7 @@ from .attribution import make_promo_code, tag_link
 from .dashboard import build_dashboard, _realized
 from .ads_report import build_report
 from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, business_context
-from . import autopilot, billing, buyers, competitors, engines, forecast, leaks, learning, meta_capi, proads_revenue, purchase_funnel, delivery, scaling, social, stripe_sync, signals, ledger, meta_ads, meta_connect, settlement
+from . import autopilot, billing, buyers, competitors, engines, forecast, leaks, learning, meta_capi, proads_revenue, purchase_funnel, delivery, scaling, social, stripe_sync, media, signals, ledger, meta_ads, meta_connect, settlement
 from .connectors.stripe import verify_signature as stripe_signature_ok
 from .audit import audit_summary, audit_text, build_audit
 from .importers import xlsx_to_csv, import_auto
@@ -132,6 +133,9 @@ class App:
         self.social_http = None                    # requests, unless a test swaps it
         self.stripe_links = stripe_sync.StripeLinks(self.store.db)
         self.stripe_http = None
+        self.media = media.MediaStore(self.store.db)
+        self.media_http = None
+        self.media_resolver = None                 # socket.getaddrinfo, unless a test swaps it
         self._nudged: dict = {}
         self.stripe_http = None                # set in tests
         self.billing_sync = False              # tests: add invoice fees inline
@@ -1727,6 +1731,286 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             abort(409, "Connect your Facebook & Instagram first (Connect & upload), and pick an ad account, Page and Pixel.")
         return meta_ads.Publisher(state.ads_http, s)
 
+    # ---------------- media library: the client's own photos and videos for ads ----------------
+    def media_http():
+        if state.media_http is not None:
+            return state.media_http
+        import requests
+        return requests
+
+    def media_resolver():
+        import socket
+        return state.media_resolver or socket.getaddrinfo
+
+    def media_view(it: dict) -> dict:
+        labels = {"none": None, "enhanced": "Enhanced (sharpened and enlarged, nothing changed)",
+                  "generated": "AI-generated: check it shows your product accurately"}
+        return {**it, "label": labels.get(it.get("ai") or "none"), "needs_approval": not it.get("approved"),
+                "usable": it["kind"] == "video" or it.get("quality") in ("good", "ok")}
+
+    def store_image(client_id: str, raw: bytes, item: dict) -> Optional[int]:
+        w, h = media.measure(raw)
+        q = media.quality(w, h)
+        if q == "tiny":
+            return None
+        jpg = media.to_jpeg(raw)
+        with state.lock:
+            return state.media.add(client_id, {**item, "kind": "image", "width": w, "height": h, "quality": q}, jpg)
+
+    @flask.post("/media/<client_id>/scan")
+    def media_scan(client_id):
+        """Collect photos and videos from the client's own website."""
+        state.require_key(client_id)
+        body = request.get_json(silent=True) or {}
+        site = (body.get("url") or ((public_base() + "/") if is_admin(client_id) else
+                                    (state.accounts.get(client_id) or {}).get("website") or
+                                    state.config(client_id).get("website", ""))).strip()
+        if not site:
+            abort(400, "Add your website address first.")
+        http, res = media_http(), media_resolver()
+        try:
+            found = media.discover(http, site, res)
+        except media.MediaError as e:
+            abort(400, str(e))
+        added = skipped = 0
+        for c in found:
+            if c["kind"] == "video":
+                with state.lock:
+                    if state.media.add(client_id, {"source": "website", "origin": c["origin"], "url": c["url"], "kind": "video",
+                                                   "title": c["title"], "poster": c["poster"], "quality": "video"}, None):
+                        added += 1
+                continue
+            try:
+                raw, ctype, _ = media.safe_get(http, c["url"], media.MAX_IMAGE, res)
+                if store_image(client_id, raw, {"source": "website", "origin": c["origin"], "url": c["url"],
+                                                "title": c["title"], "price": c["price"]}):
+                    added += 1
+                else:
+                    skipped += 1
+            except media.MediaError:
+                skipped += 1
+        with state.lock:
+            items = [media_view(i) for i in state.media.list(client_id)]
+        return {"added": added, "skipped": skipped, "items": items}
+
+    @flask.get("/media/<client_id>")
+    def media_list(client_id):
+        state.require_key(client_id)
+        with state.lock:
+            items = [media_view(i) for i in state.media.list(client_id)]
+        return {"items": items}
+
+    @flask.get("/media/<client_id>/<int:item_id>/image")
+    def media_image(client_id, item_id):
+        state.require_key(client_id)
+        with state.lock:
+            blob = state.media.blob(client_id, item_id)
+        if not blob:
+            abort(404, "No picture stored for this item.")
+        from flask import Response
+        return Response(blob, mimetype="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
+
+    @flask.post("/media/<client_id>/upload")
+    def media_upload(client_id):
+        state.require_key(client_id)
+        raw = request.get_data()
+        if len(raw) > media.MAX_IMAGE:
+            abort(400, "That picture is larger than 12 MB.")
+        try:
+            iid = store_image(client_id, raw, {"source": "upload", "origin": "your upload",
+                                               "url": f"upload:{secrets.token_hex(8)}", "title": request.args.get("title", "")[:120]})
+        except media.MediaError as e:
+            abort(400, str(e))
+        if not iid:
+            abort(400, "That picture is too small to use in an ad.")
+        with state.lock:
+            return media_view(state.media.get(client_id, iid))
+
+    @flask.post("/media/<client_id>/<int:item_id>/enhance")
+    def media_enhance(client_id, item_id):
+        """Bigger and sharper with ordinary image processing. Nothing is invented, so no approval is needed."""
+        state.require_key(client_id)
+        with state.lock:
+            it, blob = state.media.get(client_id, item_id), state.media.blob(client_id, item_id)
+        if not it or not blob:
+            abort(404, "Picture not found.")
+        out = media.enhance(blob)
+        w, h = media.measure(out)
+        with state.lock:
+            nid = state.media.add(client_id, {"source": "enhanced", "origin": it["origin"], "url": f"enhanced:{item_id}",
+                                              "kind": "image", "width": w, "height": h, "quality": media.quality(w, h),
+                                              "title": it["title"], "price": it["price"], "ai": "enhanced",
+                                              "parent_id": item_id}, out)
+            if not nid:
+                nid = state.store.db.execute("SELECT id FROM media_items WHERE client_id=? AND url=?",
+                                             (client_id, f"enhanced:{item_id}")).fetchone()[0]
+            return media_view(state.media.get(client_id, nid))
+
+    @flask.post("/media/<client_id>/<int:item_id>/similar")
+    def media_similar(client_id, item_id):
+        """An AI image made to look like the original. It stays unusable until the owner confirms it's accurate."""
+        state.require_key(client_id)
+        if not state.ai.available:
+            abort(503, "AI image generation isn't set up (MODEL_API_KEY).")
+        with state.lock:
+            it, blob = state.media.get(client_id, item_id), state.media.blob(client_id, item_id)
+        if not it or not blob:
+            abort(404, "Picture not found.")
+        try:
+            desc = state.ai.describe_image(media.to_jpeg(blob, 1024), it.get("title") or "")
+            prompt = ("Professional advertising photo, sharp, well lit, high resolution. Recreate faithfully, same subject, "
+                      "same colours and details, no extra text or logos: " + desc)
+            img = state.ai.generate_image(prompt)
+        except PermissionError as e:
+            abort(402 if "billing" in str(e).lower() else 503, str(e))
+        except Exception as e:
+            log.warning("similar image for %s/%s failed: %s", client_id, item_id, e)
+            abort(502, "The AI couldn't make a similar image right now. Try enhancing the photo instead.")
+        try:
+            w, h = media.measure(img)
+        except media.MediaError:
+            abort(502, "The AI returned something that isn't a picture.")
+        with state.lock:
+            nid = state.media.add(client_id, {"source": "generated", "origin": it["origin"],
+                                              "url": f"generated:{item_id}:{secrets.token_hex(4)}", "kind": "image",
+                                              "width": w, "height": h, "quality": media.quality(w, h), "title": it["title"],
+                                              "price": it["price"], "ai": "generated", "parent_id": item_id,
+                                              "approved": 0, "prompt": prompt[:4000]}, media.to_jpeg(img))
+            return media_view(state.media.get(client_id, nid))
+
+    @flask.post("/media/<client_id>/<int:item_id>/approve")
+    def media_approve(client_id, item_id):
+        state.require_key(client_id)
+        if (request.get_json(silent=True) or {}).get("accurate") is not True:
+            abort(400, "Confirm the picture shows your product or service accurately.")
+        with state.lock:
+            if not state.media.get(client_id, item_id):
+                abort(404, "Picture not found.")
+            state.media.approve(client_id, item_id)
+            return media_view(state.media.get(client_id, item_id))
+
+    @flask.post("/media/<client_id>/<int:item_id>/hide")
+    def media_hide(client_id, item_id):
+        state.require_key(client_id)
+        with state.lock:
+            state.media.hide(client_id, item_id)
+        return {"ok": True}
+
+    @flask.post("/media/<client_id>/social")
+    def media_social(client_id):
+        """Photos and videos from the client's own Facebook Page and Instagram posts."""
+        state.require_key(client_id)
+        s = state.ads_settings(client_id, is_admin(client_id))
+        if not s:
+            abort(400, "Connect Facebook & Instagram first.")
+        pub = meta_ads.Publisher(state.ads_http, s)
+        added, problems = 0, []
+        http, res = media_http(), media_resolver()
+        try:
+            page = pub._get(s["page_id"], "access_token", "reading your Page")
+            ptok = page.get("access_token") or s["token"]
+            r = state.ads_http.get(f"https://graph.facebook.com/{s.get('version', 'v25.0')}/{s['page_id']}/posts",
+                                   params={"fields": "id,message,full_picture,attachments{media_type,media,url}",
+                                           "limit": 40, "access_token": ptok}, timeout=30).json()
+            if r.get("error"):
+                raise meta_ads.PublishError(r["error"].get("message", "Meta refused"))
+            for post in r.get("data") or []:
+                att = ((post.get("attachments") or {}).get("data") or [{}])[0]
+                if (att.get("media_type") or "").lower() == "video" and (att.get("media") or {}).get("source"):
+                    with state.lock:
+                        if state.media.add(client_id, {"source": "facebook", "origin": "Facebook post", "kind": "video",
+                                                       "url": att["media"]["source"], "title": (post.get("message") or "")[:120],
+                                                       "poster": post.get("full_picture") or "", "quality": "video"}, None):
+                            added += 1
+                elif post.get("full_picture"):
+                    try:
+                        raw, _, _ = media.safe_get(http, post["full_picture"], media.MAX_IMAGE, res)
+                        if store_image(client_id, raw, {"source": "facebook", "origin": "Facebook post",
+                                                        "url": post["full_picture"], "title": (post.get("message") or "")[:120]}):
+                            added += 1
+                    except media.MediaError:
+                        pass
+        except meta_ads.PublishError as e:
+            problems.append("Facebook Page: " + str(e)[:200])
+        if s.get("instagram_id"):
+            try:
+                r = state.ads_http.get(f"https://graph.facebook.com/{s.get('version', 'v25.0')}/{s['instagram_id']}/media",
+                                       params={"fields": "id,media_type,media_url,thumbnail_url,caption", "limit": 40,
+                                               "access_token": s["token"]}, timeout=30).json()
+                if r.get("error"):
+                    raise meta_ads.PublishError(r["error"].get("message", "Meta refused"))
+                for m in r.get("data") or []:
+                    if m.get("media_type") == "VIDEO" and m.get("media_url"):
+                        with state.lock:
+                            if state.media.add(client_id, {"source": "instagram", "origin": "Instagram post", "kind": "video",
+                                                           "url": m["media_url"], "title": (m.get("caption") or "")[:120],
+                                                           "poster": m.get("thumbnail_url") or "", "quality": "video"}, None):
+                                added += 1
+                    elif m.get("media_url"):
+                        try:
+                            raw, _, _ = media.safe_get(http, m["media_url"], media.MAX_IMAGE, res)
+                            if store_image(client_id, raw, {"source": "instagram", "origin": "Instagram post",
+                                                            "url": m["media_url"], "title": (m.get("caption") or "")[:120]}):
+                                added += 1
+                        except media.MediaError:
+                            pass
+            except meta_ads.PublishError as e:
+                problems.append("Instagram: " + str(e)[:200])
+        if problems and not added:
+            abort(403, "Meta didn't share your posts yet. " + " ".join(problems) +
+                  " This needs Meta's approval of ProAds (in progress); your website photos work meanwhile.")
+        return {"added": added, "problems": problems}
+
+    @flask.post("/media/<client_id>/suggest")
+    def media_suggest(client_id):
+        """The best media for each ad in a plan: {"<set>-<ad>": item}."""
+        state.require_key(client_id)
+        plan = (request.get_json(silent=True) or {}).get("plan") or {}
+        with state.lock:
+            items = state.media.list(client_id)
+        out, used = {}, set()
+        for i, s in enumerate([x for x in plan.get("ad_sets") or [] if x.get("ads")]):
+            for j, ad in enumerate(s["ads"]):
+                text = " ".join(str(ad.get(k) or "") for k in ("headline", "primary_text", "offer", "hook"))
+                ranked = [x for x in media.rank(items, text) if x["approved"]]
+                pick = next((x for x in ranked if x["id"] not in used), ranked[0] if ranked else None)
+                if pick:
+                    used.add(pick["id"])
+                    out[f"{i}-{j}"] = media_view(pick)
+        return {"suggestions": out}
+
+    def resolve_media(client_id: str, images: dict) -> dict:
+        """'media:<id>' -> the stored picture (or a video to hand to Meta). AI images must be approved first."""
+        out = {}
+        for k, v in images.items():
+            if isinstance(v, str) and v.startswith("media:"):
+                try:
+                    iid = int(v.split(":", 1)[1])
+                except ValueError:
+                    abort(400, "Unknown media item.")
+                with state.lock:
+                    it, blob = state.media.get(client_id, iid), state.media.blob(client_id, iid)
+                if not it:
+                    abort(400, "A chosen picture no longer exists. Pick another.")
+                if not it["approved"]:
+                    abort(400, "An AI-generated picture hasn't been confirmed as accurate yet. Confirm it or pick another.")
+                if it["kind"] == "video":
+                    thumb = None
+                    if it.get("poster"):
+                        try:
+                            raw, _, _ = media.safe_get(media_http(), it["poster"], media.MAX_IMAGE, media_resolver())
+                            thumb = base64.b64encode(media.to_jpeg(raw)).decode()
+                        except media.MediaError:
+                            thumb = None
+                    out[k] = {"video_url": it["url"], "thumb": thumb}
+                else:
+                    if not blob:
+                        abort(400, "A chosen picture is missing. Pick another.")
+                    out[k] = base64.b64encode(blob).decode()
+            else:
+                out[k] = v
+        return out
+
     @flask.post("/campaign/<client_id>/publish")
     def campaign_publish(client_id):
         """Create the campaign in the client's Meta ad account, everything paused."""
@@ -1741,6 +2025,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if landing and not re.match(r"^https?://", landing):
             landing = "https://" + landing
         landing = landing.replace("http://", "https://", 1) if landing.startswith("http://") else landing
+        images = resolve_media(client_id, images)
         try:
             launch = pub.publish(plan, images, landing, ads_currency(client_id))
         except meta_ads.PublishError as e:

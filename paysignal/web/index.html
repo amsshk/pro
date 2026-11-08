@@ -1641,12 +1641,100 @@ main{background:transparent}
     });
   }
 
+  // ---------- media library: the client's own photos and videos ----------
+  const mediaUrls = {};
+  async function mediaSrc(id) {
+    if (mediaUrls[id]) return mediaUrls[id];
+    const res = await fetch("/media/" + cid() + "/" + id + "/image", { headers: { "X-API-Key": session.key } });
+    if (!res.ok) throw new Error("Couldn't load the picture.");
+    mediaUrls[id] = URL.createObjectURL(await res.blob());
+    return mediaUrls[id];
+  }
+  function mediaThumb(it, style) {
+    if (it.kind === "video") {
+      const v = h("video", { src: it.url, poster: it.poster || null, muted: true, playsinline: true, preload: "metadata", style: style + ";background:#111" });
+      v.muted = true; return v;
+    }
+    const img = h("img", { alt: it.title || "Photo", style: style + ";object-fit:cover;background:var(--soft)" });
+    mediaSrc(it.id).then((u) => { img.src = u; }).catch(() => {});
+    return img;
+  }
+  const SRC_NAME = { website: "Your website", facebook: "Facebook post", instagram: "Instagram post", upload: "Your upload", enhanced: "Enhanced", generated: "AI-generated" };
+  function openMediaPicker(onPick) {
+    const post = (url, body) => api(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+    const grid = h("div", { style: "display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px" });
+    const msg = h("p", { class: "sub", style: "margin:0;font-size:13px" });
+    const close = () => { overlay.remove(); document.removeEventListener("keydown", esc); };
+    const esc = (e) => { if (e.key === "Escape") close(); };
+    async function draw() {
+      grid.replaceChildren(loading("Loading your media…"));
+      let items = [];
+      try { items = (await api("/media/" + cid())).items; } catch (e) { grid.replaceChildren(errorCard(e.message)); return; }
+      if (!items.length) { grid.replaceChildren(h("p", { class: "sub" }, "Nothing yet. Find photos on your website or your posts with the buttons above.")); return; }
+      const byId = {}; items.forEach((x) => { byId[x.id] = x; });
+      grid.replaceChildren(...items.map((it) => {
+        const parent = it.ai === "generated" && byId[it.parent_id];
+        const pic = parent ? h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:6px" },
+          h("div", { style: "display:flex;flex-direction:column;gap:2px" }, mediaThumb(parent, "width:100%;aspect-ratio:1/1;border-radius:8px"), h("span", { class: "small" }, "Your original")),
+          h("div", { style: "display:flex;flex-direction:column;gap:2px" }, mediaThumb(it, "width:100%;aspect-ratio:1/1;border-radius:8px"), h("span", { class: "small" }, "AI version")))
+          : mediaThumb(it, "width:100%;aspect-ratio:1/1;border-radius:8px");
+        const tile = h("div", { class: "adset", style: "gap:6px;padding:8px" + (parent ? ";grid-column:span 2" : "") }, pic,
+          h("span", { class: "small" }, (SRC_NAME[it.source] || it.source) + (it.kind === "video" ? " · video" : " · " + it.width + "×" + it.height)),
+          it.title ? h("span", { style: "font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, it.title) : null,
+          it.label ? h("span", { class: "small", style: it.needs_approval ? "color:var(--amber)" : "" }, it.label) : null,
+          !it.usable && it.kind === "image" ? h("span", { class: "small", style: "color:var(--amber)" }, "Too small for an ad: enhance it or make a similar one") : null);
+        const row = h("div", { style: "display:flex;gap:6px;flex-wrap:wrap" });
+        if (it.needs_approval) {
+          const ok = h("input", { type: "checkbox", style: "width:18px;min-height:18px" });
+          row.append(h("label", { style: "display:flex;gap:6px;align-items:center;font-size:12px" }, ok, "It shows my product/service accurately"),
+            h("button", { class: "btn btn-ghost", type: "button", onclick: async () => {
+              if (!ok.checked) { toast("Tick the box first, after comparing it with your original."); return; }
+              try { await post("/media/" + cid() + "/" + it.id + "/approve", { accurate: true }); draw(); } catch (e) { toast(e.message); } } }, "Confirm"));
+        } else if (it.usable) {
+          row.append(h("button", { class: "btn btn-primary", type: "button", onclick: () => { onPick(it); close(); } }, "Use"));
+        }
+        if (it.kind === "image" && it.quality !== "good" && it.source !== "generated" && it.source !== "enhanced") {
+          row.append(h("button", { class: "btn btn-ghost", type: "button", onclick: async (ev) => {
+            ev.target.disabled = true; try { await post("/media/" + cid() + "/" + it.id + "/enhance"); draw(); } catch (e) { toast(e.message); ev.target.disabled = false; } } }, "Enhance"),
+            h("button", { class: "btn btn-ghost", type: "button", onclick: async (ev) => {
+              ev.target.disabled = true; ev.target.textContent = "Making…";
+              try { await post("/media/" + cid() + "/" + it.id + "/similar"); draw(); } catch (e) { toast(e.message); ev.target.disabled = false; ev.target.textContent = "Make similar (AI)"; } } }, "Make similar (AI)"));
+        }
+        tile.append(row);
+        return tile;
+      }));
+    }
+    const scan = h("button", { class: "btn btn-primary", type: "button", onclick: async () => {
+      scan.disabled = true; msg.textContent = "Reading your website…";
+      try { const r = await post("/media/" + cid() + "/scan"); msg.textContent = "Found " + r.added + " new photos and videos" + (r.skipped ? " (" + r.skipped + " too small or unreadable)." : "."); draw(); }
+      catch (e) { msg.textContent = e.message; } scan.disabled = false; } }, "Find photos on my website");
+    const social = h("button", { class: "btn btn-ghost", type: "button", onclick: async () => {
+      social.disabled = true; msg.textContent = "Reading your Facebook and Instagram posts…";
+      try { const r = await post("/media/" + cid() + "/social"); msg.textContent = "Added " + r.added + " from your posts." + (r.problems && r.problems.length ? " " + r.problems.join(" ") : ""); draw(); }
+      catch (e) { msg.textContent = e.message; } social.disabled = false; } }, "From my Facebook & Instagram posts");
+    const up = h("input", { type: "file", accept: "image/jpeg,image/png,image/webp", class: "sr", id: "media-up" });
+    up.addEventListener("change", async () => {
+      const f = up.files[0]; if (!f) return; msg.textContent = "Uploading…";
+      try { await api("/media/" + cid() + "/upload?title=" + encodeURIComponent(f.name.replace(/\.[a-z]+$/i, "")), { method: "POST", body: f }); msg.textContent = ""; draw(); } catch (e) { msg.textContent = e.message; }
+    });
+    const panel = h("div", { class: "card", role: "dialog", "aria-modal": "true", "aria-label": "Choose a photo or video",
+      style: "max-width:980px;width:100%;max-height:88vh;overflow:auto;display:flex;flex-direction:column;gap:12px" },
+      h("div", { class: "between" }, h("h2", {}, "Choose a photo or video"), h("button", { class: "btn btn-ghost", type: "button", onclick: close, "aria-label": "Close" }, "Close")),
+      h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, scan, social, h("label", { for: "media-up", class: "btn btn-ghost" }, "Upload a photo"), up),
+      msg,
+      h("p", { class: "small", style: "margin:0" }, "Enhance makes a small photo bigger and sharper without changing it. Make similar (AI) creates a new picture that looks like yours: compare it with the original and confirm it's accurate before it can be used."),
+      grid);
+    const overlay = h("div", { style: "position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:16px;z-index:50", onclick: (e) => { if (e.target === overlay) close(); } }, panel);
+    document.body.append(overlay); document.addEventListener("keydown", esc);
+    draw();
+  }
+
   // ---------- publish to Meta ----------
   function publishSection(r, sets) {
     if (r.launch) return h("div", { class: "adset", style: "gap:12px" }, h("b", {}, "Published to Meta"), launchCard(r.launch));
     if (!r.can_publish) return h("div", { class: "result err" }, h("span", {}, "To publish this straight to your ad account, ",
       h("a", { href: "#/upload" }, "connect Facebook & Instagram"), " and pick your ad account, Page and Pixel."));
-    const images = {}, cards = [];
+    const images = {}, cards = [], pickers = {};
     const brand = status.admin ? "ProAds" : (status.name || "");
     let host = "";
     try { host = new URL(r.landing_url).host; } catch (e) {}
@@ -1659,10 +1747,22 @@ main{background:transparent}
       pick.addEventListener("change", async () => {
         try { images[key] = await fileToAdImage(pick.files[0]); img.src = images[key]; } catch (e) { toast(e.message); }
       });
-      cards.push(h("div", { style: "display:flex;flex-direction:column;gap:8px;flex:1 1 200px;max-width:260px" }, img,
-        h("span", { style: "font-size:13px;font-weight:600" }, ad.headline || "Ad " + (j + 1)),
-        h("label", { for: "img-" + key, class: "chip", style: "display:inline-flex;align-items:center;justify-content:center" }, "Use my own image"), pick));
+      const slot = h("div", {}, img);
+      const tag = h("span", { class: "small" }, "Designed image");
+      const setMedia = (it) => {
+        images[key] = "media:" + it.id;
+        slot.replaceChildren(mediaThumb(it, "width:100%;max-width:260px;aspect-ratio:1/1;border-radius:10px;border:1px solid var(--line)"));
+        tag.textContent = (SRC_NAME[it.source] || it.source) + (it.kind === "video" ? " · video ad" : "") + (it.title ? " · " + it.title : "");
+      };
+      pickers[key] = setMedia;
+      pick.addEventListener("change", () => { slot.replaceChildren(img); tag.textContent = "Your own image"; });
+      cards.push(h("div", { style: "display:flex;flex-direction:column;gap:8px;flex:1 1 200px;max-width:260px" }, slot,
+        h("span", { style: "font-size:13px;font-weight:600" }, ad.headline || "Ad " + (j + 1)), tag,
+        h("button", { class: "chip", type: "button", onclick: () => openMediaPicker(setMedia) }, "Choose photo or video"),
+        h("label", { for: "img-" + key, class: "chip", style: "display:inline-flex;align-items:center;justify-content:center" }, "Upload my own image"), pick));
     }));
+    api("/media/" + cid() + "/suggest", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plan: r.plan }) })
+      .then((d) => Object.entries(d.suggestions || {}).forEach(([k, it]) => { if (pickers[k]) pickers[k](it); })).catch(() => {});
     const box = h("div", { style: "display:flex;flex-direction:column;gap:10px" });
     const btn = h("button", { class: "btn btn-primary", type: "button" }, "Create in Meta Ads Manager (paused)");
     btn.addEventListener("click", async () => {
@@ -1682,7 +1782,7 @@ main{background:transparent}
     return h("div", { class: "adset", style: "gap:12px" },
       h("b", {}, "Publish to Meta"),
       h("label", { class: "f", for: "pub-url" }, "Page the ads open", landing),
-      h("p", { class: "sub", style: "margin:0;font-size:13px" }, "These images were made for each ad. Swap any of them for your own photo or design." + (status.admin ? "" : " Your first days of ads are a free test: no card needed.")),
+      h("p", { class: "sub", style: "margin:0;font-size:13px" }, "ProAds picks the best of your own photos and videos for each ad (website, posts, uploads). Where it has none, it makes a designed image. Change any of them." + (status.admin ? "" : " Your first days of ads are a free test: no card needed.")),
       h("div", { style: "display:flex;gap:14px;flex-wrap:wrap" }, cards), btn, box);
   }
 

@@ -144,6 +144,51 @@ class MetaAI:
         raise RuntimeError(f"all models failed for task {task}: " + " | ".join(errors))
 
 
+    # ---------- images ----------
+    def describe_image(self, jpeg: bytes, context: str = "") -> str:
+        """A precise visual description of a photo, so a similar one can be generated."""
+        import base64
+        url = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()
+        prompt = ("Describe this photo for an image generator so it can recreate a very similar, high-quality version. "
+                  "Be exact about the main subject: shape, colours, materials, text or labels visible, packaging, "
+                  "setting, lighting and camera angle. Do not add anything that is not in the photo. One paragraph. "
+                  + (f"Context: {context}" if context else ""))
+        reply = self.chat("chat", [{"role": "user", "content": [{"type": "text", "text": prompt},
+                                                                 {"type": "image_url", "image_url": {"url": url}}]}],
+                          max_completion_tokens=2000, reasoning_effort="low")
+        if not reply.text.strip():
+            raise RuntimeError("the model returned no description")
+        return reply.text.strip()
+
+    def generate_image(self, prompt: str, size: str = "1080x1080") -> bytes:
+        """One image from Meta's image model (muse-image). Address and model can be changed with
+        PAYSIGNAL_IMAGE_URL / PAYSIGNAL_IMAGE_MODEL if Meta's API differs."""
+        import base64
+        if not self.available:
+            raise RuntimeError("MODEL_API_KEY is not set")
+        url = os.environ.get("PAYSIGNAL_IMAGE_URL", "https://api.meta.ai/v1/images/generations")
+        model = os.environ.get("PAYSIGNAL_IMAGE_MODEL", MEDIA_MODELS["image_generation"])
+        r = self._http().post(url, timeout=180, json={"model": model, "prompt": prompt[:3500], "n": 1, "size": size,
+                                                      "response_format": "b64_json"},
+                              headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"})
+        if r.status_code in (401, 403):
+            raise PermissionError(f"Meta Model API refused image generation (HTTP {r.status_code}): {_reason(r)}")
+        if r.status_code == 402:
+            raise PermissionError(f"Meta Model API billing problem: {_reason(r)}")
+        if r.status_code >= 400:
+            raise RuntimeError(f"image generation failed: HTTP {r.status_code} {_reason(r)}")
+        item = ((r.json() or {}).get("data") or [{}])[0]
+        if item.get("b64_json"):
+            self.spent_usd += 0.01
+            return base64.b64decode(item["b64_json"])
+        if item.get("url"):
+            got = self._http().get(item["url"], timeout=60)
+            if got.status_code == 200:
+                self.spent_usd += 0.01
+                return got.content
+        raise RuntimeError("image generation returned no image")
+
+
 def _reason(r) -> str:
     """Meta's own error message, shortened. Never contains our key."""
     try:
