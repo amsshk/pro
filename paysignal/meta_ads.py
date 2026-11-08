@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import re
+from urllib.parse import urlparse
 import time
 from typing import Optional
 
@@ -263,7 +264,9 @@ class Publisher:
                         image_hash = self._image(chosen, label)
                         story = {"page_id": self.s["page_id"], "link_data": {
                             "link": link, "message": ad.get("primary_text", ""), "name": ad.get("headline", ""),
-                            "image_hash": image_hash, "call_to_action": cta}}
+                            "image_hash": image_hash, "call_to_action": cta,
+                            # the clean address people see under the ad; the click still uses the tracked link
+                            "caption": (urlparse(landing_url).hostname or "").removeprefix("www.")}}
                     if self.s["instagram_id"]:
                         story["instagram_user_id"] = self.s["instagram_id"]
                     creative = self._post(f"{self.s['ad_account']}/adcreatives", {

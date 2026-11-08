@@ -246,6 +246,7 @@ def test_instagram_only_placements():
     t, creative = _publish("instagram")
     assert t["publisher_platforms"] == ["instagram"] and "reels" in t["instagram_positions"]
     assert "17841" in json.dumps(creative)
+    assert '"caption": "glow.ae"' in json.dumps(json.loads(creative["object_story_spec"]) if isinstance(creative["object_story_spec"], str) else creative["object_story_spec"])
     t, _ = _publish("automatic")
     assert "publisher_platforms" not in t
     with pytest.raises(meta_ads.PublishError, match="Instagram account"):
