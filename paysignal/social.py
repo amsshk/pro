@@ -48,7 +48,8 @@ def configured() -> list[str]:
         out.append("google")
     if all(_env(k) for k in ("APPLE_CLIENT_ID", "APPLE_TEAM_ID", "APPLE_KEY_ID", "APPLE_PRIVATE_KEY")):
         out.append("apple")
-    if _env("FACEBOOK_LOGIN_APP_ID", "META_APP_ID") and _env("FACEBOOK_LOGIN_APP_SECRET", "META_APP_SECRET"):
+    # explicit switch: the ProAds Meta app's keys alone don't turn this on (that app may only be set up for ads)
+    if _env("FACEBOOK_LOGIN_APP_ID") and _env("FACEBOOK_LOGIN_APP_SECRET", "META_APP_SECRET"):
         out.append("facebook")
     return out
 
