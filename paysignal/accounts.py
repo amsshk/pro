@@ -158,7 +158,7 @@ class AccountStore:
 
     def set_password(self, client_id: str, password: str) -> None:
         """New password, and every existing sign-in ends."""
-        self.db.execute("UPDATE accounts SET pw_hash=? WHERE client_id=?", (hash_password(password), client_id))
+        self.db.execute("UPDATE accounts SET pw_hash=?, pw_set=1 WHERE client_id=?", (hash_password(password), client_id))
         self.db.execute("DELETE FROM sessions WHERE client_id=?", (client_id,))
         self.db.commit()
 
@@ -204,6 +204,17 @@ class AccountStore:
         if "attribution" not in cols:
             self.db.execute("ALTER TABLE accounts ADD COLUMN attribution TEXT")
             self.db.commit()
+        if "pw_set" not in cols:                     # 0 = created by Google/Apple/Facebook, no password chosen yet
+            self.db.execute("ALTER TABLE accounts ADD COLUMN pw_set INTEGER NOT NULL DEFAULT 1")
+            self.db.commit()
+
+    def has_password(self, client_id: str) -> bool:
+        r = self.db.execute("SELECT pw_set FROM accounts WHERE client_id=?", (client_id,)).fetchone()
+        return bool(r and r[0])
+
+    def mark_no_password(self, client_id: str) -> None:
+        self.db.execute("UPDATE accounts SET pw_set=0 WHERE client_id=?", (client_id,))
+        self.db.commit()
 
     def set_attribution(self, client_id: str, utm: dict) -> None:
         self.db.execute("UPDATE accounts SET attribution=? WHERE client_id=?", (json.dumps(utm), client_id))
@@ -271,7 +282,7 @@ class AccountStore:
         """Erase an account and every record that belongs to it."""
         counts = {}
         for table in ("payments", "posts", "promo_codes", "shopify_shops", "oauth_states", "wa_chats",
-                      "wa_conversions", "ad_launches", "campaign_drafts", "meta_connections", "billing", "billing_fees", "billing_fee_pending", "billing_fee_held", "spend_ledger", "spend_sync", "fee_periods", "unit_economics", "unpaid_orders", "capi_log", "signal_settings", "experiments", "sessions", "password_resets", "accounts"):
+                      "wa_conversions", "ad_launches", "campaign_drafts", "meta_connections", "billing", "billing_fees", "billing_fee_pending", "billing_fee_held", "spend_ledger", "spend_sync", "fee_periods", "unit_economics", "unpaid_orders", "capi_log", "signal_settings", "experiments", "social_identities", "sessions", "password_resets", "accounts"):
             try:
                 counts[table] = self.db.execute(f"DELETE FROM {table} WHERE client_id=?", (client_id,)).rowcount
             except Exception:                       # table not created yet

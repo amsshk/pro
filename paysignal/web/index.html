@@ -406,12 +406,36 @@ main{background:transparent}
     renderLogin(message);
   }
 
+  // ---------- sign in with Google / Apple / Facebook ----------
+  const SOCIAL = {
+    google: { label: "Continue with Google", style: "background:#fff;color:#1F1F1F;border:1px solid #747775",
+      icon: '<svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.7 1.2 9.2 3.6l6.9-6.9C35.9 2.4 30.4 0 24 0 14.6 0 6.6 5.4 2.6 13.3l8 6.2C12.5 13.7 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.4c-.5 2.9-2.2 5.3-4.6 6.9l7.5 5.8c4.4-4 6.8-10 6.8-17.2z"/><path fill="#FBBC05" d="M10.5 28.5c-.5-1.4-.8-2.9-.8-4.5s.3-3.1.8-4.5l-8-6.2C.9 16.5 0 20.1 0 24s.9 7.5 2.6 10.7l7.9-6.2z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.5-5.8c-2.1 1.4-4.8 2.3-8.4 2.3-6.2 0-11.5-4.2-13.4-9.9l-8 6.2C6.6 42.6 14.6 48 24 48z"/></svg>' },
+    apple: { label: "Continue with Apple", style: "background:#000;color:#fff;border:1px solid #000",
+      icon: '<svg width="16" height="18" viewBox="0 0 17 20" aria-hidden="true"><path fill="#fff" d="M14.1 10.6c0-2.6 2.1-3.8 2.2-3.9-1.2-1.8-3.1-2-3.7-2-1.6-.2-3.1.9-3.9.9-.8 0-2-.9-3.4-.9C3.6 4.8 2 5.8 1.1 7.4c-1.8 3.2-.5 7.9 1.3 10.5.9 1.3 1.9 2.7 3.2 2.6 1.3-.1 1.8-.8 3.3-.8s2 .8 3.4.8c1.4 0 2.3-1.3 3.1-2.6 1-1.5 1.4-2.9 1.4-3-.1 0-2.7-1-2.7-4.3zM11.6 3c.7-.9 1.2-2 1-3.2-1 0-2.3.7-3 1.6-.7.8-1.2 2-1.1 3.1 1.2.1 2.3-.6 3.1-1.5z"/></svg>' },
+    facebook: { label: "Continue with Facebook", style: "background:#1877F2;color:#fff;border:1px solid #1877F2",
+      icon: '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="#fff" d="M24 12a12 12 0 1 0-13.9 11.9v-8.4h-3V12h3V9.4c0-3 1.8-4.7 4.5-4.7 1.3 0 2.7.2 2.7.2v3h-1.5c-1.5 0-2 .9-2 1.9V12h3.4l-.5 3.5h-2.9v8.4A12 12 0 0 0 24 12z"/></svg>' } };
+  function socialButtons(providers, intent) {
+    if (!providers || !providers.length) return null;
+    const box = h("div", { style: "display:flex;flex-direction:column;gap:8px" });
+    providers.forEach((p) => {
+      const cfg = SOCIAL[p]; if (!cfg) return;
+      const a = h("a", { class: "btn", href: "/auth/oauth/" + p + "/start?intent=" + intent, style: cfg.style + ";display:flex;gap:10px;justify-content:center;align-items:center;text-decoration:none;font-weight:600" });
+      const ic = h("span", { style: "display:inline-flex" }); ic.innerHTML = cfg.icon;
+      a.append(ic, document.createTextNode(cfg.label));
+      box.append(a);
+    });
+    box.append(h("div", { style: "display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px" },
+      h("span", { style: "flex:1;height:1px;background:var(--line, #e5e7eb)" }), "or", h("span", { style: "flex:1;height:1px;background:var(--line, #e5e7eb)" })));
+    return box;
+  }
+
   // ---------- sign in ----------
   function renderLogin(message) {
     const client = h("input", { id: "client", autocomplete: "username", required: true, placeholder: "you@business.com" });
     const key = h("input", { id: "key", type: "password", autocomplete: "current-password", required: true });
     const err = h("p", { class: "sub", role: "alert", style: "color: var(--amber-txt)" }, message || "");
     const btn = h("button", { class: "btn btn-primary", type: "submit" }, "Sign in");
+    const socialSlot = h("div", { hidden: true });
     const form = h("form", { class: "card", onsubmit: async (e) => {
       e.preventDefault();
       btn.disabled = true; err.textContent = "";
@@ -431,6 +455,7 @@ main{background:transparent}
     } },
       h("a", { class: "brand", href: "/", style: "text-decoration:none;color:inherit" }, logo(), "ProAds"),
       h("div", {}, h("h1", { style: "font-size:26px" }, "Sign in"), h("p", { class: "sub" }, "Use your email and password.")),
+      socialSlot,
       h("label", { class: "f", for: "client" }, "Email (or business ID)", client),
       h("label", { class: "f", for: "key" }, "Password (or access key)", key),
       err, btn,
@@ -438,6 +463,7 @@ main{background:transparent}
       h("p", { class: "sub", style: "margin:0;font-size:14px" }, "New here? ", h("a", { href: "/#signup" }, "Create a free account")));
     root.replaceChildren(h("div", { class: "login" }, form));
     client.focus();
+    fetch("/public-config").then((r) => r.json()).then((c) => { const b = socialButtons(c.sign_in, "signin"); if (b) socialSlot.replaceWith(b); }).catch(() => {});
   }
 
   function renderForgot(prefill) {
@@ -1039,17 +1065,19 @@ main{background:transparent}
 
   // ---------- delete account ----------
   function deleteCard() {
-    const pw = h("input", { id: "delpw", type: "password", autocomplete: "current-password", placeholder: "Your password" });
+    const noPw = status && status.has_password === false;          // signed up with Google, Apple or Facebook
+    const pw = noPw ? h("input", { id: "delpw", type: "email", autocomplete: "email", placeholder: "Type your account email" })
+      : h("input", { id: "delpw", type: "password", autocomplete: "current-password", placeholder: "Your password" });
     const msg = h("p", { class: "sub", role: "alert", style: "margin:0;color: var(--amber-txt)" });
     let armed = false;
     const btn = h("button", { class: "btn btn-ghost", type: "submit", style: "border-color:#7F1D1D;color: var(--loss-txt)" }, "Delete my account and data");
     const form = h("form", { style: "display:flex;gap:8px;flex-wrap:wrap;align-items:center", onsubmit: async (e) => {
       e.preventDefault(); msg.textContent = "";
-      if (!pw.value) { msg.textContent = "Enter your password to confirm."; return; }
+      if (!pw.value) { msg.textContent = noPw ? "Type your account email to confirm." : "Enter your password to confirm."; return; }
       if (!armed) { armed = true; btn.textContent = "Yes, delete everything permanently"; return; }
       btn.disabled = true;
       try {
-        await api("/account/delete/" + cid(), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: pw.value }) });
+        await api("/account/delete/" + cid(), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(noPw ? { confirm_email: pw.value } : { password: pw.value }) });
         session = null; status = null;
         try { sessionStorage.removeItem(SKEY); } catch (e2) {}
         root.replaceChildren(h("div", { class: "login" }, h("div", { class: "card", style: "max-width:460px" },
@@ -2884,6 +2912,19 @@ main{background:transparent}
     const [path, query] = location.hash.split("?");
     const params = new URLSearchParams(query || "");
     if (path === "#/reset" && params.get("token")) return renderReset(params.get("token"));
+    if (params.get("oauth_error")) { history.replaceState(null, "", location.pathname + "#/home"); session = null; return renderLogin(params.get("oauth_error")); }
+    if (params.get("login_code")) {                  // back from Google / Apple / Facebook: swap the one-time code
+      const code = params.get("login_code");
+      history.replaceState(null, "", location.pathname + "#/home");
+      try {
+        const res = await fetch("/auth/oauth/exchange", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) return renderLogin(d.error || "Sign-in expired. Please try again.");
+        session = { client: d.client_id, key: d.token }; status = null;
+        try { sessionStorage.setItem(SKEY, JSON.stringify(session)); } catch (e) {}
+      } catch (e) { return renderLogin("Cannot reach the server. Check your internet connection."); }
+      return route();
+    }
     if (!session) return renderLogin();
     if (!status || params.has("shopify")) {
       try { status = await api("/status/" + cid()); } catch (e) { if (e.message !== "signed out") root.replaceChildren(h("div", { class: "login" }, errorCard(e.message))); return; }

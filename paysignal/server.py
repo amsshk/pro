@@ -50,7 +50,7 @@ from .attribution import make_promo_code, tag_link
 from .dashboard import build_dashboard, _realized
 from .ads_report import build_report
 from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, business_context
-from . import autopilot, billing, buyers, competitors, engines, forecast, leaks, learning, meta_capi, proads_revenue, purchase_funnel, delivery, scaling, signals, ledger, meta_ads, meta_connect, settlement
+from . import autopilot, billing, buyers, competitors, engines, forecast, leaks, learning, meta_capi, proads_revenue, purchase_funnel, delivery, scaling, social, signals, ledger, meta_ads, meta_connect, settlement
 from .connectors.stripe import verify_signature as stripe_signature_ok
 from .audit import audit_summary, audit_text, build_audit
 from .importers import xlsx_to_csv, import_auto
@@ -128,6 +128,8 @@ class App:
         self.funnel = purchase_funnel.FunnelStore(self.store.db)
         self.delivery = delivery.DeliveryLog(self.store.db)
         self.scaling = scaling.ScalingStore(self.store.db)
+        self.social = social.SocialStore(self.store.db)
+        self.social_http = None                    # requests, unless a test swaps it
         self._nudged: dict = {}
         self.stripe_http = None                # set in tests
         self.billing_sync = False              # tests: add invoice fees inline
@@ -1697,7 +1699,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     @flask.get("/public-config")
     def public_config():
         """Values the public pages need: the Pixel ID (public by nature) and contact email."""
-        return {"pixel_id": growth.pixel_id(), "contact": os.environ.get("PROADS_CONTACT_EMAIL", "")}
+        return {"pixel_id": growth.pixel_id(), "contact": os.environ.get("PROADS_CONTACT_EMAIL", ""),
+                "sign_in": social.configured()}
 
     def client_ip() -> str:
         return (request.headers.get("X-Forwarded-For") or request.remote_addr or "").split(",")[-1].strip()
@@ -1732,6 +1735,150 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             state.emit_growth(growth.build_event("CompleteRegistration", state.accounts.get(cid), ctx, event_id))
         log.info("new account %s", cid)
         return {"client_id": cid, "token": token, "event_id": event_id, "name": clean["name"]}
+
+    # ---------------- sign in with Google, Apple or Facebook ----------------
+    BIND_COOKIE = "proads_oauth"
+
+    def oauth_redirect_uri(provider: str) -> str:
+        return f"{public_base()}/auth/oauth/{provider}/callback"
+
+    def oauth_fail(msg: str):
+        from urllib.parse import quote
+        return redirect("/app#/signin?oauth_error=" + quote(msg))
+
+    @flask.get("/auth/oauth/<provider>/start")
+    def oauth_start(provider):
+        if provider not in social.configured():
+            abort(404, "This sign-in option isn't set up.")
+        a = request.args
+        intent = "signup" if a.get("intent") == "signup" else "signin"
+        ads = a.get("ads") == "1"
+        ctx = growth.capture_context({"ads_consent": ads, "fbp": a.get("fbp", ""), "fbc": a.get("fbc", ""),
+                                      "fbclid": a.get("fbclid", ""), "source_url": a.get("source_url", "")},
+                                     request.headers, request.remote_addr) if ads else None
+        try:
+            raw = json.loads(a.get("utm") or "{}")
+        except ValueError:
+            raw = {}
+        utm = {k: str(raw.get(k) or "")[:120] for k in ("utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term")
+               if isinstance(raw, dict) and raw.get(k)}
+        with state.lock:
+            st = state.social.new_state(provider, intent, {"ctx": ctx, "utm": utm})
+        resp = redirect(social.auth_url(provider, oauth_redirect_uri(provider), st["state"], st["nonce"], st["verifier"]))
+        secure = request.is_secure or request.headers.get("X-Forwarded-Proto", "") == "https"
+        # SameSite=None so Apple's cross-site form post still carries it; HttpOnly, only sent to /auth/oauth
+        resp.set_cookie(BIND_COOKIE, st["bind"], max_age=social.STATE_TTL, httponly=True, secure=secure,
+                        samesite="None" if secure else "Lax", path="/auth/oauth")
+        return resp
+
+    @flask.route("/auth/oauth/<provider>/callback", methods=["GET", "POST"])
+    def oauth_callback(provider):
+        src = request.form if request.method == "POST" else request.args
+        if src.get("error"):
+            return oauth_fail("Sign-in was cancelled." if src.get("error") in ("access_denied", "user_cancelled_authorize")
+                              else "The sign-in provider returned an error. Please try again.")
+        with state.lock:
+            st = state.social.take_state(src.get("state", ""), provider, request.cookies.get(BIND_COOKIE))
+        if not st:
+            return oauth_fail("That sign-in link expired or was opened in another browser. Please try again.")
+        try:
+            http = state.social_http
+            if http is None:
+                import requests as http
+            who = social.identity(provider, http, src.get("code", ""), oauth_redirect_uri(provider),
+                                  st["nonce"], st["verifier"], apple_user=src.get("user"))
+        except social.SocialError as e:
+            return oauth_fail(str(e))
+        except Exception as e:
+            log.warning("%s sign-in failed: %s", provider, e)
+            return oauth_fail("Couldn't reach the sign-in provider. Please try again.")
+        if not who["subject"]:
+            return oauth_fail("The sign-in provider didn't identify you. Please try again.")
+        with state.lock:
+            cid = state.social.client_for(provider, who["subject"])
+            if cid and not state.accounts.get(cid):
+                cid = None                            # the account was deleted
+            if not cid and who["email"]:
+                acct = state.accounts.by_email(who["email"])
+                if acct and who["email_verified"]:
+                    cid = acct["client_id"]
+                    state.social.link(provider, who["subject"], cid, who["email"])
+                    log.info("linked %s sign-in to %s", provider, cid)
+                elif acct:
+                    return oauth_fail("An account with this email exists, but the provider hasn't verified the email. "
+                                      "Sign in with your password instead.")
+            if cid:
+                code = state.social.new_code("session", {"client_id": cid}, social.CODE_TTL)
+        if cid:
+            resp = redirect("/app#/home?login_code=" + code)
+        else:
+            if not who["email"] or not who["email_verified"]:
+                return oauth_fail("We need a verified email address to create your account. Try another option or "
+                                  "sign up with your email.")
+            with state.lock:
+                code = state.social.new_code("pending", {"who": who, "ctx": st["extra"].get("ctx"),
+                                                         "utm": st["extra"].get("utm") or {}}, social.PENDING_TTL)
+            resp = redirect("/?finish=" + code + "#signup")
+        resp.delete_cookie(BIND_COOKIE, path="/auth/oauth")
+        return resp
+
+    @flask.post("/auth/oauth/exchange")
+    def oauth_exchange():
+        """The app swaps its one-time code for a session (never a session token in a URL)."""
+        code = str((request.get_json(silent=True) or {}).get("code") or "")
+        with state.lock:
+            got = state.social.take_code(code, "session")
+            if not got:
+                abort(401, "That sign-in expired. Please sign in again.")
+            token = state.accounts.new_session(got["client_id"])
+        return {"client_id": got["client_id"], "token": token}
+
+    @flask.get("/auth/oauth/pending")
+    def oauth_pending():
+        with state.lock:
+            got = state.social.peek_code(request.args.get("code", ""), "pending")
+        if not got:
+            abort(404, "This sign-up link expired. Please start again.")
+        return {"email": got["who"]["email"], "name": got["who"]["name"], "provider": got["who"]["provider"]}
+
+    @flask.post("/auth/oauth/finish")
+    def oauth_finish():
+        """New account from a Google/Apple/Facebook sign-in: business details and terms, then the account."""
+        body = request.get_json(silent=True) or {}
+        ip_key = f"signup:{client_ip()}"
+        if state.signup_limiter.locked_for(ip_key):
+            abort(429, "Too many sign-ups from this connection. Please try again later.")
+        with state.lock:
+            got = state.social.peek_code(str(body.get("code") or ""), "pending")
+        if not got:
+            abort(404, "This sign-up link expired. Please start again.")
+        who = got["who"]
+        clean, errors = validate_signup({**body, "email": who["email"], "password": secrets.token_urlsafe(24)})
+        if errors:
+            return jsonify({"errors": errors}), 400
+        ctx = got.get("ctx")
+        with state.lock:
+            if not state.social.take_code(str(body.get("code") or ""), "pending"):
+                abort(404, "This sign-up link expired. Please start again.")
+            existing = state.accounts.by_email(who["email"])
+            if existing:                              # created in another tab meanwhile: link instead of duplicating
+                cid = existing["client_id"]
+                state.social.link(who["provider"], who["subject"], cid, who["email"])
+                token = state.accounts.new_session(cid)
+                return {"client_id": cid, "token": token, "event_id": None, "name": existing["name"]}
+            cid = state.accounts.create(clean, set(state.clients), json.dumps(ctx) if ctx else "")
+            state.accounts.mark_no_password(cid)
+            state.social.link(who["provider"], who["subject"], cid, who["email"])
+            if got.get("utm"):
+                state.accounts.set_attribution(cid, got["utm"])
+            token = state.accounts.new_session(cid)
+        state.signup_limiter.fail(ip_key)
+        event_id = f"signup:{cid}"
+        if ctx:
+            state.emit_growth(growth.build_event("CompleteRegistration", state.accounts.get(cid), ctx, event_id))
+        log.info("new account %s via %s", cid, who["provider"])
+        return {"client_id": cid, "token": token, "event_id": event_id if ctx else None, "name": clean["name"],
+                "ads": bool(ctx)}
 
     @flask.post("/auth/login")
     def login():
@@ -1777,9 +1924,13 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         lock_key = f"login:{acct['email']}"
         if state.login_limiter.locked_for(lock_key):
             abort(429, "Too many wrong attempts. Try again later.")
-        if not check_password(body.get("password") or "", acct["pw_hash"]):
-            state.login_limiter.fail(lock_key)
-            abort(401, "Wrong password")
+        if state.accounts.has_password(client_id):
+            if not check_password(body.get("password") or "", acct["pw_hash"]):
+                state.login_limiter.fail(lock_key)
+                abort(401, "Wrong password")
+        elif (body.get("confirm_email") or "").strip().lower() != acct["email"]:
+            state.login_limiter.fail(lock_key)       # signed up with Google/Apple/Facebook: type the email to confirm
+            abort(401, "Type your account's email address to confirm")
         with state.lock:
             counts = state.accounts.delete_everything(client_id)
             state.learnings.forget(client_id)
@@ -2004,6 +2155,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             "client_id": client_id,
             "name": cfg.get("name", client_id),
             "self_serve": bool(cfg.get("self_serve")),
+            "has_password": state.accounts.has_password(client_id) if state.accounts.get(client_id) else True,
             "admin": is_admin(client_id),
             "currency": cfg.get("currency", "AED"),
             "website": cfg.get("website", ""),
