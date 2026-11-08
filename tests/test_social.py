@@ -186,3 +186,10 @@ def test_apple_form_post_and_signed_client_secret(app, env, monkeypatch):
                                                    "user": json.dumps({"name": {"firstName": "Sara", "lastName": "Ali"}})})
     code = r.headers["Location"].split("finish=")[1].split("#")[0]
     assert c.get("/auth/oauth/pending", query_string={"code": code}).json["name"] == "Sara Ali"
+
+
+def test_uploading_a_picture_says_so(app):
+    c = app.test_client()
+    tok = c.post("/auth/signup", json=ACCT).json["token"]
+    r = c.post("/import/glow-clinic", headers={"X-API-Key": tok}, data=b"\x89PNG\r\n\x1a\n" + b"0" * 50)
+    assert r.status_code == 400 and "picture (PNG)" in r.json["error"]

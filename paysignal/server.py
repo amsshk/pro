@@ -500,6 +500,12 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         state.require_key(client_id)
         cfg = state.config(client_id)
         raw = request.get_data()
+        kind = (b"\x89PNG" == raw[:4] and "picture (PNG)") or (raw[:3] == b"\xff\xd8\xff" and "photo (JPG)") or \
+            (raw[:4] == b"%PDF" and "PDF") or (raw[4:12] in (b"ftypheic", b"ftypmif1", b"ftypheix") and "photo (HEIC)") or \
+            (raw[:4] in (b"GIF8", b"RIFF") and "picture")
+        if kind:
+            abort(400, f"That's a {kind}, not a spreadsheet. ProAds reads sales from a CSV or Excel file: in Shopify or "
+                       "Stripe use Export, or save your sheet as CSV. To show a screenshot to support, send it in chat instead.")
         if raw[:2] == b"PK":                              # an Excel file (.xlsx)
             try:
                 text = xlsx_to_csv(raw)
