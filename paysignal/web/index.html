@@ -1325,7 +1325,41 @@ main{background:transparent}
         k === "whatsapp" ? h("a", { class: "btn btn-primary", href: "#/whatsapp" }, "Open WhatsApp") :
           h("button", { class: "btn btn-primary", type: "button", onclick: () => { tPlat.value = ["tiktok", "snapchat", "youtube"].includes(k) ? k : "instagram"; document.getElementById("s3").scrollIntoView({ behavior: "smooth" }); tName.focus(); } }, "Create " + (/^[AEIOU]/.test(NAME[k]) ? "an " : "a ") + NAME[k] + " link"),
         k === "tiktok" || k === "snapchat" ? h("span", { class: "sub", style: "font-size:13px;align-self:center" }, "Upload your " + NAME[k] + " sales below too.") : null));
+    const stripeCard = () => {
+      const sa = (status.connections && status.connections.stripe_api) || { connected: false };
+      const out = h("div", {});
+      const keyIn = h("input", { type: "password", autocomplete: "off", spellcheck: "false", placeholder: "rk_live_…", "aria-label": "Stripe restricted key", style: "flex:1;min-width:220px" });
+      const go = h("button", { class: "btn btn-primary", type: "submit" }, sa.connected ? "Replace key" : "Connect Stripe");
+      const form = h("form", { style: "display:flex;gap:8px;flex-wrap:wrap", onsubmit: async (e) => {
+        e.preventDefault(); go.disabled = true; out.replaceChildren(h("p", { class: "sub", style: "margin:0" }, "Checking the key and reading your payments… this can take a minute."));
+        try {
+          const r = await api("/connect/" + cid() + "/stripe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: keyIn.value }) });
+          keyIn.value = ""; status = await api("/status/" + cid());
+          out.replaceChildren(h("div", { class: "result" }, h("span", { class: "ok" }, "Connected. " + fmt.format(r.imported || 0) + " payments and refunds imported." + (r.warning ? " " + r.warning : ""))));
+          setTimeout(() => route(), 1200);
+        } catch (err) { if (err.message !== "signed out") out.replaceChildren(errorCard(err.message)); }
+        go.disabled = false;
+      } }, keyIn, go);
+      const state_ = sa.connected ? h("div", { class: sa.status === "error" ? "result err" : "result" }, h("span", {},
+        sa.status === "error" ? "Stripe stopped answering: " + (sa.message || "") :
+          (sa.live ? "Connected" : "Connected with a TEST key") + " · " + fmt.format(sa.imported || 0) + " payments and refunds in" +
+          (sa.last_sync ? " · last checked " + new Date(sa.last_sync * 1000).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : " · reading your history now") +
+          (sa.message ? " · " + sa.message : ""))) : null;
+      const off = sa.connected ? h("button", { class: "btn btn-ghost", type: "button", onclick: async () => {
+        try { const r = await api("/connect/" + cid() + "/stripe/disconnect", { method: "POST" }); status = await api("/status/" + cid()); toast(r.note); route(); } catch (err) { if (err.message !== "signed out") toast(err.message); } }, style: "align-self:flex-start" }, "Disconnect") : null;
+      return h("section", { class: "card", style: "display:flex;flex-direction:column;gap:10px" },
+        h("div", { class: "between" }, h("h2", {}, "Stripe"), h("span", { class: "badge b-neutral" }, "Reads automatically")),
+        h("p", { class: "sub", style: "margin:0" }, "Paste a read-only Stripe key once. ProAds brings in the last 12 months of payments, then new payments, refunds and lost chargebacks every few minutes. No files, no webhooks."),
+        h("ol", { style: "margin:0;padding-left:20px;font-size:14px;display:flex;flex-direction:column;gap:4px" },
+          h("li", {}, h("a", { href: sa.key_help_url, target: "_blank", rel: "noopener" }, "Open Stripe's key page"), " (it fills in the name ProAds and the read permissions: Charges, Customers, Refunds, Disputes)."),
+          h("li", {}, "Check every permission is Read, nothing is Write, then click Create key."),
+          h("li", {}, "Copy the key that starts with rk_live_ and paste it here.")),
+        state_, form, out,
+        h("p", { class: "small", style: "margin:0" }, "Never paste your secret key (sk_…): ProAds refuses it, because it can move money. The restricted key is stored encrypted and can only read."),
+        off);
+    };
     const shopCard = (k) => {
+      if (k === "stripe") return stripeCard();
       const info = P[k];
       return h("section", { class: "card" },
         h("div", { class: "between" }, h("h2", {}, NAME[k]), h("span", { class: "badge b-neutral" }, k === "stripe" ? "Connects live" : k === "cash" ? "Sheet + codes" : "Upload an export")),

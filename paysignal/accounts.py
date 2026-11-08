@@ -282,7 +282,7 @@ class AccountStore:
         """Erase an account and every record that belongs to it."""
         counts = {}
         for table in ("payments", "posts", "promo_codes", "shopify_shops", "oauth_states", "wa_chats",
-                      "wa_conversions", "ad_launches", "campaign_drafts", "meta_connections", "billing", "billing_fees", "billing_fee_pending", "billing_fee_held", "spend_ledger", "spend_sync", "fee_periods", "unit_economics", "unpaid_orders", "capi_log", "signal_settings", "experiments", "social_identities", "sessions", "password_resets", "accounts"):
+                      "wa_conversions", "ad_launches", "campaign_drafts", "meta_connections", "billing", "billing_fees", "billing_fee_pending", "billing_fee_held", "spend_ledger", "spend_sync", "fee_periods", "unit_economics", "unpaid_orders", "capi_log", "signal_settings", "experiments", "social_identities", "stripe_keys", "sessions", "password_resets", "accounts"):
             try:
                 counts[table] = self.db.execute(f"DELETE FROM {table} WHERE client_id=?", (client_id,)).rowcount
             except Exception:                       # table not created yet

@@ -50,7 +50,7 @@ from .attribution import make_promo_code, tag_link
 from .dashboard import build_dashboard, _realized
 from .ads_report import build_report
 from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, business_context
-from . import autopilot, billing, buyers, competitors, engines, forecast, leaks, learning, meta_capi, proads_revenue, purchase_funnel, delivery, scaling, social, signals, ledger, meta_ads, meta_connect, settlement
+from . import autopilot, billing, buyers, competitors, engines, forecast, leaks, learning, meta_capi, proads_revenue, purchase_funnel, delivery, scaling, social, stripe_sync, signals, ledger, meta_ads, meta_connect, settlement
 from .connectors.stripe import verify_signature as stripe_signature_ok
 from .audit import audit_summary, audit_text, build_audit
 from .importers import xlsx_to_csv, import_auto
@@ -130,6 +130,8 @@ class App:
         self.scaling = scaling.ScalingStore(self.store.db)
         self.social = social.SocialStore(self.store.db)
         self.social_http = None                    # requests, unless a test swaps it
+        self.stripe_links = stripe_sync.StripeLinks(self.store.db)
+        self.stripe_http = None
         self._nudged: dict = {}
         self.stripe_http = None                # set in tests
         self.billing_sync = False              # tests: add invoice fees inline
@@ -255,6 +257,8 @@ class App:
             for p in payments:
                 if p.client_id != client_id:
                     continue
+                if p.kind == "refund" and not self._refund_delta(client_id, p):
+                    continue
                 match = self._wa_match(client_id, p)
                 if self.store.add(p):
                     new += 1
@@ -265,6 +269,38 @@ class App:
         if new and getattr(self, "instant_meta", False):
             self.nudge_meta(client_id)
         return {"received": len(payments), "new": new, "duplicates": len(payments) - new}
+
+    def _refund_delta(self, client_id: str, p) -> bool:
+        """Stripe reports the running total refunded on a charge ("<charge>:refund:<total>"). Record only the part
+        not recorded yet, and never refund more than the sale. False = nothing new to record."""
+        if not p.refund_of:
+            return True
+        db = self.store.db
+        if db.execute("SELECT 1 FROM payments WHERE client_id=? AND source=? AND external_id=?",
+                      (client_id, p.source, p.external_id)).fetchone():
+            return False
+        if ":refund:" in p.external_id:
+            try:
+                total = int(p.external_id.rsplit(":refund:", 1)[1])
+            except ValueError:
+                total = 0
+            prev = 0
+            for (eid,) in db.execute("SELECT external_id FROM payments WHERE client_id=? AND kind='refund' AND refund_of=?"
+                                     " AND external_id LIKE ?", (client_id, p.refund_of, p.refund_of + ":refund:%")):
+                try:
+                    prev = max(prev, int(eid.rsplit(":refund:", 1)[1]))
+                except ValueError:
+                    pass
+            if total <= prev:
+                return False
+            if total:
+                p.amount = round(p.amount * (total - prev) / total, 2)
+        sale = db.execute("SELECT amount FROM payments WHERE client_id=? AND kind='purchase' AND external_id=?",
+                          (client_id, p.refund_of)).fetchone()
+        if sale:
+            room = round(sale[0] - self.store.refunded_amount(client_id, p.refund_of), 2)
+            p.amount = min(p.amount, max(0.0, room))
+        return p.amount > 0
 
     def nudge_meta(self, client_id: str) -> None:
         """Send new sales to Meta now instead of waiting for the 10-minute cycle (at most every 20 seconds)."""
@@ -455,6 +491,78 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         except ValueError:
             abort(400, "invalid json")
         return state.ingest(client_id, parse_stripe_event(event, client_id))
+
+    # ---------- Stripe read automatically (restricted key) ----------
+    def stripe_http():
+        if state.stripe_http is not None:
+            return state.stripe_http
+        import requests
+        return requests
+
+    def stripe_sync_one(client_id: str) -> dict:
+        row = state.stripe_links.get(client_id)
+        if not row:
+            return {"ok": False}
+        now = int(time.time())
+        since = (row["last_sync"] - stripe_sync.OVERLAP) if row["last_sync"] else now - stripe_sync.HISTORY_DAYS * 86400
+        try:
+            key = shopify_app.decrypt(row["key_enc"])
+            got = stripe_sync.fetch(stripe_http(), key, client_id, since, now)
+        except stripe_sync.StripeSyncError as e:
+            with state.lock:
+                state.stripe_links.result(client_id, False, str(e))
+            log.info("stripe sync for %s: %s", client_id, e)
+            return {"ok": False, "error": str(e)}
+        except Exception as e:
+            with state.lock:
+                state.stripe_links.result(client_id, False, "Couldn't read Stripe right now. ProAds will try again shortly.")
+            log.warning("stripe sync for %s failed: %s", client_id, e)
+            return {"ok": False}
+        res = state.ingest(client_id, got["payments"])
+        msg = ("Imported your most recent 10,000 payments; older ones were skipped." if got["truncated"] else None)
+        with state.lock:
+            state.stripe_links.result(client_id, True, msg, res["new"], got["truncated"], now)
+        if res["new"]:
+            state.maybe_activate(client_id)
+        return {"ok": True, **res}
+    state.stripe_sync_one = stripe_sync_one
+
+    def stripe_sync_all() -> None:
+        with state.lock:
+            ids = state.stripe_links.all()
+        for cid in ids:
+            stripe_sync_one(cid)
+    state.stripe_sync_all = stripe_sync_all
+
+    @flask.post("/connect/<client_id>/stripe")
+    def stripe_connect(client_id):
+        """Paste a restricted, read-only Stripe key once; payments then come in by themselves."""
+        state.require_key(client_id)
+        key = str((request.get_json(silent=True) or {}).get("key") or "").strip()
+        try:
+            info = stripe_sync.check_key(stripe_http(), key)
+        except stripe_sync.StripeSyncError as e:
+            abort(400, str(e))
+        try:
+            enc = shopify_app.encrypt(key)
+        except shopify_app.ShopifyError:
+            abort(503, "ProAds can't store keys safely yet (PROADS_SECRET_KEY is missing on the server).")
+        with state.lock:
+            state.stripe_links.save(client_id, enc, info["live"], info["kind"])
+        if getattr(state, "billing_sync", False):
+            stripe_sync_one(client_id)
+        else:
+            threading.Thread(target=stripe_sync_one, args=(client_id,), daemon=True).start()
+        log.info("stripe key connected for %s (%s)", client_id, "live" if info["live"] else "test")
+        return {"ok": True, **stripe_sync.StripeLinks.public(state.stripe_links.get(client_id)),
+                "warning": None if info["live"] else "This is a TEST key: only Stripe test payments will come in."}
+
+    @flask.post("/connect/<client_id>/stripe/disconnect")
+    def stripe_disconnect(client_id):
+        state.require_key(client_id)
+        with state.lock:
+            state.stripe_links.remove(client_id)
+        return {"ok": True, "note": "ProAds deleted the key. To be thorough, also delete it in Stripe (Developers → API keys)."}
 
     @flask.post("/webhooks/shopify/<client_id>")
     def shopify_hook(client_id):
@@ -2169,7 +2277,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 "shopify": {"configured": bool(cfg.get("shopify_webhook_secret") or shop),
                             **payments.get("shopify", {})},
                 "shopify_app": shop_info,
-                "stripe": {"configured": bool(cfg.get("stripe_webhook_secret")), **payments.get("stripe", {})},
+                "stripe": {"configured": bool(cfg.get("stripe_webhook_secret")) or bool(state.stripe_links.get(client_id)),
+                           **payments.get("stripe", {})},
+                "stripe_api": stripe_sync.StripeLinks.public(state.stripe_links.get(client_id)),
                 "uploads": payments.get("csv", {}),
                 "meta_capi": {"configured": bool(meta.get("dataset_id") and meta.get("access_token")),
                               "live": bool(meta.get("live"))},
@@ -3628,7 +3738,7 @@ def _start_worker(state: App, every: int) -> None:
                     state.enforce_ads_trials()
             except Exception:
                 log.exception("ad test check failed")
-            for job in ("retry_meta_events", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees"):
+            for job in ("retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees"):
                 try:
                     if getattr(state, job, None):
                         getattr(state, job)()
