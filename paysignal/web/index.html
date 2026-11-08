@@ -1735,6 +1735,7 @@ main{background:transparent}
     if (!r.can_publish) return h("div", { class: "result err" }, h("span", {}, "To publish this straight to your ad account, ",
       h("a", { href: "#/upload" }, "connect Facebook & Instagram"), " and pick your ad account, Page and Pixel."));
     const images = {}, cards = [], pickers = {};
+    const placeBox = h("div", { style: "display:flex;flex-direction:column;gap:6px" });
     const brand = status.admin ? "ProAds" : (status.name || "");
     let host = "";
     try { host = new URL(r.landing_url).host; } catch (e) {}
@@ -1761,6 +1762,13 @@ main{background:transparent}
         h("button", { class: "chip", type: "button", onclick: () => openMediaPicker(setMedia) }, "Choose photo or video"),
         h("label", { for: "img-" + key, class: "chip", style: "display:inline-flex;align-items:center;justify-content:center" }, "Upload my own image"), pick));
     }));
+    const igReady = !!status.instagram_ready;
+    const placeSel = h("select", { "aria-label": "Where the ads show", style: "max-width:420px" },
+      h("option", { value: "instagram", selected: igReady ? true : null, disabled: igReady ? null : true }, "Instagram only (feed, stories, reels, explore)" + (igReady ? " · recommended in the UAE" : " · connect Instagram first")),
+      h("option", { value: "instagram_facebook" , disabled: igReady ? null : true }, "Instagram and Facebook"),
+      h("option", { value: "automatic", selected: igReady ? null : true }, "Automatic: Meta decides (includes Facebook, Messenger, other apps)"));
+    placeBox.append(h("label", { class: "f" }, "Where the ads show", placeSel),
+      igReady ? null : h("p", { class: "small", style: "margin:0;color:var(--amber)" }, "No Instagram account is connected, so these ads can only show as your Facebook Page. Connect Instagram to run on Instagram."));
     api("/media/" + cid() + "/suggest", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plan: r.plan }) })
       .then((d) => Object.entries(d.suggestions || {}).forEach(([k, it]) => { if (pickers[k]) pickers[k](it); })).catch(() => {});
     const box = h("div", { style: "display:flex;flex-direction:column;gap:10px" });
@@ -1769,7 +1777,7 @@ main{background:transparent}
       btn.disabled = true; box.replaceChildren(loading("Creating the campaign, ad set and ads in Meta…"));
       try {
         const launch = await api("/campaign/" + cid() + "/publish", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ plan: r.plan, images, landing_url: landing.value.trim(), draft_id: r.draft_id }) });
+          body: JSON.stringify({ plan: r.plan, images, landing_url: landing.value.trim(), draft_id: r.draft_id, placements: placeBox.querySelector("select") ? placeBox.querySelector("select").value : "automatic" }) });
         if (typeof loadHistory === "function") loadHistory();
         btn.remove(); box.replaceChildren(launchCard(launch));
       } catch (e) {
@@ -1781,7 +1789,7 @@ main{background:transparent}
     });
     return h("div", { class: "adset", style: "gap:12px" },
       h("b", {}, "Publish to Meta"),
-      h("label", { class: "f", for: "pub-url" }, "Page the ads open", landing),
+      h("label", { class: "f", for: "pub-url" }, "Page the ads open", landing), placeBox,
       h("p", { class: "sub", style: "margin:0;font-size:13px" }, "ProAds picks the best of your own photos and videos for each ad (website, posts, uploads). Where it has none, it makes a designed image. Change any of them." + (status.admin ? "" : " Your first days of ads are a free test: no card needed.")),
       h("div", { style: "display:flex;gap:14px;flex-wrap:wrap" }, cards), btn, box);
   }

@@ -2026,6 +2026,10 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             landing = "https://" + landing
         landing = landing.replace("http://", "https://", 1) if landing.startswith("http://") else landing
         images = resolve_media(client_id, images)
+        mode = body.get("placements") or "automatic"
+        if mode not in meta_ads.PLACEMENTS:
+            abort(400, "Unknown placement choice.")
+        plan = {**plan, "placement_mode": mode}
         try:
             launch = pub.publish(plan, images, landing, ads_currency(client_id))
         except meta_ads.PublishError as e:
@@ -2555,6 +2559,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             "name": cfg.get("name", client_id),
             "self_serve": bool(cfg.get("self_serve")),
             "has_password": state.accounts.has_password(client_id) if state.accounts.get(client_id) else True,
+            "instagram_ready": bool((state.ads_settings(client_id, is_admin(client_id)) or {}).get("instagram_id")),
             "admin": is_admin(client_id),
             "currency": cfg.get("currency", "AED"),
             "website": cfg.get("website", ""),

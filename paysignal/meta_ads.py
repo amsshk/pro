@@ -71,6 +71,10 @@ def _slug(s: str, n: int = 40) -> str:
     return re.sub(r"[^a-z0-9]+", "-", (s or "").lower()).strip("-")[:n] or "ad"
 
 
+IG_POSITIONS = ("stream", "story", "reels", "explore", "explore_home", "profile_feed")
+PLACEMENTS = ("automatic", "instagram", "instagram_facebook")
+
+
 def decode_image(data: str) -> str:
     """Accept a data URL or bare base64; return clean base64 after checking it is a JPEG or PNG."""
     data = (data or "").split(",", 1)[-1].strip()
@@ -220,13 +224,22 @@ class Publisher:
         targeting = {"geo_locations": {"countries": t.get("countries") or ["AE"]},
                      "age_min": int(t.get("age_min") or 18), "age_max": 65,
                      "targeting_automation": {"advantage_audience": 1}}
+        mode = plan.get("placement_mode") or "automatic"
+        if mode in ("instagram", "instagram_facebook"):
+            if not self.s.get("instagram_id"):
+                raise PublishError("Instagram placements need your Instagram account connected to ProAds "
+                                   "(it must be a professional account linked to your Facebook Page).")
+            targeting["publisher_platforms"] = ["instagram"] + (["facebook"] if mode == "instagram_facebook" else [])
+            targeting["instagram_positions"] = list(IG_POSITIONS)
+            if mode == "instagram_facebook":
+                targeting["facebook_positions"] = ["feed", "story", "facebook_reels", "video_feeds", "marketplace"]
 
         camp = self._post(f"{self.s['ad_account']}/campaigns", {
             "name": name, "objective": objective, "status": "PAUSED", "special_ad_categories": [],
             "daily_budget": str(minor_units(budget, currency)), "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
         }, "creating the campaign")
         campaign_id = camp["id"]
-        created = {"campaign_id": campaign_id, "ad_sets": [], "ads": []}
+        created = {"campaign_id": campaign_id, "ad_sets": [], "ads": [], "placement_mode": mode}
         try:
             for i, s in enumerate(sets):
                 adset = self._post(f"{self.s['ad_account']}/adsets", {

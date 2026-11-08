@@ -212,3 +212,41 @@ def test_video_ad_waits_for_processing_and_uses_thumbnail():
     assert data["video_id"] == "v1" and data["image_hash"] == "h1" and data["title"] == "H"
     with pytest.raises(meta_ads.PublishError, match="https"):
         pub._video({"video_url": "http://glow.ae/v.mp4"}, "ad 1", {}, {})
+
+
+class MetaPub:
+    def __init__(self):
+        self.posts = []
+
+    def post(self, url, data=None, timeout=None):
+        self.posts.append((url.split("/")[-1], dict(data)))
+        if url.endswith("adimages"):
+            return Resp2({"images": {"x": {"hash": "h1"}}})
+        return Resp2({"id": "id" + str(len(self.posts))})
+
+    def get(self, url, params=None, timeout=None):
+        if url.endswith("adspixels"):
+            return Resp2({"data": [{"id": "x"}]})
+        return Resp2({"account_status": 1, "currency": "AED"})
+
+
+def _publish(mode, ig="17841"):
+    http = MetaPub()
+    pub = meta_ads.Publisher(http, {"token": "t", "ad_account": "act_1", "page_id": "p", "pixel_id": "x",
+                                    "instagram_id": ig, "version": "v25.0"})
+    plan = {"name": "Spring", "daily_budget": 100, "placement_mode": mode, "ad_sets": [{"name": "A", "ads": [{"headline": "H"}]}]}
+    img = base64.b64encode(media.to_jpeg(png(800, 800))).decode()
+    pub.publish(plan, {"0-0": img}, "https://glow.ae")
+    adset = next(d for p, d in http.posts if p == "adsets")
+    creative = next(d for p, d in http.posts if p == "adcreatives")
+    return json.loads(adset["targeting"]) if isinstance(adset["targeting"], str) else adset["targeting"], creative
+
+
+def test_instagram_only_placements():
+    t, creative = _publish("instagram")
+    assert t["publisher_platforms"] == ["instagram"] and "reels" in t["instagram_positions"]
+    assert "17841" in json.dumps(creative)
+    t, _ = _publish("automatic")
+    assert "publisher_platforms" not in t
+    with pytest.raises(meta_ads.PublishError, match="Instagram account"):
+        _publish("instagram", ig="")
