@@ -87,9 +87,14 @@ def auth_url(provider: str, redirect_uri: str, state: str, nonce: str, verifier:
             "client_id": _env("APPLE_CLIENT_ID"), "redirect_uri": redirect_uri, "response_type": "code",
             "scope": "name email", "response_mode": "form_post", "state": state, "nonce": nonce})
     if provider == "facebook":
-        return "https://www.facebook.com/v25.0/dialog/oauth?" + urlencode({
-            "client_id": _env("FACEBOOK_LOGIN_APP_ID", "META_APP_ID"), "redirect_uri": redirect_uri, "state": state,
-            "response_type": "code", "scope": "email,public_profile"})
+        q = {"client_id": _env("FACEBOOK_LOGIN_APP_ID", "META_APP_ID"), "redirect_uri": redirect_uri, "state": state,
+             "response_type": "code"}
+        # a Business-type app (Facebook Login for Business) asks via a sign-in configuration, not scopes
+        if _env("FACEBOOK_LOGIN_CONFIG_ID"):
+            q["config_id"] = _env("FACEBOOK_LOGIN_CONFIG_ID")
+        else:
+            q["scope"] = "email,public_profile"
+        return "https://www.facebook.com/v25.0/dialog/oauth?" + urlencode(q)
     raise SocialError("Unknown sign-in provider.")
 
 

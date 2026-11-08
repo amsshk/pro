@@ -155,6 +155,12 @@ def test_facebook_needs_an_email(app, env):
     assert c.get("/auth/oauth/facebook/callback", query_string={"state": q["state"][0], "code": "a"}).headers["Location"].startswith("/?finish=")
 
 
+def test_facebook_login_for_business_config(app, env, monkeypatch):
+    monkeypatch.setenv("FACEBOOK_LOGIN_CONFIG_ID", "cfg-1")
+    q = start(app.test_client(), "facebook")
+    assert q["config_id"] == ["cfg-1"] and "scope" not in q
+
+
 def test_apple_form_post_and_signed_client_secret(app, env, monkeypatch):
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import ec
