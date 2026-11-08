@@ -420,7 +420,7 @@ main{background:transparent}
     providers.forEach((p) => {
       const cfg = SOCIAL[p]; if (!cfg) return;
       const a = h("a", { class: "btn", href: "/auth/oauth/" + p + "/start?intent=" + intent, style: cfg.style + ";display:flex;gap:10px;justify-content:center;align-items:center;text-decoration:none;font-weight:600" });
-      const ic = h("span", { style: "display:inline-flex" }); ic.innerHTML = cfg.icon;
+      const ic = h("span", { style: "display:inline-flex" }); ic.append(document.importNode(new DOMParser().parseFromString(cfg.icon, "image/svg+xml").documentElement, true));
       a.append(ic, document.createTextNode(cfg.label));
       box.append(a);
     });

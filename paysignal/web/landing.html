@@ -246,7 +246,7 @@ footer{border-top:1px solid var(--soft);padding:28px 0 40px;color:var(--muted);f
     list.forEach((p) => {
       const c = SOCIAL[p]; if (!c) return;
       const a = document.createElement("a");
-      a.setAttribute("style", c[1]); a.innerHTML = c[2];
+      a.setAttribute("style", c[1]); a.append(document.importNode(new DOMParser().parseFromString(c[2], "image/svg+xml").documentElement, true));
       a.append(document.createTextNode(c[0]));
       a.href = "#"; a.addEventListener("click", (ev) => { ev.preventDefault(); location.href = socialStart(p); });
       box.append(a);
