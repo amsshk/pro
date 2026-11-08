@@ -157,10 +157,16 @@ class Publisher:
 
     def _video(self, chosen: dict, label: str, ad: dict, cta: dict) -> dict:
         """Meta downloads the video from its address; wait until it's processed, then use it with a thumbnail."""
-        if not re.match(r"^https://", chosen.get("video_url") or ""):
-            raise PublishError(f"the video for {label} must be on an https:// address")
-        vid = self._post(f"{self.s['ad_account']}/advideos", {"file_url": chosen["video_url"], "name": label[:100]},
-                         f"uploading the video for {label}")["id"]
+        if chosen.get("video_bytes"):
+            r = self.http.post(self._url(f"{self.s['ad_account']}/advideos"),
+                               data={"name": label[:100], "access_token": self.s["token"]},
+                               files={"source": ("video.mp4", chosen["video_bytes"], "video/mp4")}, timeout=600)
+            vid = self._check(r, f"uploading the video for {label}")["id"]
+        else:
+            if not re.match(r"^https://", chosen.get("video_url") or ""):
+                raise PublishError(f"the video for {label} must be on an https:// address")
+            vid = self._post(f"{self.s['ad_account']}/advideos", {"file_url": chosen["video_url"], "name": label[:100]},
+                             f"uploading the video for {label}")["id"]
         sleep = getattr(self, "sleep", time.sleep)
         for _ in range(30):
             st = self._get(vid, "status,picture", f"checking the video for {label}")
@@ -257,7 +263,7 @@ class Publisher:
                     link = tag_link(landing_url, "meta", f"{campaign_slug}-{i + 1}-{j + 1}",
                                     campaign=campaign_slug, medium="paid")
                     cta = {"type": ad.get("call_to_action") or "LEARN_MORE", "value": {"link": link}}
-                    if isinstance(chosen, dict) and chosen.get("video_url"):
+                    if isinstance(chosen, dict) and (chosen.get("video_url") or chosen.get("video_bytes")):
                         story = {"page_id": self.s["page_id"],
                                  "video_data": self._video(chosen, label, ad, cta)}
                     else:

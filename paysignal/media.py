@@ -343,13 +343,15 @@ class MediaStore:
 def rank(items: list[dict], ad_text: str) -> list[dict]:
     """Best media for one ad: words shared with a product's name first, then source and picture quality."""
     words = {w for w in re.findall(r"[a-z0-9؀-ۿ]{3,}", (ad_text or "").lower())}
-    src = {"instagram": 3, "facebook": 3, "website": 2, "enhanced": 2, "generated": 1}
+    src = {"upload": 30, "instagram": 3, "facebook": 3, "website": 2, "enhanced": 2, "generated": 1}   # what the owner uploaded wins
     qual = {"good": 3, "ok": 2, "small": 0, "tiny": -5}
 
     def score(it):
         title = {w for w in re.findall(r"[a-z0-9؀-ۿ]{3,}", (it.get("title") or "").lower())}
         match = len(words & title) * 4
         return (match + src.get(it["source"], 0) + qual.get(it.get("quality") or "", 0)
-                + (2 if it.get("origin") == "product" else 0) - (10 if not it.get("approved") else 0))
+                + (2 if it.get("origin") == "product" else 0) - (10 if not it.get("approved") else 0)
+                + (it.get("id") or 0) / max(1, newest) * 0.5)          # ties: the most recent first
+    newest = max((it.get("id") or 0 for it in items), default=0)
     usable = [it for it in items if it["kind"] in ("image", "video") and (it.get("quality") in ("good", "ok") or it["kind"] == "video")]
     return sorted(usable, key=score, reverse=True)

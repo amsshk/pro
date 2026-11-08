@@ -476,6 +476,12 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     state = App(clients, db_path)
     flask = Flask(__name__)
     flask.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
+    VIDEO_MAX = 120 * 1024 * 1024
+
+    @flask.before_request
+    def _bigger_uploads_for_video():
+        if request.path.endswith("/upload-video"):
+            request.max_content_length = VIDEO_MAX + 1024
     flask.extensions["paysignal"] = state
     _clear_admin_example_data(state)
 
@@ -1826,6 +1832,31 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         with state.lock:
             return media_view(state.media.get(client_id, iid))
 
+    @flask.post("/media/<client_id>/upload-video")
+    def media_upload_video(client_id):
+        """A video file (MP4 or MOV) for video ads. Sent straight to Meta when an ad uses it."""
+        state.require_key(client_id)
+        raw = request.get_data()
+        if len(raw) > VIDEO_MAX:
+            abort(400, "That video is larger than 120 MB. Export it smaller (1080p is plenty for Instagram).")
+        if raw[4:8] != b"ftyp":
+            abort(400, "That isn't an MP4 or MOV video. Export it as MP4 and try again.")
+        with state.lock:
+            iid = state.media.add(client_id, {"source": "upload", "origin": "your upload", "kind": "video", "quality": "video",
+                                              "url": f"upload-video:{secrets.token_hex(8)}",
+                                              "title": request.args.get("title", "")[:120]}, raw)
+            return media_view(state.media.get(client_id, iid))
+
+    @flask.get("/media/<client_id>/<int:item_id>/video")
+    def media_video(client_id, item_id):
+        state.require_key(client_id)
+        with state.lock:
+            it, blob = state.media.get(client_id, item_id), state.media.blob(client_id, item_id)
+        if not it or it["kind"] != "video" or not blob:
+            abort(404, "No video stored for this item.")
+        from flask import Response
+        return Response(blob, mimetype="video/mp4", headers={"Cache-Control": "private, max-age=86400"})
+
     @flask.post("/media/<client_id>/<int:item_id>/enhance")
     def media_enhance(client_id, item_id):
         """Bigger and sharper with ordinary image processing. Nothing is invented, so no approval is needed."""
@@ -1994,6 +2025,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                     abort(400, "A chosen picture no longer exists. Pick another.")
                 if not it["approved"]:
                     abort(400, "An AI-generated picture hasn't been confirmed as accurate yet. Confirm it or pick another.")
+                if it["kind"] == "video" and blob:                 # an uploaded file: Meta gets the bytes directly
+                    out[k] = {"video_bytes": blob, "name": it.get("title") or "video"}
+                    continue
                 if it["kind"] == "video":
                     thumb = None
                     if it.get("poster"):

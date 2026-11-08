@@ -251,3 +251,47 @@ def test_instagram_only_placements():
     assert "publisher_platforms" not in t
     with pytest.raises(meta_ads.PublishError, match="Instagram account"):
         _publish("instagram", ig="")
+
+
+def test_upload_video_and_publish_sends_bytes(client):
+    state, c, H = client
+    mp4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 2000
+    assert c.post("/media/glow-clinic/upload-video", headers=H, data=b"not a video at all").status_code == 400
+    v = c.post("/media/glow-clinic/upload-video?title=Reel", headers=H, data=mp4).json
+    assert v["kind"] == "video" and v["source"] == "upload" and v["title"] == "Reel"
+    assert c.get(f"/media/glow-clinic/{v['id']}/video", headers=H).data == mp4
+    # bigger than the normal 10 MB limit is fine for videos
+    big = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * (11 * 1024 * 1024)
+    assert c.post("/media/glow-clinic/upload-video", headers=H, data=big).status_code == 200
+    # what the owner uploaded is suggested first
+    plan = {"ad_sets": [{"ads": [{"headline": "Glow"}]}]}
+    assert c.post("/media/glow-clinic/suggest", headers=H, json={"plan": plan}).json["suggestions"]["0-0"]["source"] == "upload"
+    from paysignal.server import create_app  # noqa: F401
+    import paysignal.meta_ads as ma
+    got = {}
+    state.ads_settings = lambda cid, admin: {"token": "t", "ad_account": "act_1", "page_id": "p", "pixel_id": "x",
+                                             "instagram_id": "", "version": "v25.0"}
+    orig = ma.Publisher.publish
+    ma.Publisher.publish = lambda self, plan, images, landing, currency="": got.update(images) or {"campaign_id": "c1", "status": "PAUSED"}
+    try:
+        r = c.post("/campaign/glow-clinic/publish", headers=H, json={"plan": plan, "landing_url": "https://glow.ae",
+                                                                     "images": {"0-0": f"media:{v['id']}"}})
+        assert r.status_code == 200 and got["0-0"]["video_bytes"] == mp4
+    finally:
+        ma.Publisher.publish = orig
+
+
+class MetaUpload(MetaVideo):
+    def post(self, url, data=None, timeout=None, files=None):
+        self.posts.append((url.split("/")[-1], dict(data), files))
+        return Resp2({"id": "v9"} if url.endswith("advideos") else {"images": {"x": {"hash": "h1"}}})
+
+
+def test_uploaded_video_bytes_go_to_meta_as_a_file():
+    http = MetaUpload()
+    pub = meta_ads.Publisher(http, {"token": "t", "ad_account": "act_1", "page_id": "p", "pixel_id": "x",
+                                    "instagram_id": "", "version": "v25.0"})
+    pub.sleep = lambda s: None
+    data = pub._video({"video_bytes": b"VIDEO"}, "ad 1", {"headline": "H"}, {"type": "LEARN_MORE"})
+    assert data["video_id"] == "v9" and data["image_url"] == "https://x/p.jpg"
+    assert http.posts[0][2]["source"][1] == b"VIDEO"

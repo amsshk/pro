@@ -1652,12 +1652,27 @@ main{background:transparent}
   }
   function mediaThumb(it, style) {
     if (it.kind === "video") {
-      const v = h("video", { src: it.url, poster: it.poster || null, muted: true, playsinline: true, preload: "metadata", style: style + ";background:#111" });
-      v.muted = true; return v;
+      const uploaded = it.source === "upload";
+      const v = h("video", { src: uploaded ? null : it.url, poster: it.poster || null, muted: true, playsinline: true, preload: "metadata", style: style + ";background:#111" });
+      v.muted = true;
+      if (uploaded) {
+        const key = "v" + it.id;
+        (mediaUrls[key] ? Promise.resolve(mediaUrls[key]) : fetch("/media/" + cid() + "/" + it.id + "/video", { headers: { "X-API-Key": session.key } })
+          .then((r) => r.ok ? r.blob() : Promise.reject()).then((b) => (mediaUrls[key] = URL.createObjectURL(b))))
+          .then((u) => { v.src = u + "#t=0.5"; }).catch(() => {});
+      }
+      return v;
     }
     const img = h("img", { alt: it.title || "Photo", style: style + ";object-fit:cover;background:var(--soft)" });
     mediaSrc(it.id).then((u) => { img.src = u; }).catch(() => {});
     return img;
+  }
+  async function uploadMedia(file) {
+    const isVideo = /^video\//.test(file.type) || /\.(mp4|mov|m4v)$/i.test(file.name);
+    const title = encodeURIComponent(file.name.replace(/\.[a-z0-9]+$/i, ""));
+    if (isVideo && file.size > 120 * 1024 * 1024) throw new Error(file.name + " is larger than 120 MB.");
+    if (!isVideo && file.size > 10 * 1024 * 1024) throw new Error(file.name + " is larger than 10 MB.");
+    return api("/media/" + cid() + (isVideo ? "/upload-video" : "/upload") + "?title=" + title, { method: "POST", body: file });
   }
   const SRC_NAME = { website: "Your website", facebook: "Facebook post", instagram: "Instagram post", upload: "Your upload", enhanced: "Enhanced", generated: "AI-generated" };
   function openMediaPicker(onPick) {
@@ -1712,15 +1727,19 @@ main{background:transparent}
       social.disabled = true; msg.textContent = "Reading your Facebook and Instagram posts…";
       try { const r = await post("/media/" + cid() + "/social"); msg.textContent = "Added " + r.added + " from your posts." + (r.problems && r.problems.length ? " " + r.problems.join(" ") : ""); draw(); }
       catch (e) { msg.textContent = e.message; } social.disabled = false; } }, "From my Facebook & Instagram posts");
-    const up = h("input", { type: "file", accept: "image/jpeg,image/png,image/webp", class: "sr", id: "media-up" });
+    const up = h("input", { type: "file", multiple: true, accept: "image/jpeg,image/png,image/webp,video/mp4,video/quicktime", class: "sr", id: "media-up" });
     up.addEventListener("change", async () => {
-      const f = up.files[0]; if (!f) return; msg.textContent = "Uploading…";
-      try { await api("/media/" + cid() + "/upload?title=" + encodeURIComponent(f.name.replace(/\.[a-z]+$/i, "")), { method: "POST", body: f }); msg.textContent = ""; draw(); } catch (e) { msg.textContent = e.message; }
+      const files = [...up.files]; if (!files.length) return;
+      for (const [i, f] of files.entries()) {
+        msg.textContent = "Uploading " + (i + 1) + " of " + files.length + "…";
+        try { await uploadMedia(f); } catch (e) { msg.textContent = e.message; return; }
+      }
+      msg.textContent = ""; up.value = ""; draw();
     });
     const panel = h("div", { class: "card", role: "dialog", "aria-modal": "true", "aria-label": "Choose a photo or video",
       style: "max-width:980px;width:100%;max-height:88vh;overflow:auto;display:flex;flex-direction:column;gap:12px" },
       h("div", { class: "between" }, h("h2", {}, "Choose a photo or video"), h("button", { class: "btn btn-ghost", type: "button", onclick: close, "aria-label": "Close" }, "Close")),
-      h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, scan, social, h("label", { for: "media-up", class: "btn btn-ghost" }, "Upload a photo"), up),
+      h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, scan, social, h("label", { for: "media-up", class: "btn btn-ghost" }, "Upload photos or videos"), up),
       msg,
       h("p", { class: "small", style: "margin:0" }, "Enhance makes a small photo bigger and sharper without changing it. Make similar (AI) creates a new picture that looks like yours: compare it with the original and confirm it's accurate before it can be used."),
       grid);
@@ -1736,6 +1755,7 @@ main{background:transparent}
       h("a", { href: "#/upload" }, "connect Facebook & Instagram"), " and pick your ad account, Page and Pixel."));
     const images = {}, cards = [], pickers = {};
     const placeBox = h("div", { style: "display:flex;flex-direction:column;gap:6px" });
+    const mediaBar = h("div", { class: "adset", style: "gap:8px" }, h("b", { style: "font-size:15px" }, "Your photos and videos"));
     const brand = status.admin ? "ProAds" : (status.name || "");
     let host = "";
     try { host = new URL(r.landing_url).host; } catch (e) {}
@@ -1769,8 +1789,23 @@ main{background:transparent}
       h("option", { value: "automatic", selected: igReady ? null : true }, "Automatic: Meta decides (includes Facebook, Messenger, other apps)"));
     placeBox.append(h("label", { class: "f" }, "Where the ads show", placeSel),
       igReady ? null : h("p", { class: "small", style: "margin:0;color:var(--amber)" }, "No Instagram account is connected, so these ads can only show as your Facebook Page. Connect Instagram to run on Instagram."));
-    api("/media/" + cid() + "/suggest", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plan: r.plan }) })
+    const suggest = () => api("/media/" + cid() + "/suggest", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plan: r.plan }) })
       .then((d) => Object.entries(d.suggestions || {}).forEach(([k, it]) => { if (pickers[k]) pickers[k](it); })).catch(() => {});
+    suggest();
+    const upMsg = h("span", { class: "small", "aria-live": "polite" });
+    const bulk = h("input", { type: "file", multiple: true, accept: "image/jpeg,image/png,image/webp,video/mp4,video/quicktime", class: "sr", id: "bulk-up" });
+    bulk.addEventListener("change", async () => {
+      const files = [...bulk.files]; if (!files.length) return;
+      for (const [i, f] of files.entries()) {
+        upMsg.textContent = "Uploading " + (i + 1) + " of " + files.length + (/^video/.test(f.type) ? " (videos take a moment)" : "") + "…";
+        try { await uploadMedia(f); } catch (e) { upMsg.textContent = e.message; bulk.value = ""; return; }
+      }
+      bulk.value = ""; upMsg.textContent = "Uploaded. Your photos and videos are now on the ads; change any with Choose."; suggest();
+    });
+    mediaBar.append(h("div", { style: "display:flex;gap:10px;flex-wrap:wrap;align-items:center" },
+      h("label", { for: "bulk-up", class: "btn btn-primary" }, "Upload photos or videos"), bulk,
+      h("button", { class: "btn btn-ghost", type: "button", onclick: () => openMediaPicker((it) => { const k = Object.keys(pickers)[0]; if (k) pickers[k](it); }) }, "Find on my website or posts")),
+      h("span", { class: "small" }, "Photos (JPG, PNG) up to 10 MB · videos (MP4, MOV) up to 120 MB. Vertical 9:16 videos work best for Reels and Stories."), upMsg);
     const box = h("div", { style: "display:flex;flex-direction:column;gap:10px" });
     const btn = h("button", { class: "btn btn-primary", type: "button" }, "Create in Meta Ads Manager (paused)");
     btn.addEventListener("click", async () => {
@@ -1789,7 +1824,7 @@ main{background:transparent}
     });
     return h("div", { class: "adset", style: "gap:12px" },
       h("b", {}, "Publish to Meta"),
-      h("label", { class: "f", for: "pub-url" }, "Page the ads open", landing), placeBox,
+      h("label", { class: "f", for: "pub-url" }, "Page the ads open", landing), placeBox, mediaBar,
       h("p", { class: "sub", style: "margin:0;font-size:13px" }, "ProAds picks the best of your own photos and videos for each ad (website, posts, uploads). Where it has none, it makes a designed image. Change any of them." + (status.admin ? "" : " Your first days of ads are a free test: no card needed.")),
       h("div", { style: "display:flex;gap:14px;flex-wrap:wrap" }, cards), btn, box);
   }
