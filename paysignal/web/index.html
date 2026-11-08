@@ -1474,7 +1474,7 @@ main{background:transparent}
       build.disabled = false;
     } },
       h("div", { class: "grid2" }, h("label", { class: "f", for: "budget" }, "Daily budget (" + adsCurrency() + ")", budget), h("label", { class: "f", for: "goal" }, "Goal", goal)),
-      h("label", { class: "f", for: "notes" }, "Notes", notes), build);
+      h("label", { class: "f", for: "notes" }, "Notes", notes), mediaBox(), build);
 
     const hist = h("div", { class: "scroll" }, loading());
     const when = (x) => x ? new Date(x.replace(" ", "T") + "Z").toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
@@ -1746,6 +1746,38 @@ main{background:transparent}
     const overlay = h("div", { style: "position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:16px;z-index:50", onclick: (e) => { if (e.target === overlay) close(); } }, panel);
     document.body.append(overlay); document.addEventListener("keydown", esc);
     draw();
+  }
+
+  // photos and videos BEFORE building: uploaded here, used on the ads automatically
+  function mediaBox() {
+    const strip = h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" });
+    const note = h("span", { class: "small", "aria-live": "polite" });
+    async function refresh() {
+      try {
+        const items = (await api("/media/" + cid())).items.filter((x) => x.usable && !x.needs_approval);
+        const mine = items.filter((x) => x.source === "upload");
+        strip.replaceChildren(...mine.slice(-8).reverse().map((it) => mediaThumb(it, "width:72px;height:72px;border-radius:10px;border:1px solid var(--line)")));
+        note.textContent = mine.length ? mine.length + " of your photos and videos will be used on the ads first." :
+          items.length ? items.length + " photos from your website and posts are ready." : "Optional. Without them, ProAds uses photos from your website or makes a designed image.";
+      } catch (e) { if (e.message !== "signed out") note.textContent = e.message; }
+    }
+    const inp = h("input", { type: "file", multiple: true, accept: "image/jpeg,image/png,image/webp,video/mp4,video/quicktime", class: "sr", id: "pre-up" });
+    inp.addEventListener("change", async () => {
+      const files = [...inp.files]; if (!files.length) return;
+      for (const [i, f] of files.entries()) {
+        note.textContent = "Uploading " + (i + 1) + " of " + files.length + (/^video/.test(f.type) ? " (videos take a moment)" : "") + "…";
+        try { await uploadMedia(f); } catch (e) { note.textContent = e.message; inp.value = ""; return; }
+      }
+      inp.value = ""; refresh();
+    });
+    refresh();
+    return h("div", { class: "adset", style: "gap:10px" },
+      h("b", { style: "font-size:15px" }, "Your photos and videos for the ads"),
+      h("div", { style: "display:flex;gap:10px;flex-wrap:wrap;align-items:center" },
+        h("label", { for: "pre-up", class: "btn btn-primary" }, "Upload photos or videos"), inp,
+        h("button", { class: "btn btn-ghost", type: "button", onclick: () => openMediaPicker(() => {}) }, "See all / find on my website")),
+      strip, note,
+      h("span", { class: "small" }, "Photos (JPG, PNG) up to 10 MB · videos (MP4, MOV) up to 120 MB · vertical 9:16 videos work best for Reels and Stories."));
   }
 
   // ---------- publish to Meta ----------
