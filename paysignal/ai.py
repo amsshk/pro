@@ -82,7 +82,7 @@ class MetaAI:
 
     @property
     def available(self) -> bool:
-        return bool(self.api_key)
+        return bool(self.api_key) or bool(self.fallback_config())
 
     def models_for(self, task: str) -> tuple[list[str], str]:
         if task not in self.routes:
@@ -100,11 +100,49 @@ class MetaAI:
             self.session = requests.Session()
         return self.session
 
+    # ---------- backup AI: used when Meta's AI is blocked (billing, outage) or not set up ----------
+    @staticmethod
+    def fallback_config() -> Optional[dict]:
+        """Any OpenAI-compatible service: PAYSIGNAL_FALLBACK_URL (base URL ending in /v1 or similar),
+        PAYSIGNAL_FALLBACK_KEY and PAYSIGNAL_FALLBACK_MODEL."""
+        url, key, model = (os.environ.get(k, "").strip() for k in
+                           ("PAYSIGNAL_FALLBACK_URL", "PAYSIGNAL_FALLBACK_KEY", "PAYSIGNAL_FALLBACK_MODEL"))
+        return {"url": url.rstrip("/"), "key": key, "model": model} if url and key and model else None
+
+    def _fallback_chat(self, messages: list[dict], max_completion_tokens: int, why: str) -> Reply:
+        cfg = self.fallback_config()
+        log.warning("Meta AI unavailable (%s); using the backup AI %s", why[:200], cfg["model"])
+        r = self._http().post(cfg["url"] + "/chat/completions", timeout=180, json={
+            "model": cfg["model"], "messages": messages, "max_tokens": min(max_completion_tokens, 16000)},
+            headers={"Authorization": f"Bearer {cfg['key']}", "Content-Type": "application/json"})
+        if r.status_code >= 400:
+            raise RuntimeError(f"Meta AI unavailable ({why[:160]}) and the backup AI failed too: HTTP {r.status_code} {_reason(r)}")
+        data = r.json()
+        text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+        if isinstance(text, list):                    # some services return content parts
+            text = "".join(p.get("text", "") for p in text if isinstance(p, dict))
+        usage = data.get("usage") or {}
+        self.last_backup = True
+        return Reply(text, "backup:" + cfg["model"], int(usage.get("prompt_tokens", 0) or 0),
+                     int(usage.get("completion_tokens", 0) or 0), 0.0)
+
     def chat(self, task: str, messages: list[dict], max_completion_tokens: int = 8192,
              reasoning_effort: Optional[str] = None, **extra) -> Reply:
-        """Send a chat request for a task. Tries each model in the task's chain."""
+        """Send a chat request for a task: Meta's models first, then the backup AI if Meta's are blocked or down."""
         if not self.available:
             raise RuntimeError("MODEL_API_KEY is not set")
+        self.last_backup = False
+        if not self.api_key:
+            return self._fallback_chat(messages, max_completion_tokens, "MODEL_API_KEY is not set")
+        try:
+            return self._meta_chat(task, messages, max_completion_tokens, reasoning_effort, **extra)
+        except (PermissionError, RuntimeError) as e:
+            if self.fallback_config():
+                return self._fallback_chat(messages, max_completion_tokens, str(e))
+            raise
+
+    def _meta_chat(self, task: str, messages: list[dict], max_completion_tokens: int = 8192,
+                   reasoning_effort: Optional[str] = None, **extra) -> Reply:
         models, effort = self.models_for(task)
         errors: list[str] = []
         for model in models:
