@@ -118,21 +118,35 @@ class MetaAI:
         effort = reasoning_effort or DEFAULT_ROUTES.get(task, DEFAULT_ROUTES["chat"])[1]
         model = cfg["cheap"] if effort == "low" else cfg["model"]
         log.warning("Meta AI unavailable (%s); using the backup AI %s", why[:200], model)
-        body = {"model": model, "messages": messages, "max_tokens": min(max_completion_tokens, 32000),
+        # "developer" is Meta/OpenAI's name for the instructions; most other services only know "system"
+        msgs = [{**m, "role": "system"} if m.get("role") == "developer" else m for m in messages]
+        body = {"model": model, "messages": msgs, "max_tokens": min(max_completion_tokens, 32000),
                 "reasoning_effort": effort}
         headers = {"Authorization": f"Bearer {cfg['key']}", "Content-Type": "application/json"}
-        r = self._http().post(cfg["url"] + "/chat/completions", timeout=240, json=body, headers=headers)
+        fail = f"The backup AI ({model}) failed"
+        help_ = "Check PAYSIGNAL_FALLBACK_URL, _KEY and _MODEL in Render. (Meta's AI is also unavailable.)"
+
+        def send():
+            try:
+                return self._http().post(cfg["url"] + "/chat/completions", timeout=240, json=body, headers=headers)
+            except Exception as e:                    # bad URL, network, timeout: never a bare server error
+                raise RuntimeError(f"{fail}: couldn't reach {cfg['url']} ({type(e).__name__}). {help_}") from e
+        r = send()
         if r.status_code == 400 and "reasoning" in (r.text or "").lower():
             body.pop("reasoning_effort")              # model can't take a thinking setting: ask plainly
-            r = self._http().post(cfg["url"] + "/chat/completions", timeout=240, json=body, headers=headers)
+            r = send()
         if r.status_code == 400 and "max_tokens" in (r.text or ""):
             body["max_completion_tokens"] = body.pop("max_tokens")
-            r = self._http().post(cfg["url"] + "/chat/completions", timeout=240, json=body, headers=headers)
+            r = send()
         if r.status_code >= 400:
-            raise RuntimeError(f"The backup AI ({model}) failed: HTTP {r.status_code} {_reason(r)[:300]}. "
-                               "Check PAYSIGNAL_FALLBACK_URL, _KEY and _MODEL in Render. (Meta's AI is also unavailable.)")
-        data = r.json()
-        text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+            raise RuntimeError(f"{fail}: HTTP {r.status_code} {_reason(r)[:300]}. {help_}")
+        try:
+            data = r.json()
+            if isinstance(data, list):
+                data = data[0]
+            text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+        except Exception as e:
+            raise RuntimeError(f"{fail}: unreadable reply ({(r.text or '')[:200]}). {help_}") from e
         if isinstance(text, list):                    # some services return content parts
             text = "".join(p.get("text", "") for p in text if isinstance(p, dict))
         usage = data.get("usage") or {}

@@ -4046,6 +4046,15 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     def err(e):
         return jsonify({"error": e.description}), e.code
 
+    @flask.errorhandler(Exception)
+    def unexpected(e):
+        from werkzeug.exceptions import HTTPException
+        if isinstance(e, HTTPException):
+            return jsonify({"error": e.description}), e.code
+        ref = secrets.token_hex(3)
+        log.exception("unexpected error %s on %s", ref, request.path)
+        return jsonify({"error": f"Something broke on our side ({type(e).__name__}: {str(e)[:160]}). Ref {ref}"}), 500
+
     if start_worker if start_worker is not None else os.environ.get("PAYSIGNAL_WORKER", "1") == "1":
         state.instant_meta = True
         _start_worker(state, int(os.environ.get("PAYSIGNAL_SYNC_SECONDS", "600")))

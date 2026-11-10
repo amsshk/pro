@@ -87,3 +87,20 @@ def test_retries_without_reasoning_when_model_refuses_it(monkeypatch):
         return orig(url, timeout=timeout, json=json, headers=headers)
     http.post = post
     assert m.chat("chat", [{"role": "user", "content": "hi"}]).text == "from backup"
+
+
+def test_developer_role_sent_as_system_and_network_errors_are_clear(monkeypatch):
+    m, http = setup(monkeypatch, 402)
+    m.chat("campaign_builder", [{"role": "developer", "content": "rules"}, {"role": "user", "content": "x"}])
+    assert http.calls[-1][1]["messages"][0]["role"] == "system"
+    orig = http.post
+    def post(url, **kw):
+        if "backup.example" in url:
+            raise ConnectionError("dns")
+        return orig(url, **kw)
+    http.post = post
+    try:
+        m.chat("chat", [{"role": "user", "content": "hi"}])
+        assert False
+    except RuntimeError as e:
+        assert "couldn't reach" in str(e)
