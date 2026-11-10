@@ -129,7 +129,8 @@ class MetaAI:
             body["max_completion_tokens"] = body.pop("max_tokens")
             r = self._http().post(cfg["url"] + "/chat/completions", timeout=240, json=body, headers=headers)
         if r.status_code >= 400:
-            raise RuntimeError(f"Meta AI unavailable ({why[:160]}) and the backup AI failed too: HTTP {r.status_code} {_reason(r)}")
+            raise RuntimeError(f"The backup AI ({model}) failed: HTTP {r.status_code} {_reason(r)[:300]}. "
+                               "Check PAYSIGNAL_FALLBACK_URL, _KEY and _MODEL in Render. (Meta's AI is also unavailable.)")
         data = r.json()
         text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
         if isinstance(text, list):                    # some services return content parts
@@ -244,6 +245,8 @@ def _reason(r) -> str:
     """Meta's own error message, shortened. Never contains our key."""
     try:
         body = r.json()
+        if isinstance(body, list) and body:
+            body = body[0]
         err = body.get("error", body) if isinstance(body, dict) else body
         msg = err.get("message") if isinstance(err, dict) else None
         return str(msg or err)[:300]

@@ -1442,7 +1442,7 @@ main{background:transparent}
         chatHistory.push({ role: "user", content: text }, { role: "assistant", content: r.answer || "", meta });
       } catch (e) {
         if (e.message === "signed out") return;
-        wait.replaceWith(h("div", { class: "msg err", role: "alert" }, /billing/i.test(e.message) ? "Meta AI is blocked by a billing problem on your Meta Model API account. Fix it at dev.meta.ai, then try again." : e.message));
+        wait.replaceWith(h("div", { class: "msg err", role: "alert" }, /billing/i.test(e.message) && !/backup AI/i.test(e.message) ? "Meta AI is blocked by a billing problem, and ProAds can't see a backup AI. Fix billing at dev.meta.ai, or add PAYSIGNAL_FALLBACK_URL, PAYSIGNAL_FALLBACK_KEY and PAYSIGNAL_FALLBACK_MODEL in Render." : e.message));
       }
       send.disabled = false; chat.scrollTop = chat.scrollHeight; q.focus();
     }
@@ -1469,7 +1469,7 @@ main{background:transparent}
         out.replaceChildren(renderPlan(r));
         loadHistory();
       } catch (err) {
-        if (err.message !== "signed out") out.replaceChildren(errorCard(/billing/i.test(err.message) ? "Meta AI is blocked by a billing problem on your Meta Model API account. Fix it at dev.meta.ai, then try again." : err.message));
+        if (err.message !== "signed out") out.replaceChildren(errorCard(/billing/i.test(err.message) && !/backup AI/i.test(err.message) ? "Meta AI is blocked by a billing problem, and ProAds can't see a backup AI. Fix billing at dev.meta.ai, or add PAYSIGNAL_FALLBACK_URL, PAYSIGNAL_FALLBACK_KEY and PAYSIGNAL_FALLBACK_MODEL in Render." : err.message));
       }
       build.disabled = false;
     } },
