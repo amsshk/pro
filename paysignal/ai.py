@@ -107,14 +107,27 @@ class MetaAI:
         PAYSIGNAL_FALLBACK_KEY and PAYSIGNAL_FALLBACK_MODEL."""
         url, key, model = (os.environ.get(k, "").strip() for k in
                            ("PAYSIGNAL_FALLBACK_URL", "PAYSIGNAL_FALLBACK_KEY", "PAYSIGNAL_FALLBACK_MODEL"))
-        return {"url": url.rstrip("/"), "key": key, "model": model} if url and key and model else None
+        cheap = os.environ.get("PAYSIGNAL_FALLBACK_CHEAP_MODEL", "").strip() or model
+        return {"url": url.rstrip("/"), "key": key, "model": model, "cheap": cheap} if url and key and model else None
 
-    def _fallback_chat(self, messages: list[dict], max_completion_tokens: int, why: str) -> Reply:
+    def _fallback_chat(self, messages: list[dict], max_completion_tokens: int, why: str,
+                       task: str = "chat", reasoning_effort: Optional[str] = None) -> Reply:
+        """Same instructions and data as Meta's models get, so the backup knows ProAds' job. Planning and
+        explaining use the smart model and think as hard as Muse Wonder would; labelling uses the cheap one."""
         cfg = self.fallback_config()
-        log.warning("Meta AI unavailable (%s); using the backup AI %s", why[:200], cfg["model"])
-        r = self._http().post(cfg["url"] + "/chat/completions", timeout=180, json={
-            "model": cfg["model"], "messages": messages, "max_tokens": min(max_completion_tokens, 16000)},
-            headers={"Authorization": f"Bearer {cfg['key']}", "Content-Type": "application/json"})
+        effort = reasoning_effort or DEFAULT_ROUTES.get(task, DEFAULT_ROUTES["chat"])[1]
+        model = cfg["cheap"] if effort == "low" else cfg["model"]
+        log.warning("Meta AI unavailable (%s); using the backup AI %s", why[:200], model)
+        body = {"model": model, "messages": messages, "max_tokens": min(max_completion_tokens, 32000),
+                "reasoning_effort": effort}
+        headers = {"Authorization": f"Bearer {cfg['key']}", "Content-Type": "application/json"}
+        r = self._http().post(cfg["url"] + "/chat/completions", timeout=240, json=body, headers=headers)
+        if r.status_code == 400 and "reasoning" in (r.text or "").lower():
+            body.pop("reasoning_effort")              # model can't take a thinking setting: ask plainly
+            r = self._http().post(cfg["url"] + "/chat/completions", timeout=240, json=body, headers=headers)
+        if r.status_code == 400 and "max_tokens" in (r.text or ""):
+            body["max_completion_tokens"] = body.pop("max_tokens")
+            r = self._http().post(cfg["url"] + "/chat/completions", timeout=240, json=body, headers=headers)
         if r.status_code >= 400:
             raise RuntimeError(f"Meta AI unavailable ({why[:160]}) and the backup AI failed too: HTTP {r.status_code} {_reason(r)}")
         data = r.json()
@@ -123,7 +136,7 @@ class MetaAI:
             text = "".join(p.get("text", "") for p in text if isinstance(p, dict))
         usage = data.get("usage") or {}
         self.last_backup = True
-        return Reply(text, "backup:" + cfg["model"], int(usage.get("prompt_tokens", 0) or 0),
+        return Reply(text, "backup:" + model, int(usage.get("prompt_tokens", 0) or 0),
                      int(usage.get("completion_tokens", 0) or 0), 0.0)
 
     def chat(self, task: str, messages: list[dict], max_completion_tokens: int = 8192,
@@ -133,12 +146,12 @@ class MetaAI:
             raise RuntimeError("MODEL_API_KEY is not set")
         self.last_backup = False
         if not self.api_key:
-            return self._fallback_chat(messages, max_completion_tokens, "MODEL_API_KEY is not set")
+            return self._fallback_chat(messages, max_completion_tokens, "MODEL_API_KEY is not set", task, reasoning_effort)
         try:
             return self._meta_chat(task, messages, max_completion_tokens, reasoning_effort, **extra)
         except (PermissionError, RuntimeError) as e:
             if self.fallback_config():
-                return self._fallback_chat(messages, max_completion_tokens, str(e))
+                return self._fallback_chat(messages, max_completion_tokens, str(e), task, reasoning_effort)
             raise
 
     def _meta_chat(self, task: str, messages: list[dict], max_completion_tokens: int = 8192,
