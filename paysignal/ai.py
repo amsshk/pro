@@ -55,6 +55,11 @@ CONTRIBUTOR_OK_TASKS = {"labelling"}
 
 
 BUSY_WAITS = (2, 6)                    # seconds to wait before re-asking a busy backup model
+BACKUP_TIMEOUT = 120                   # an overloaded model can hang; move on to the next one
+
+
+class _Busy(Exception):
+    pass
 
 
 @dataclass
@@ -137,21 +142,27 @@ class MetaAI:
 
             def send():
                 try:
-                    return self._http().post(cfg["url"] + "/chat/completions", timeout=240, json=body, headers=headers)
+                    return self._http().post(cfg["url"] + "/chat/completions", timeout=BACKUP_TIMEOUT,
+                                             json=body, headers=headers)
                 except Exception as e:                # bad URL, network, timeout: never a bare server error
+                    if "Timeout" in type(e).__name__:
+                        raise _Busy(f"{model}: no answer within {BACKUP_TIMEOUT}s") from e
                     raise RuntimeError(f"{fail}: couldn't reach {cfg['url']} ({type(e).__name__}). {help_}") from e
-            r = send()
-            for wait in BUSY_WAITS:                   # busy or rate-limited: wait briefly and ask again
-                if r.status_code not in (429, 500, 502, 503, 504):
-                    break
-                time.sleep(wait)
-                r = send()
-            if r.status_code == 400 and "reasoning" in (r.text or "").lower():
-                body.pop("reasoning_effort")          # model can't take a thinking setting: ask plainly
-                r = send()
-            if r.status_code == 400 and "max_tokens" in (r.text or ""):
-                body["max_completion_tokens"] = body.pop("max_tokens")
-                r = send()
+            try:
+                r = self._send_with_waits(send)
+            except _Busy as b:                        # too slow (overloaded): try the next backup model
+                busy.append(str(b))
+                continue
+            try:
+                if r.status_code == 400 and "reasoning" in (r.text or "").lower():
+                    body.pop("reasoning_effort")      # model can't take a thinking setting: ask plainly
+                    r = self._send_with_waits(send)
+                if r.status_code == 400 and "max_tokens" in (r.text or ""):
+                    body["max_completion_tokens"] = body.pop("max_tokens")
+                    r = self._send_with_waits(send)
+            except _Busy as b:
+                busy.append(str(b))
+                continue
             if r.status_code in (429, 500, 502, 503, 504):
                 busy.append(f"{model}: {_reason(r)[:120]}")
                 continue                              # try the next backup model
@@ -174,6 +185,16 @@ class MetaAI:
         self.last_backup = True
         return Reply(text, "backup:" + model, int(usage.get("prompt_tokens", 0) or 0),
                      int(usage.get("completion_tokens", 0) or 0), 0.0)
+
+    @staticmethod
+    def _send_with_waits(send):
+        r = send()
+        for wait in BUSY_WAITS:                       # busy or rate-limited: wait briefly and ask again
+            if r.status_code not in (429, 500, 502, 503, 504):
+                break
+            time.sleep(wait)
+            r = send()
+        return r
 
     def chat(self, task: str, messages: list[dict], max_completion_tokens: int = 8192,
              reasoning_effort: Optional[str] = None, **extra) -> Reply:

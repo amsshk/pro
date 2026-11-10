@@ -134,3 +134,23 @@ def test_all_busy_says_try_later(monkeypatch):
         m.chat("chat", [{"role": "user", "content": "hi"}]); assert False
     except RuntimeError as e:
         assert "busy right now" in str(e) and "settings are fine" in str(e)
+
+
+def test_timeout_moves_to_next_model(monkeypatch):
+    monkeypatch.setattr(ai, "BUSY_WAITS", ())
+    monkeypatch.setenv("PAYSIGNAL_FALLBACK_URL", "https://backup.example/v1")
+    monkeypatch.setenv("PAYSIGNAL_FALLBACK_KEY", "bk")
+    monkeypatch.setenv("PAYSIGNAL_FALLBACK_MODEL", "flash,lite")
+    http = Http(402)
+    orig = http.post
+
+    class ReadTimeout(Exception):
+        pass
+
+    def post(url, timeout=None, json=None, headers=None):
+        if "backup.example" in url and json["model"] == "flash":
+            raise ReadTimeout()
+        return orig(url, timeout=timeout, json=json, headers=headers)
+    http.post = post
+    r = ai.MetaAI(api_key="k", session=http).chat("campaign_builder", [{"role": "user", "content": "x"}])
+    assert r.model == "backup:lite"
