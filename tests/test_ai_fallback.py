@@ -104,3 +104,33 @@ def test_developer_role_sent_as_system_and_network_errors_are_clear(monkeypatch)
         assert False
     except RuntimeError as e:
         assert "couldn't reach" in str(e)
+
+
+def test_busy_model_waits_then_moves_to_next(monkeypatch):
+    monkeypatch.setattr(ai, "BUSY_WAITS", (0,))
+    monkeypatch.setenv("PAYSIGNAL_FALLBACK_URL", "https://backup.example/v1")
+    monkeypatch.setenv("PAYSIGNAL_FALLBACK_KEY", "bk")
+    monkeypatch.setenv("PAYSIGNAL_FALLBACK_MODEL", "flash, pro")
+    http = Http(402)
+    orig = http.post
+    def post(url, timeout=None, json=None, headers=None):
+        if "backup.example" in url and json["model"] == "flash":
+            http.calls.append((url, dict(json), headers))
+            return R(503, {"error": {"message": "high demand"}})
+        return orig(url, timeout=timeout, json=json, headers=headers)
+    http.post = post
+    m = ai.MetaAI(api_key="k", session=http)
+    r = m.chat("chat", [{"role": "user", "content": "hi"}])
+    assert r.text == "from backup" and r.model == "backup:pro"
+    assert sum(1 for c in http.calls if c[1].get("model") == "flash") == 2
+
+
+def test_all_busy_says_try_later(monkeypatch):
+    monkeypatch.setattr(ai, "BUSY_WAITS", ())
+    m, http = setup(monkeypatch, 402)
+    orig = http.post
+    http.post = lambda url, **kw: R(503, {"error": {"message": "high demand"}}) if "backup" in url else orig(url, **kw)
+    try:
+        m.chat("chat", [{"role": "user", "content": "hi"}]); assert False
+    except RuntimeError as e:
+        assert "busy right now" in str(e) and "settings are fine" in str(e)

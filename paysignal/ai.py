@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -51,6 +52,9 @@ MEDIA_MODELS = {
 # The Contributor tier is ~95% cheaper, but Meta trains on everything sent to it.
 # Never allowed for client or payment data. Opt-in for labelling public captions only.
 CONTRIBUTOR_OK_TASKS = {"labelling"}
+
+
+BUSY_WAITS = (2, 6)                    # seconds to wait before re-asking a busy backup model
 
 
 @dataclass
@@ -116,30 +120,47 @@ class MetaAI:
         explaining use the smart model and think as hard as Muse Wonder would; labelling uses the cheap one."""
         cfg = self.fallback_config()
         effort = reasoning_effort or DEFAULT_ROUTES.get(task, DEFAULT_ROUTES["chat"])[1]
-        model = cfg["cheap"] if effort == "low" else cfg["model"]
-        log.warning("Meta AI unavailable (%s); using the backup AI %s", why[:200], model)
+        # PAYSIGNAL_FALLBACK_MODEL may list several models, comma-separated: the next is tried when one is busy
+        first = [m.strip() for m in (cfg["cheap"] if effort == "low" else cfg["model"]).split(",") if m.strip()]
+        models = first + [m.strip() for m in (cfg["model"] + "," + cfg["cheap"]).split(",")
+                          if m.strip() and m.strip() not in first]
         # "developer" is Meta/OpenAI's name for the instructions; most other services only know "system"
         msgs = [{**m, "role": "system"} if m.get("role") == "developer" else m for m in messages]
-        body = {"model": model, "messages": msgs, "max_tokens": min(max_completion_tokens, 32000),
-                "reasoning_effort": effort}
         headers = {"Authorization": f"Bearer {cfg['key']}", "Content-Type": "application/json"}
-        fail = f"The backup AI ({model}) failed"
         help_ = "Check PAYSIGNAL_FALLBACK_URL, _KEY and _MODEL in Render. (Meta's AI is also unavailable.)"
+        busy: list[str] = []
+        for model in models:
+            log.warning("Meta AI unavailable (%s); using the backup AI %s", why[:200], model)
+            body = {"model": model, "messages": msgs, "max_tokens": min(max_completion_tokens, 32000),
+                    "reasoning_effort": effort}
+            fail = f"The backup AI ({model}) failed"
 
-        def send():
-            try:
-                return self._http().post(cfg["url"] + "/chat/completions", timeout=240, json=body, headers=headers)
-            except Exception as e:                    # bad URL, network, timeout: never a bare server error
-                raise RuntimeError(f"{fail}: couldn't reach {cfg['url']} ({type(e).__name__}). {help_}") from e
-        r = send()
-        if r.status_code == 400 and "reasoning" in (r.text or "").lower():
-            body.pop("reasoning_effort")              # model can't take a thinking setting: ask plainly
+            def send():
+                try:
+                    return self._http().post(cfg["url"] + "/chat/completions", timeout=240, json=body, headers=headers)
+                except Exception as e:                # bad URL, network, timeout: never a bare server error
+                    raise RuntimeError(f"{fail}: couldn't reach {cfg['url']} ({type(e).__name__}). {help_}") from e
             r = send()
-        if r.status_code == 400 and "max_tokens" in (r.text or ""):
-            body["max_completion_tokens"] = body.pop("max_tokens")
-            r = send()
-        if r.status_code >= 400:
-            raise RuntimeError(f"{fail}: HTTP {r.status_code} {_reason(r)[:300]}. {help_}")
+            for wait in BUSY_WAITS:                   # busy or rate-limited: wait briefly and ask again
+                if r.status_code not in (429, 500, 502, 503, 504):
+                    break
+                time.sleep(wait)
+                r = send()
+            if r.status_code == 400 and "reasoning" in (r.text or "").lower():
+                body.pop("reasoning_effort")          # model can't take a thinking setting: ask plainly
+                r = send()
+            if r.status_code == 400 and "max_tokens" in (r.text or ""):
+                body["max_completion_tokens"] = body.pop("max_tokens")
+                r = send()
+            if r.status_code in (429, 500, 502, 503, 504):
+                busy.append(f"{model}: {_reason(r)[:120]}")
+                continue                              # try the next backup model
+            if r.status_code >= 400:
+                raise RuntimeError(f"{fail}: HTTP {r.status_code} {_reason(r)[:300]}. {help_}")
+            break
+        else:
+            raise RuntimeError("The backup AI is busy right now (" + " | ".join(busy) + "). Your settings are fine: "
+                               "try again in a few minutes. (Meta's AI is also unavailable.)")
         try:
             data = r.json()
             if isinstance(data, list):
