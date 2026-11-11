@@ -72,7 +72,8 @@ def _slug(s: str, n: int = 40) -> str:
     return re.sub(r"[^a-z0-9]+", "-", (s or "").lower()).strip("-")[:n] or "ad"
 
 
-IG_POSITIONS = ("stream", "story", "reels", "explore", "explore_home", "profile_feed")
+IG_POSITIONS = ("stream", "story", "reels", "explore_home", "profile_feed")   # "explore" was retired by Meta
+IG_SAFE_POSITIONS = ("stream", "story", "reels")       # used if Meta retires another one
 PLACEMENTS = ("automatic", "instagram", "instagram_facebook")
 
 
@@ -249,13 +250,23 @@ class Publisher:
         created = {"campaign_id": campaign_id, "ad_sets": [], "ads": [], "placement_mode": mode}
         try:
             for i, s in enumerate(sets):
-                adset = self._post(f"{self.s['ad_account']}/adsets", {
+                adset_body = {
                     "name": str(s.get("name") or f"Ad set {i + 1}")[:200], "campaign_id": campaign_id,
                     "status": "PAUSED", "billing_event": "IMPRESSIONS", "optimization_goal": goal,
                     "destination_type": "WEBSITE",
                     "promoted_object": {"pixel_id": self.s["pixel_id"], "custom_event_type": event},
                     "targeting": targeting,
-                }, f"creating ad set {i + 1}")
+                }
+                try:
+                    adset = self._post(f"{self.s['ad_account']}/adsets", adset_body, f"creating ad set {i + 1}")
+                except PublishError as e:
+                    # Meta retires placements now and then: fall back to feed, stories and reels, which always exist
+                    if "deprecated" not in str(e).lower() or "instagram_positions" not in targeting:
+                        raise
+                    targeting["instagram_positions"] = list(IG_SAFE_POSITIONS)
+                    if "facebook_positions" in targeting:
+                        targeting["facebook_positions"] = ["feed", "story", "facebook_reels"]
+                    adset = self._post(f"{self.s['ad_account']}/adsets", adset_body, f"creating ad set {i + 1}")
                 created["ad_sets"].append(adset["id"])
                 for j, ad in enumerate(s["ads"]):
                     label = f"ad {j + 1} in ad set {i + 1}"

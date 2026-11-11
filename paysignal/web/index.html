@@ -1816,7 +1816,7 @@ main{background:transparent}
     }));
     const igReady = !!status.instagram_ready;
     const placeSel = h("select", { "aria-label": "Where the ads show", style: "max-width:420px" },
-      h("option", { value: "instagram", selected: igReady ? true : null, disabled: igReady ? null : true }, "Instagram only (feed, stories, reels, explore)" + (igReady ? " · recommended in the UAE" : " · connect Instagram first")),
+      h("option", { value: "instagram", selected: igReady ? true : null, disabled: igReady ? null : true }, "Instagram only (feed, stories, reels)" + (igReady ? " · recommended in the UAE" : " · connect Instagram first")),
       h("option", { value: "instagram_facebook" , disabled: igReady ? null : true }, "Instagram and Facebook"),
       h("option", { value: "automatic", selected: igReady ? null : true }, "Automatic: Meta decides (includes Facebook, Messenger, other apps)"));
     placeBox.append(h("label", { class: "f" }, "Where the ads show", placeSel),
