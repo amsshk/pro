@@ -1820,7 +1820,7 @@ main{background:transparent}
       h("option", { value: "instagram_facebook" , disabled: igReady ? null : true }, "Instagram and Facebook"),
       h("option", { value: "automatic", selected: igReady ? null : true }, "Automatic: Meta decides (includes Facebook, Messenger, other apps)"));
     placeBox.append(h("label", { class: "f" }, "Where the ads show", placeSel),
-      igReady ? null : h("p", { class: "small", style: "margin:0;color:var(--amber)" }, "No Instagram account is connected, so these ads can only show as your Facebook Page. Connect Instagram to run on Instagram."));
+      igReady ? null : h("p", { class: "small", style: "margin:0;color:var(--amber)" }, "No Instagram account is connected, so these ads can only show as your Facebook Page. Connect Instagram to run on Instagram." + (status.instagram_why ? " What Meta says: " + status.instagram_why + "." : "")));
     const suggest = () => api("/media/" + cid() + "/suggest", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plan: r.plan }) })
       .then((d) => Object.entries(d.suggestions || {}).forEach(([k, it]) => { if (pickers[k]) pickers[k](it); })).catch(() => {});
     suggest();

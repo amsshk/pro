@@ -163,6 +163,33 @@ def lookup_page(http, token: str, page_id: str) -> dict:
     return {"id": p["id"], "name": p.get("name") or p["id"], "instagram_id": ig.get("id", ""), "instagram": ig.get("username", "")}
 
 
+def find_instagram(http, token: str, page_id: str, ad_account: str = "") -> dict:
+    """Which Instagram account can run ads for this Page / ad account. Tries every place Meta keeps the link,
+    because a System User token often can't see one of them. Returns {"id", "username", "how"} or {"why": ...}."""
+    g, why = Graph(http), []
+    if page_id:
+        try:
+            p = g.get(page_id, {"fields": "instagram_business_account{id,username},connected_instagram_account{id,username}",
+                                "access_token": token})
+            for k in ("instagram_business_account", "connected_instagram_account"):
+                if (p.get(k) or {}).get("id"):
+                    return {"id": p[k]["id"], "username": p[k].get("username", ""), "how": "linked to the Page"}
+            why.append("the Page has no Instagram account linked to it")
+        except ConnectError as e:
+            why.append(f"couldn't read the Page ({e})")
+    if ad_account:
+        acct = ad_account if ad_account.startswith("act_") else "act_" + ad_account
+        for edge in ("instagram_accounts", "connected_instagram_accounts"):
+            try:
+                rows = g.get(f"{acct}/{edge}", {"fields": "id,username", "access_token": token}).get("data") or []
+                if rows:
+                    return {"id": rows[0]["id"], "username": rows[0].get("username", ""), "how": "connected to the ad account"}
+            except ConnectError as e:
+                why.append(f"couldn't read the ad account's Instagram accounts ({e})")
+        why.append("no Instagram account is assigned to the ad account")
+    return {"why": "; ".join(dict.fromkeys(why)) or "no Page or ad account set"}
+
+
 class ConnectionStore:
     SCHEMA = """CREATE TABLE IF NOT EXISTS meta_connections (
         client_id TEXT PRIMARY KEY, token TEXT NOT NULL, expires_at REAL, user_name TEXT,
@@ -234,6 +261,10 @@ class ConnectionStore:
         self.db.execute("UPDATE meta_connections SET ad_account=?, page_id=?, instagram_id=?, pixel_id=?, send_sales=?"
                         " WHERE client_id=?", (ad_account or None, page_id or None, ig or None, pixel_id or None,
                                                1 if send_sales else 0, client_id))
+        self.db.commit()
+
+    def set_instagram(self, client_id: str, instagram_id: str) -> None:
+        self.db.execute("UPDATE meta_connections SET instagram_id=? WHERE client_id=?", (instagram_id or None, client_id))
         self.db.commit()
 
     def delete(self, client_id: str) -> None:

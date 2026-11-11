@@ -116,6 +116,7 @@ class App:
         self.drafts = meta_ads.DraftStore(self.store.db)
         self.learnings = learning.LearningStore(self.store.db, os.environ.get("PROADS_SECRET_KEY", "proads"))
         self.ads_http = None                   # set in tests
+        self._ig_cache: dict = {}
         self.meta_conns = meta_connect.ConnectionStore(self.store.db)
         self.meta_http = None                  # set in tests
         self.billing = billing.BillingStore(self.store.db)
@@ -192,12 +193,38 @@ class App:
                 with self.lock:
                     self.meta_conns.mark_expired(cid)
                 log.warning("Facebook session for %s was invalidated: marked for reconnect", cid)
-            return {**meta_connect.ads_settings(c, meta_connect.decrypt(c["token"])), "on_token_invalid": dead}
+            s = {**meta_connect.ads_settings(c, meta_connect.decrypt(c["token"])), "on_token_invalid": dead}
+            if not s["instagram_id"]:
+                if is_admin and meta_ads.settings()["instagram_id"]:
+                    s["instagram_id"] = meta_ads.settings()["instagram_id"]
+                else:
+                    found = self.instagram_lookup(client_id, s)
+                    if found.get("id"):
+                        with self.lock:
+                            self.meta_conns.set_instagram(client_id, found["id"])
+                        s["instagram_id"] = found["id"]
+            return s
         if is_admin and not meta_ads.missing():
-            return {**meta_ads.settings(), "token_invalid_message":
+            s = meta_ads.settings()
+            if not s["instagram_id"]:
+                s["instagram_id"] = self.instagram_lookup(client_id, s).get("id", "")
+            return {**s, "token_invalid_message":
                     "Facebook cancelled the token in Render's PROADS_ADS_TOKEN (a password change or security check). "
                     "Replace it with a System User token from Business Settings, which isn't tied to your password."}
         return None
+
+    def instagram_lookup(self, client_id: str, s: dict, fresh: bool = False) -> dict:
+        """Ask Meta which Instagram account goes with this Page / ad account (remembered for 10 minutes)."""
+        key = (client_id, s.get("page_id"), s.get("ad_account"))
+        hit = self._ig_cache.get(key)
+        if hit and not fresh and hit[0] > time.time():
+            return hit[1]
+        try:
+            found = meta_connect.find_instagram(self.ads_http, s["token"], s.get("page_id", ""), s.get("ad_account", ""))
+        except Exception as e:                        # never block publishing on this check
+            found = {"why": f"couldn't ask Meta ({type(e).__name__})"}
+        self._ig_cache[key] = (time.time() + 600, found)
+        return found
 
     def maybe_activate(self, client_id: str) -> None:
         """First data in from a self-serve account: tell Meta a real user started (once)."""
@@ -2584,6 +2611,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             codes = len(state.store.promos(client_id))
             shop = state.store.shop_for(client_id)
         shop_info = {"available": shopify_app.available(), "connected": bool(shop)}
+        ig_s = state.ads_settings(client_id, is_admin(client_id)) or {}
         if shop:
             shop_info.update({k: shop[k] for k in ("shop", "connected_at", "sync_status", "sync_message",
                                                    "last_sync", "imported")})
@@ -2593,7 +2621,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             "name": cfg.get("name", client_id),
             "self_serve": bool(cfg.get("self_serve")),
             "has_password": state.accounts.has_password(client_id) if state.accounts.get(client_id) else True,
-            "instagram_ready": bool((state.ads_settings(client_id, is_admin(client_id)) or {}).get("instagram_id")),
+            "instagram_ready": bool(ig_s.get("instagram_id")),
+            "instagram_why": "" if ig_s.get("instagram_id") or not ig_s else
+                             state.instagram_lookup(client_id, ig_s).get("why", ""),
             "admin": is_admin(client_id),
             "currency": cfg.get("currency", "AED"),
             "website": cfg.get("website", ""),
