@@ -65,3 +65,12 @@ def test_status_shows_last_payment(make):
     c.post("/import/shop", data=ORDERS, headers=H)
     up = c.get("/status/shop", headers=H).json["connections"]["uploads"]
     assert up["count"] == 1 and up["last"].startswith("2026-10-02")
+
+
+def test_landing_has_languages_and_country_comes_from_cloudflare(make):
+    c = make()
+    page = c.get("/").data.decode()
+    assert 'id="i18n"' in page and '"ar"' in page and "innerHTML" not in page
+    assert c.get("/public-config", headers={"CF-IPCountry": "ae"}).json["country"] == "AE"
+    assert c.get("/public-config", headers={"CF-IPCountry": "XX"}).json["country"] == ""
+    assert c.get("/public-config").json["country"] == ""

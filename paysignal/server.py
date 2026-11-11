@@ -2163,8 +2163,11 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     @flask.get("/public-config")
     def public_config():
         """Values the public pages need: the Pixel ID (public by nature) and contact email."""
+        # Cloudflare (in front of the site) says which country the visitor is in: the page picks its language from it
+        country = (request.headers.get("CF-IPCountry") or "").strip().upper()
         return {"pixel_id": growth.pixel_id(), "contact": os.environ.get("PROADS_CONTACT_EMAIL", ""),
-                "sign_in": social.configured()}
+                "sign_in": social.configured(),
+                "country": country if len(country) == 2 and country.isalpha() and country not in ("XX", "T1") else ""}
 
     def client_ip() -> str:
         return (request.headers.get("X-Forwarded-For") or request.remote_addr or "").split(",")[-1].strip()
