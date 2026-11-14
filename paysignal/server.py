@@ -4051,6 +4051,23 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         proto = request.headers.get("X-Forwarded-Proto", request.scheme)
         return f"{proto}://{request.host}"
 
+    def shop_from_domain(typed: str) -> Optional[str]:
+        """A shop's own domain -> its .myshopify.com address. Every Shopify store answers /meta.json with it."""
+        host = re.sub(r"^https?://", "", (typed or "").strip().lower()).split("/")[0]
+        host = re.sub(r"^www\.", "", host)
+        if not re.match(r"^[a-z0-9][a-z0-9\-.]*\.[a-z]{2,}$", host):
+            return None
+        for h in (host, "www." + host):
+            try:
+                raw, _, _ = media.safe_get(media_http(), f"https://{h}/meta.json", 200_000, media_resolver())
+                found = shopify_app.normalize_shop(str(json.loads(raw.decode("utf-8", "replace")).get("myshopify_domain") or ""))
+                if found:
+                    log.info("%s is the Shopify store %s", host, found)
+                    return found
+            except Exception:
+                continue
+        return None
+
     @flask.post("/shopify/connect/<client_id>")
     def shopify_connect(client_id):
         """Returns Shopify's approval page for this store. The browser goes there next."""
@@ -4058,10 +4075,13 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if not shopify_app.available():
             abort(503, "Shopify connection is not set up on this server yet "
                        "(needs SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET and PROADS_SECRET_KEY)")
-        shop = shopify_app.normalize_shop((request.get_json(silent=True) or {}).get("shop", ""))
+        typed = (request.get_json(silent=True) or {}).get("shop", "")
+        shop = shopify_app.normalize_shop(typed)
         if not shop:
-            abort(400, "Enter your Shopify store address, like your-store.myshopify.com. If you use your own domain, "
-                       "find the .myshopify.com address in Shopify: Settings > Domains.")
+            shop = shop_from_domain(typed)            # their own domain (bynawi.com): ask the store which Shopify it is
+        if not shop:
+            abort(400, "ProAds couldn't find a Shopify store at that address. Enter the shop's website (like yourshop.com) "
+                       "or its Shopify address (your-store.myshopify.com, in Shopify: Settings > Domains).")
         owner = state.store.client_for_shop(shop)
         if owner and owner != client_id:
             abort(400, "This store is already connected to another ProAds account")

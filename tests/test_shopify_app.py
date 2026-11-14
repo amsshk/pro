@@ -230,3 +230,32 @@ def test_disconnect(tmp_path, env):
 def test_normalize_shop_new_admin_address():
     assert shopify_app.normalize_shop("https://admin.shopify.com/store/glow-store/orders") == SHOP
     assert shopify_app.normalize_shop("www.glow-store.myshopify.com") == SHOP
+
+
+def test_own_domain_is_turned_into_the_myshopify_address(tmp_path, monkeypatch):
+    import json as _json
+    from paysignal.server import create_app
+    monkeypatch.setenv("SHOPIFY_CLIENT_ID", "cid")
+    monkeypatch.setenv("SHOPIFY_CLIENT_SECRET", "sec")
+    monkeypatch.setenv("PROADS_SECRET_KEY", "k" * 44)
+    app = create_app({"shop": {"api_key": "k-0123456789abcdef", "name": "Bynawi", "currency": "AED"}}, str(tmp_path / "s.db"), start_worker=False)
+    st = None
+    for f in app.view_functions.values():
+        for c in (getattr(f, "__closure__", None) or ()):
+            if type(c.cell_contents).__name__ == "App":
+                st = c.cell_contents
+
+    class R:
+        status_code, headers, is_redirect = 200, {"Content-Type": "application/json"}, False
+        def __init__(self, b): self._b = b
+        def iter_content(self, n): yield self._b
+        def close(self): pass
+
+    class H:
+        def get(self, url, **kw):
+            assert url == "https://bynawi.com/meta.json"
+            return R(_json.dumps({"name": "Bynawi", "myshopify_domain": "bynawi-perfumes.myshopify.com"}).encode())
+    st.media_http = H()
+    st.media_resolver = lambda *a, **k: [(2, 1, 6, "", ("23.227.38.65", 443))]
+    r = app.test_client().post("/shopify/connect/shop", json={"shop": "https://bynawi.com/"}, headers={"X-API-Key": "k-0123456789abcdef"})
+    assert r.status_code == 200 and "bynawi-perfumes.myshopify.com" in r.json["url"]

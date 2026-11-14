@@ -725,7 +725,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
           h("h2", { id: "shop-h" }, s.connected ? "Shopify store" : "Connect your Shopify store")),
         h("span", { class: "badge " + (s.connected ? "b-measured" : "b-neutral") }, s.connected ? "Connected" : "Easiest way"));
       if (!s.connected) {
-        const shop = h("input", { id: "shopdomain", placeholder: "your-store.myshopify.com", autocomplete: "off", required: true });
+        const shop = h("input", { id: "shopdomain", placeholder: "yourshop.com or your-store.myshopify.com", autocomplete: "off", required: true });
         const btn = h("button", { class: "btn btn-primary", type: "submit" }, "Connect Shopify");
         const err = h("p", { class: "sub", role: "alert", style: "margin:0;color: var(--amber-txt)" });
         const form = h("form", { style: "display:flex;gap:8px;flex-wrap:wrap", onsubmit: async (e) => {
