@@ -47,6 +47,7 @@ def capture_context(body: dict, headers, remote_addr: str) -> Optional[dict]:
         fbc = f"fb.1.{int(time.time() * 1000)}.{fbclid}"
     ip = (headers.get("X-Forwarded-For") or remote_addr or "").split(",")[0].strip()
     return {"fbp": (body.get("fbp") or "").strip()[:200] or None, "fbc": fbc or None,
+            "ttclid": (body.get("ttclid") or "").strip()[:500] or None, "ttp": (body.get("ttp") or "").strip()[:200] or None,
             "ua": (headers.get("User-Agent") or "")[:400] or None, "ip": ip or None,
             "url": (body.get("source_url") or "").split("#")[0][:500] or None}
 
@@ -68,6 +69,10 @@ def build_event(name: str, account: dict, ctx: dict, event_id: str, value: Optio
         event["custom_data"] = {"value": round(float(value), 2), "currency": (currency or "USD").upper()}
     if custom:
         event.setdefault("custom_data", {}).update(custom)
+    from . import tiktok                                    # the TikTok twin rides along; emit_growth takes it off
+    tt = tiktok.from_growth(event, ctx, account)
+    if tt:
+        event["_tiktok"] = tt
     return event
 
 

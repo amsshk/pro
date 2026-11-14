@@ -1,0 +1,177 @@
+"""Send real, paid sales to TikTok through its Events API, so TikTok ads learn who actually buys.
+
+Works like the Meta side: the same verified purchases, the same event id (so a TikTok Pixel on the site and
+ProAds never count one sale twice), customer details SHA-256 hashed before they leave the server.
+
+  CompletePayment       every new paid purchase (TikTok's standard purchase event), with its real value
+  CompleteRegistration  ProAds' own sign-ups (for ProAds' own TikTok ads)
+
+TikTok has no refund event, so refunds stay inside ProAds (they still shape ProAds' reports and advice).
+
+A business connects with two things from TikTok Events Manager: the Pixel ID and an Events API access token
+(Pixel > Settings > Generate access token). No TikTok app review is needed for this.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import time
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
+from .identity import _sha256, hash_email, normalize_phone
+from .models import Payment
+
+log = logging.getLogger("proads.tiktok")
+
+URL = "https://business-api.tiktok.com/open_api/v1.3/event/track/"
+BATCH = 50
+MAX_AGE = timedelta(days=6, hours=20)        # TikTok only takes recent web events: older ones are skipped
+PIXEL_RE = re.compile(r"^[A-Z0-9]{10,40}$")
+
+
+def hash_phone_e164(phone: Optional[str], default_country_code: str = "971") -> Optional[str]:
+    """TikTok wants the phone in E.164 (with the +) before hashing."""
+    digits = normalize_phone(phone, default_country_code)
+    return _sha256("+" + digits) if digits else None
+
+
+def user_for(email=None, phone=None, external_id=None, ttclid=None, ttp=None, ip=None, ua=None) -> dict:
+    return {k: v for k, v in {
+        "email": hash_email(email), "phone": hash_phone_e164(phone),
+        "external_id": _sha256(str(external_id).strip().lower()) if external_id else None,
+        "ttclid": (ttclid or "").strip()[:500] or None, "ttp": (ttp or "").strip()[:200] or None,
+        "ip": ip or None, "user_agent": ua or None}.items() if v}
+
+
+def has_match_key(event: dict) -> bool:
+    return any(k in event["user"] for k in ("email", "phone", "external_id", "ttclid", "ttp"))
+
+
+def purchase_event(p: Payment) -> dict:
+    ev = {"event": "CompletePayment", "event_time": int(p.occurred_at.timestamp()), "event_id": p.event_id,
+          "user": user_for(p.email, p.phone, p.customer_id, p.ttclid, p.ttp, p.client_ip_address, p.client_user_agent),
+          "properties": {"value": round(p.amount, 2), "currency": p.currency, "order_id": p.external_id,
+                         "content_type": "product"}}
+    if p.items:
+        ev["properties"]["contents"] = [{"content_id": i.sku or i.name, "content_name": i.name,
+                                         "quantity": i.quantity, "price": i.unit_price} for i in p.items[:50]]
+    if p.event_source_url:
+        ev["page"] = {"url": p.event_source_url}
+    return ev
+
+
+def send(events: list[dict], pixel_code: str, token: str, http, test_event_code: Optional[str] = None) -> list[dict]:
+    """Post in batches. Returns one result per batch: {"ok", "count", "status", "message"}."""
+    out = []
+    for i in range(0, len(events), BATCH):
+        body = {"event_source": "web", "event_source_id": pixel_code, "data": events[i:i + BATCH]}
+        if test_event_code:
+            body["test_event_code"] = test_event_code
+        try:
+            r = http.post(URL, json=body, timeout=30, headers={"Access-Token": token, "Content-Type": "application/json"})
+            data = r.json() if getattr(r, "content", b"x") else {}
+        except Exception as e:                      # network trouble: try again next round
+            out.append({"ok": False, "count": len(body["data"]), "status": 0, "message": f"couldn't reach TikTok ({type(e).__name__})"})
+            continue
+        ok = r.status_code == 200 and data.get("code") == 0
+        out.append({"ok": ok, "count": len(body["data"]), "status": r.status_code,
+                    "message": data.get("message") or ("" if ok else f"HTTP {r.status_code}")})
+    return out
+
+
+def explain(message: str) -> str:
+    m = (message or "").lower()
+    if "access token" in m or "token" in m and ("invalid" in m or "expired" in m):
+        return "TikTok didn't accept the access token. In TikTok Events Manager, open the Pixel > Settings > Generate access token, and paste the new one."
+    if "pixel" in m or "event_source_id" in m:
+        return "TikTok doesn't recognise this Pixel ID for that token. Check you copied the Pixel ID of the same Pixel the token belongs to."
+    return message or "TikTok refused the events."
+
+
+class TikTokStore:
+    SCHEMA = """
+    CREATE TABLE IF NOT EXISTS tiktok_links (client_id TEXT PRIMARY KEY, pixel_code TEXT NOT NULL, token_enc TEXT NOT NULL,
+        test_code TEXT, connected_at INTEGER NOT NULL, last_sync INTEGER, status TEXT, message TEXT,
+        sent INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS tiktok_sent (client_id TEXT NOT NULL, event_id TEXT NOT NULL, sent_at INTEGER NOT NULL,
+        PRIMARY KEY (client_id, event_id));
+    """
+
+    def __init__(self, db):
+        self.db = db
+        self.db.executescript(self.SCHEMA)
+        self.db.commit()
+
+    def save(self, client_id: str, pixel_code: str, token_enc: str, test_code: Optional[str]) -> None:
+        self.db.execute("INSERT INTO tiktok_links (client_id, pixel_code, token_enc, test_code, connected_at, status)"
+                        " VALUES (?,?,?,?,?,'waiting') ON CONFLICT(client_id) DO UPDATE SET pixel_code=excluded.pixel_code,"
+                        " token_enc=excluded.token_enc, test_code=excluded.test_code, connected_at=excluded.connected_at,"
+                        " status='waiting', message=NULL",
+                        (client_id, pixel_code, token_enc, test_code or None, int(time.time())))
+        self.db.commit()
+
+    def get(self, client_id: str) -> Optional[dict]:
+        r = self.db.execute("SELECT client_id, pixel_code, token_enc, test_code, connected_at, last_sync, status, message, sent"
+                            " FROM tiktok_links WHERE client_id=?", (client_id,)).fetchone()
+        keys = ("client_id", "pixel_code", "token_enc", "test_code", "connected_at", "last_sync", "status", "message", "sent")
+        return dict(zip(keys, r)) if r else None
+
+    def all(self) -> list[str]:
+        return [r[0] for r in self.db.execute("SELECT client_id FROM tiktok_links")]
+
+    def remove(self, client_id: str) -> None:
+        self.db.execute("DELETE FROM tiktok_links WHERE client_id=?", (client_id,))
+        self.db.commit()
+
+    def was_sent(self, client_id: str, event_id: str) -> bool:
+        return self.db.execute("SELECT 1 FROM tiktok_sent WHERE client_id=? AND event_id=?", (client_id, event_id)).fetchone() is not None
+
+    def mark_sent(self, client_id: str, event_ids: list[str]) -> None:
+        now = int(time.time())
+        self.db.executemany("INSERT OR IGNORE INTO tiktok_sent (client_id, event_id, sent_at) VALUES (?,?,?)",
+                            [(client_id, e, now) for e in event_ids])
+        self.db.commit()
+
+    def result(self, client_id: str, ok: bool, message: Optional[str], sent: int = 0) -> None:
+        self.db.execute("UPDATE tiktok_links SET last_sync=?, status=?, message=?, sent=sent+? WHERE client_id=?",
+                        (int(time.time()), "ok" if ok else "error", message, sent, client_id))
+        self.db.commit()
+
+    @staticmethod
+    def public(row: Optional[dict]) -> dict:
+        if not row:
+            return {"connected": False}
+        return {"connected": True, "pixel_code": row["pixel_code"], "test_mode": bool(row["test_code"]),
+                "status": row["status"], "message": row["message"], "last_sync": row["last_sync"], "sent": row["sent"]}
+
+
+def pending(payments: list[Payment], store: TikTokStore, client_id: str, now: Optional[datetime] = None) -> list[Payment]:
+    """Recent paid purchases TikTok hasn't been sent yet."""
+    cutoff = (now or datetime.now(timezone.utc)) - MAX_AGE
+    return [p for p in payments if p.kind == "purchase" and p.occurred_at >= cutoff and not store.was_sent(client_id, p.event_id)]
+
+
+# ---------- ProAds' own TikTok tracking (sign-ups), like growth.py does for Meta ----------
+def proads_settings() -> dict:
+    return {"pixel": os.environ.get("PROADS_TIKTOK_PIXEL", "").strip(), "token": os.environ.get("PROADS_TIKTOK_TOKEN", "").strip(),
+            "test_code": os.environ.get("PROADS_TIKTOK_TEST_CODE", "").strip()}
+
+
+def from_growth(meta_event: dict, ctx: Optional[dict], account: dict) -> Optional[dict]:
+    """ProAds' own Meta event -> the TikTok equivalent (only the ones TikTok has a standard event for)."""
+    name = {"CompleteRegistration": "CompleteRegistration", "Purchase": "CompletePayment", "Subscribe": "Subscribe"}.get(meta_event["event_name"])
+    if not name:
+        return None
+    ctx = ctx or {}
+    ev = {"event": name, "event_time": meta_event["event_time"], "event_id": meta_event["event_id"],
+          "user": user_for(account.get("email"), account.get("phone"), account.get("client_id"),
+                           ctx.get("ttclid"), ctx.get("ttp"), ctx.get("ip"), ctx.get("ua"))}
+    cd = meta_event.get("custom_data") or {}
+    if "value" in cd:
+        ev["properties"] = {"value": cd["value"], "currency": cd.get("currency", "USD")}
+    if ctx.get("url"):
+        ev["page"] = {"url": ctx["url"]}
+    return ev if has_match_key(ev) else None

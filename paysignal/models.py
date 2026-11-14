@@ -50,6 +50,7 @@ class Payment:
     event_source_url: Optional[str] = None
     fbp: Optional[str] = None             # Meta browser id (_fbp cookie), when the checkout passed it on
     fbc: Optional[str] = None             # Meta click id cookie (_fbc), as captured on the visit
+    ttp: Optional[str] = None             # TikTok browser id (_ttp cookie), when the checkout passed it on
     # Address details from the order, used only as hashed match keys for Meta
     first_name: Optional[str] = None
     last_name: Optional[str] = None

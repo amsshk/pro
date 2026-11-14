@@ -43,7 +43,7 @@ from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
-from . import growth, mailer, shopify_app, whatsapp
+from . import growth, mailer, shopify_app, tiktok, whatsapp
 from .identity import hash_phone
 from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
@@ -133,6 +133,8 @@ class App:
         self.social = social.SocialStore(self.store.db)
         self.social_http = None                    # requests, unless a test swaps it
         self.stripe_links = stripe_sync.StripeLinks(self.store.db)
+        self.tiktok = tiktok.TikTokStore(self.store.db)
+        self.tiktok_http = None                # set in tests
         self.stripe_http = None
         self.media = media.MediaStore(self.store.db)
         self.media_http = None
@@ -143,7 +145,11 @@ class App:
         self.ads_cache: dict = {}              # (client, period) -> (time, report)
 
     def emit_growth(self, event: dict) -> bool:
-        """Send one of ProAds' own events to Meta, recorded so a failure is seen and retried, never lost silently."""
+        """Send one of ProAds' own events to Meta, recorded so a failure is seen and retried, never lost silently.
+        The TikTok version (when PROADS_TIKTOK_PIXEL / _TOKEN are set) goes out alongside it."""
+        tt = event.pop("_tiktok", None)
+        if tt:
+            self.emit_tiktok_growth(tt)
         with self.lock:
             if not self.delivery.queued("proads", event):
                 return False                         # already sent or queued: never twice
@@ -155,6 +161,26 @@ class App:
                 log.warning("ProAds event %s not accepted by Meta yet (%s)", eid, status)
         growth.send_later(event, self.growth_http, self.growth_sent, on_done=done)
         return True
+
+    def emit_tiktok_growth(self, ev: dict) -> None:
+        cfg = tiktok.proads_settings()
+        if not (cfg["pixel"] and cfg["token"]):
+            return
+        with self.lock:
+            if self.tiktok.was_sent("proads", ev["event_id"]):
+                return
+
+        def run():
+            res = tiktok.send([ev], cfg["pixel"], cfg["token"], self.tiktok_http or __import__("requests"), cfg["test_code"] or None)
+            if res and res[0]["ok"]:
+                with self.lock:
+                    self.tiktok.mark_sent("proads", [ev["event_id"]])
+            else:
+                log.warning("TikTok didn't accept ProAds event %s: %s", ev["event"], res and res[0]["message"])
+        if self.tiktok_http is not None:
+            run()                                    # tests: synchronous
+        else:
+            threading.Thread(target=run, daemon=True, name="tiktok-growth").start()
 
     def known(self, client_id: str) -> bool:
         return client_id in self.clients or self.accounts.get(client_id) is not None
@@ -593,6 +619,88 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         log.info("stripe key connected for %s (%s)", client_id, "live" if info["live"] else "test")
         return {"ok": True, **stripe_sync.StripeLinks.public(state.stripe_links.get(client_id)),
                 "warning": None if info["live"] else "This is a TEST key: only Stripe test payments will come in."}
+
+    # ---------- TikTok: real sales to TikTok's Events API ----------
+    def tiktok_http():
+        if state.tiktok_http is not None:
+            return state.tiktok_http
+        import requests
+        return requests
+
+    def tiktok_push(client_id: str) -> dict:
+        """Send this business's new paid purchases to TikTok."""
+        with state.lock:
+            row = state.tiktok.get(client_id)
+            if not row:
+                return {"skipped": "not connected"}
+            todo = tiktok.pending(state.store.purchases(client_id), state.tiktok, client_id)
+        events = [tiktok.purchase_event(p) for p in todo]
+        events = [e for e in events if tiktok.has_match_key(e)]
+        if not events:
+            with state.lock:
+                if row["status"] == "waiting":
+                    state.tiktok.result(client_id, True, "Connected. New sales will be sent to TikTok as they come in.")
+            return {"sent": 0}
+        token = shopify_app.decrypt(row["token_enc"])
+        results = tiktok.send(events, row["pixel_code"], token, tiktok_http(), row["test_code"])
+        sent_ids, bad = [], None
+        for i, r in enumerate(results):
+            if r["ok"]:
+                sent_ids += [e["event_id"] for e in events[i * tiktok.BATCH:(i + 1) * tiktok.BATCH]]
+            else:
+                bad = r["message"]
+        with state.lock:
+            state.tiktok.mark_sent(client_id, sent_ids)
+            if bad:
+                state.tiktok.result(client_id, False, tiktok.explain(bad), len(sent_ids))
+            else:
+                state.tiktok.result(client_id, True, f"Sent {len(sent_ids)} sale(s) to TikTok" +
+                                    (" as TEST events (see Events Manager > Test events)." if row["test_code"] else "."), len(sent_ids))
+        if bad:
+            log.warning("TikTok refused events of %s: %s", client_id, bad)
+        return {"sent": len(sent_ids), "error": bad}
+    state.tiktok_push = tiktok_push
+
+    def tiktok_push_all() -> None:
+        with state.lock:
+            ids = state.tiktok.all()
+        for cid in ids:
+            try:
+                tiktok_push(cid)
+            except Exception:
+                log.exception("TikTok send failed for %s", cid)
+    state.tiktok_push_all = tiktok_push_all
+
+    @flask.post("/connect/<client_id>/tiktok")
+    def tiktok_connect(client_id):
+        """Pixel ID + Events API access token from TikTok Events Manager; optional test event code."""
+        state.require_key(client_id)
+        body = request.get_json(silent=True) or {}
+        pixel = str(body.get("pixel_code") or "").strip().upper()
+        token = str(body.get("access_token") or "").strip()
+        test = str(body.get("test_event_code") or "").strip() or None
+        if not tiktok.PIXEL_RE.match(pixel):
+            abort(400, "That doesn't look like a TikTok Pixel ID. In TikTok Events Manager, copy the ID shown under the Pixel's name (letters and numbers, like C4ABC123DEF456).")
+        if len(token) < 20 or " " in token:
+            abort(400, "Paste the Events API access token from TikTok Events Manager (Pixel > Settings > Generate access token).")
+        try:
+            enc = shopify_app.encrypt(token)
+        except shopify_app.ShopifyError:
+            abort(503, "ProAds can't store keys safely yet (PROADS_SECRET_KEY is missing on the server).")
+        with state.lock:
+            state.tiktok.save(client_id, pixel, enc, test)
+        res = tiktok_push(client_id)
+        log.info("tiktok connected for %s (%s)", client_id, "test" if test else "live")
+        with state.lock:
+            out = tiktok.TikTokStore.public(state.tiktok.get(client_id))
+        return {"ok": not res.get("error"), **out}
+
+    @flask.post("/connect/<client_id>/tiktok/disconnect")
+    def tiktok_disconnect(client_id):
+        state.require_key(client_id)
+        with state.lock:
+            state.tiktok.remove(client_id)
+        return {"ok": True, "note": "ProAds deleted the TikTok token. You can also delete it in TikTok Events Manager."}
 
     @flask.post("/connect/<client_id>/stripe/disconnect")
     def stripe_disconnect(client_id):
@@ -2208,7 +2316,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         """Values the public pages need: the Pixel ID (public by nature) and contact email."""
         # Cloudflare (in front of the site) says which country the visitor is in: the page picks its language from it
         country = (request.headers.get("CF-IPCountry") or "").strip().upper()
-        return {"pixel_id": growth.pixel_id(), "contact": os.environ.get("PROADS_CONTACT_EMAIL", ""),
+        return {"pixel_id": growth.pixel_id(), "tiktok_pixel": tiktok.proads_settings()["pixel"], "contact": os.environ.get("PROADS_CONTACT_EMAIL", ""),
                 "sign_in": social.configured(),
                 "country": country if len(country) == 2 and country.isalpha() and country not in ("XX", "T1") else ""}
 
@@ -2264,7 +2372,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         intent = "signup" if a.get("intent") == "signup" else "signin"
         ads = a.get("ads") == "1"
         ctx = growth.capture_context({"ads_consent": ads, "fbp": a.get("fbp", ""), "fbc": a.get("fbc", ""),
-                                      "fbclid": a.get("fbclid", ""), "source_url": a.get("source_url", "")},
+                                      "fbclid": a.get("fbclid", ""), "ttclid": a.get("ttclid", ""), "ttp": a.get("ttp", ""),
+                                      "source_url": a.get("source_url", "")},
                                      request.headers, request.remote_addr) if ads else None
         try:
             raw = json.loads(a.get("utm") or "{}")
@@ -2677,6 +2786,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 "shopify": {"configured": bool(cfg.get("shopify_webhook_secret") or shop),
                             **payments.get("shopify", {})},
                 "shopify_app": shop_info,
+                "tiktok": tiktok.TikTokStore.public(state.tiktok.get(client_id)),
                 "stripe": {"configured": bool(cfg.get("stripe_webhook_secret")) or bool(state.stripe_links.get(client_id)),
                            **payments.get("stripe", {})},
                 "stripe_api": stripe_sync.StripeLinks.public(state.stripe_links.get(client_id)),
@@ -4147,7 +4257,7 @@ def _start_worker(state: App, every: int) -> None:
                     state.enforce_ads_trials()
             except Exception:
                 log.exception("ad test check failed")
-            for job in ("sync_all_launch_status", "retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees"):
+            for job in ("sync_all_launch_status", "tiktok_push_all", "retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees"):
                 try:
                     if getattr(state, job, None):
                         getattr(state, job)()

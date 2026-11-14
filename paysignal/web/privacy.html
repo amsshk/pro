@@ -39,21 +39,24 @@ ul{padding-left:20px}
   <ul>
     <li>To produce your reports: real profit, refunds, discount codes, which posts bring buyers, and recommendations.</li>
     <li>If you connect Meta's Conversions API, to send Meta the value of each sale so your ads learn which customers are valuable. Customer emails and phones are hashed (scrambled) on our server before anything is sent.</li>
+    <li>If you connect TikTok, to send TikTok each new paid sale (its value, and hashed email, phone and customer ID, plus TikTok's click and browser identifiers when your checkout captured them) through TikTok's Events API, so your TikTok ads learn who buys.</li>
     <li>To keep the service secure, for example by blocking repeated wrong passwords.</li>
     <li>To improve ProAds for everyone with anonymous lessons: ratios and patterns only (like refund rate, repeat-customer rate, the hours people buy, and which kinds of posts bring more money per view), combined from at least five businesses so no single business can be recognised. They never include names, emails, phones, orders, amounts or posts. Only medians, rounded, and only values shared by at least five businesses. You can switch sharing off any time in Connect &amp; upload, which also deletes what your business contributed. Deleting your account deletes your lessons.</li>
   </ul>
   <p>We do not sell your data, and no business ever sees another business's data.</p>
 
   <h2>AI features</h2>
-  <p>The assistant, summaries and campaign drafts use Meta's AI models (Meta Model API). They receive totals and per-post results only: never customer names, emails, phones or individual payments. Post labelling sends post captions only.</p>
+  <p>The assistant, summaries and campaign drafts use Meta's AI models (Meta Model API), and a backup AI provider (Google's Gemini) when Meta's is unavailable. They receive totals and per-post results only: never customer names, emails, phones or individual payments. Post labelling sends post captions only.</p>
 
   <h2>Our own advertising</h2>
-  <p>If you choose "Allow" in the cookie notice on our website, we use Meta's Pixel and Conversions API to measure which of our ads bring sign-ups and active users. This shares a hashed version of your email and phone, and an ad click identifier, with Meta. If you choose "No thanks", none of this is sent. You can change your choice any time with "Cookie settings" at the bottom of our home page.</p>
+  <p>If you choose "Allow" in the cookie notice on our website, we use Meta's Pixel and Conversions API, and TikTok's Pixel and Events API, to measure which of our ads bring sign-ups and active users. This shares a hashed version of your email and phone, and an ad click identifier, with Meta and TikTok. If you choose "No thanks", none of this is sent. You can change your choice any time with "Cookie settings" at the bottom of our home page.</p>
 
   <h2>Who processes data for us</h2>
   <ul>
     <li>Render, which hosts our servers and database.</li>
     <li>Meta Platforms, for the AI features and, with your consent or your connection, ads measurement.</li>
+    <li>Google, as the backup AI provider when Meta's AI is unavailable (the same totals and post captions described above).</li>
+    <li>TikTok, with your consent or your connection, for ads measurement.</li>
     <li>Google, Apple or Meta (Facebook), only if you choose to sign in with them, to confirm who you are.</li>
     <li>Shopify or Stripe, only if you connect them, to read your orders.</li>
     <li>Meta (Facebook and Instagram), only if you connect your business: we keep an encrypted access token and the ad account, Page and Pixel you choose, so we can create campaigns in your ad account (paused until you start them) and send your sales to your Pixel. You can disconnect at any time, which deletes the token and asks Facebook to remove our access.</li>

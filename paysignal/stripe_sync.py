@@ -86,7 +86,7 @@ def to_payments(ch: dict, client_id: str) -> list[Payment]:
         fbclid=meta.get("fbclid"), ttclid=meta.get("ttclid"),
         utm_source=meta.get("utm_source"), utm_medium=meta.get("utm_medium"),
         utm_campaign=meta.get("utm_campaign"), utm_content=meta.get("utm_content"),
-        promo_code=meta.get("promo_code"), fbp=meta.get("fbp"), fbc=meta.get("fbc"),
+        promo_code=meta.get("promo_code"), fbp=meta.get("fbp"), fbc=meta.get("fbc"), ttp=meta.get("ttp"),
         first_name=name.split(" ")[0] or None, last_name=" ".join(name.split(" ")[1:]) or None,
         city=(addr or {}).get("city"), zip=(addr or {}).get("postal_code"), country=(addr or {}).get("country"))
     out = [Payment(external_id=ch["id"], kind="purchase", amount=_major(ch["amount"], currency), **common)]
