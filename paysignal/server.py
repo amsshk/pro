@@ -707,10 +707,23 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             abort(503, "ProAds can't store keys safely yet (PROADS_SECRET_KEY is missing on the server).")
         with state.lock:
             state.tiktok.save(client_id, pixel, enc, test)
-        res = tiktok_push(client_id)
         log.info("tiktok connected for %s (%s)", client_id, "test" if test else "live")
+        if state.tiktok_http is not None:            # tests: send right away
+            res = tiktok_push(client_id)
+        else:                                         # never keep the page waiting on TikTok
+            def bg():
+                try:
+                    tiktok_push(client_id)
+                except Exception:
+                    log.exception("first TikTok send failed for %s", client_id)
+                    with state.lock:
+                        state.tiktok.result(client_id, False, "ProAds couldn't send to TikTok yet. It will try again in a few minutes.")
+            threading.Thread(target=bg, daemon=True, name="tiktok-first-send").start()
+            res = {}
         with state.lock:
             out = {**tiktok.TikTokStore.public(state.tiktok.get(client_id)), **state.tiktok.health(client_id)}
+        if not res and out.get("status") == "waiting":
+            out["message"] = "Connected. ProAds is sending your recent sales to TikTok now: refresh in a minute to see the result."
         return {"ok": not res.get("error"), **out}
 
     @flask.post("/connect/<client_id>/tiktok/disconnect")
