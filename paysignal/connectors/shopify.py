@@ -40,7 +40,8 @@ def _person(order: dict, customer: dict) -> dict:
             "client_ip_address": order.get("browser_ip") or client.get("browser_ip"),
             "client_user_agent": client.get("user_agent"),
             "event_source_url": order.get("order_status_url") or None,
-            "fbp": notes.get("_fbp") or notes.get("fbp") or None, "fbc": notes.get("_fbc") or notes.get("fbc") or None}
+            "fbp": notes.get("_fbp") or notes.get("fbp") or None, "fbc": notes.get("_fbc") or notes.get("fbc") or None,
+            "ttp": notes.get("_ttp") or notes.get("ttp") or None}
 
 
 def _ts(value: str | None) -> datetime:
