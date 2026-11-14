@@ -3,10 +3,17 @@
 Works like the Meta side: the same verified purchases, the same event id (so a TikTok Pixel on the site and
 ProAds never count one sale twice), customer details SHA-256 hashed before they leave the server.
 
-  CompletePayment       every new paid purchase (TikTok's standard purchase event), with its real value
-  CompleteRegistration  ProAds' own sign-ups (for ProAds' own TikTok ads)
+  Purchase              every new paid purchase, valued exactly like the Meta side: what the customer paid, or
+                        (if the business chose it) the profit on that order, minus anything already refunded
+  CompleteRegistration  ProAds' own sign-ups; StartTrial when that account becomes active (for ProAds' own ads)
 
-TikTok has no refund event, so refunds stay inside ProAds (they still shape ProAds' reports and advice).
+TikTok has no refund event, so ProAds protects TikTok's learning another way:
+  * a purchase already fully refunded is never sent (TikTok would learn to find more people like that buyer)
+  * a partly refunded one is sent at its kept value
+  * for a business that refunds a lot (10%+ of sales), each sale waits 48 hours first, so quick refunds and
+    chargebacks are caught before TikTok learns from them (TikTok still accepts it: its window is 7 days)
+Delivery: a refused batch is retried one event at a time, so one bad sale never blocks the rest; a sale TikTok
+refuses on its own is recorded as rejected, a token problem stops sending until it's fixed.
 
 A business connects with two things from TikTok Events Manager: the Pixel ID and an Events API access token
 (Pixel > Settings > Generate access token). No TikTok app review is needed for this.
@@ -50,11 +57,21 @@ def has_match_key(event: dict) -> bool:
     return any(k in event["user"] for k in ("email", "phone", "external_id", "ttclid", "ttp"))
 
 
-def purchase_event(p: Payment) -> dict:
-    ev = {"event": "CompletePayment", "event_time": int(p.occurred_at.timestamp()), "event_id": p.event_id,
+HIGH_REFUND_RATE = 0.10
+HOLD = timedelta(hours=48)
+
+
+def event_id(p: Payment) -> str:
+    """The order number, as TikTok recommends: a TikTok Pixel on the shop's checkout that sends the same order
+    number is then counted once, not twice."""
+    return str(p.external_id)[:200]
+
+
+def purchase_event(p: Payment, value: Optional[float] = None) -> dict:
+    ev = {"event": "Purchase", "event_time": int(p.occurred_at.timestamp()), "event_id": event_id(p),
           "user": user_for(p.email, p.phone, p.customer_id, p.ttclid, p.ttp, p.client_ip_address, p.client_user_agent),
-          "properties": {"value": round(p.amount, 2), "currency": p.currency, "order_id": p.external_id,
-                         "content_type": "product"}}
+          "properties": {"value": round(p.amount if value is None else value, 2), "currency": p.currency,
+                         "order_id": p.external_id, "content_type": "product"}}
     if p.items:
         ev["properties"]["contents"] = [{"content_id": i.sku or i.name, "content_name": i.name,
                                          "quantity": i.quantity, "price": i.unit_price} for i in p.items[:50]]
@@ -103,6 +120,10 @@ class TikTokStore:
     def __init__(self, db):
         self.db = db
         self.db.executescript(self.SCHEMA)
+        cols = [r[1] for r in self.db.execute("PRAGMA table_info(tiktok_sent)")]
+        if "status" not in cols:                    # accepted | rejected | refunded
+            self.db.execute("ALTER TABLE tiktok_sent ADD COLUMN status TEXT NOT NULL DEFAULT 'accepted'")
+            self.db.execute("ALTER TABLE tiktok_sent ADD COLUMN reason TEXT")
         self.db.commit()
 
     def save(self, client_id: str, pixel_code: str, token_enc: str, test_code: Optional[str]) -> None:
@@ -129,11 +150,20 @@ class TikTokStore:
     def was_sent(self, client_id: str, event_id: str) -> bool:
         return self.db.execute("SELECT 1 FROM tiktok_sent WHERE client_id=? AND event_id=?", (client_id, event_id)).fetchone() is not None
 
-    def mark_sent(self, client_id: str, event_ids: list[str]) -> None:
+    def mark_sent(self, client_id: str, event_ids: list[str], status: str = "accepted", reason: Optional[str] = None) -> None:
         now = int(time.time())
-        self.db.executemany("INSERT OR IGNORE INTO tiktok_sent (client_id, event_id, sent_at) VALUES (?,?,?)",
-                            [(client_id, e, now) for e in event_ids])
+        self.db.executemany("INSERT OR IGNORE INTO tiktok_sent (client_id, event_id, sent_at, status, reason) VALUES (?,?,?,?,?)",
+                            [(client_id, e, now, status, reason) for e in event_ids])
         self.db.commit()
+
+    def health(self, client_id: str, days: int = 7) -> dict:
+        since = int(time.time()) - days * 86400
+        rows = dict(self.db.execute("SELECT status, COUNT(*) FROM tiktok_sent WHERE client_id=? AND sent_at>=? GROUP BY status",
+                                    (client_id, since)).fetchall())
+        last = self.db.execute("SELECT reason FROM tiktok_sent WHERE client_id=? AND status='rejected' ORDER BY sent_at DESC LIMIT 1",
+                               (client_id,)).fetchone()
+        return {"accepted": rows.get("accepted", 0), "rejected": rows.get("rejected", 0), "refunded_skipped": rows.get("refunded", 0),
+                "last_rejection": last[0] if last else None}
 
     def result(self, client_id: str, ok: bool, message: Optional[str], sent: int = 0) -> None:
         self.db.execute("UPDATE tiktok_links SET last_sync=?, status=?, message=?, sent=sent+? WHERE client_id=?",
@@ -148,10 +178,68 @@ class TikTokStore:
                 "status": row["status"], "message": row["message"], "last_sync": row["last_sync"], "sent": row["sent"]}
 
 
-def pending(payments: list[Payment], store: TikTokStore, client_id: str, now: Optional[datetime] = None) -> list[Payment]:
-    """Recent paid purchases TikTok hasn't been sent yet."""
-    cutoff = (now or datetime.now(timezone.utc)) - MAX_AGE
-    return [p for p in payments if p.kind == "purchase" and p.occurred_at >= cutoff and not store.was_sent(client_id, p.event_id)]
+def refund_rate(payments: list[Payment], refunded) -> float:
+    """Share of sales money refunded over the last 180 days (the business's own history)."""
+    since = datetime.now(timezone.utc) - timedelta(days=180)
+    rec = [p for p in payments if p.kind == "purchase" and p.occurred_at >= since]
+    total = sum(p.amount for p in rec)
+    return (sum(min(refunded(p), p.amount) for p in rec) / total) if total else 0.0
+
+
+def plan(payments: list[Payment], store: "TikTokStore", client_id: str, refunded, value_of,
+         now: Optional[datetime] = None) -> dict:
+    """What to send now: {"send": [(payment, value)], "refunded": [payment], "held": int, "hold_hours": int}."""
+    now = now or datetime.now(timezone.utc)
+    rate = refund_rate(payments, refunded)
+    hold = HOLD if rate >= HIGH_REFUND_RATE else timedelta(0)
+    out = {"send": [], "refunded": [], "held": 0, "hold_hours": int(hold.total_seconds() // 3600), "refund_rate": round(rate, 3)}
+    for p in payments:
+        if p.kind != "purchase" or p.occurred_at < now - MAX_AGE or store.was_sent(client_id, event_id(p)):
+            continue
+        if p.occurred_at > now - hold:
+            out["held"] += 1
+            continue
+        back = refunded(p)
+        if back >= p.amount - 0.005:
+            out["refunded"].append(p)              # never teach TikTok to find more buyers like a refunded one
+            continue
+        v = value_of(p)
+        if back:
+            v = v * (1 - back / p.amount)           # kept value only
+        out["send"].append((p, round(v, 2)))
+    return out
+
+
+def is_auth_problem(message: str) -> bool:
+    m = (message or "").lower()
+    return any(k in m for k in ("token", "permission", "unauthori", "pixel", "event_source_id", "advertiser"))
+
+
+def deliver(events: list[dict], pixel_code: str, token: str, http, test_event_code: Optional[str] = None) -> dict:
+    """Send; if a batch is refused for something other than the token, retry its events one by one so a single
+    bad sale is set aside (rejected) and the rest still reach TikTok. Returns {"sent", "rejected", "stopped"}."""
+    sent, rejected, stopped = [], [], None
+    for i in range(0, len(events), BATCH):
+        chunk = events[i:i + BATCH]
+        r = send(chunk, pixel_code, token, http, test_event_code)[0]
+        if r["ok"]:
+            sent += [e["event_id"] for e in chunk]
+            continue
+        if r["status"] == 0 or r["status"] >= 500 or r["status"] == 429 or is_auth_problem(r["message"]):
+            stopped = r["message"]                 # TikTok down, slow down, or token: try again next round
+            break
+        for e in chunk:
+            one = send([e], pixel_code, token, http, test_event_code)[0]
+            if one["ok"]:
+                sent.append(e["event_id"])
+            elif one["status"] == 0 or one["status"] >= 500 or one["status"] == 429 or is_auth_problem(one["message"]):
+                stopped = one["message"]
+                break
+            else:
+                rejected.append((e["event_id"], one["message"]))
+        if stopped:
+            break
+    return {"sent": sent, "rejected": rejected, "stopped": stopped}
 
 
 # ---------- ProAds' own TikTok tracking (sign-ups), like growth.py does for Meta ----------
@@ -162,7 +250,8 @@ def proads_settings() -> dict:
 
 def from_growth(meta_event: dict, ctx: Optional[dict], account: dict) -> Optional[dict]:
     """ProAds' own Meta event -> the TikTok equivalent (only the ones TikTok has a standard event for)."""
-    name = {"CompleteRegistration": "CompleteRegistration", "Purchase": "CompletePayment", "Subscribe": "Subscribe"}.get(meta_event["event_name"])
+    name = {"CompleteRegistration": "CompleteRegistration", "StartTrial": "StartTrial", "Purchase": "Purchase",
+            "Subscribe": "Subscribe"}.get(meta_event["event_name"])
     if not name:
         return None
     ctx = ctx or {}

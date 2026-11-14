@@ -1382,12 +1382,16 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       const state_ = tt.connected ? h("div", { class: tt.status === "error" ? "result err" : "result" }, h("span", {},
         (tt.status === "error" ? "TikTok refused the last send: " : "Connected" + (tt.test_mode ? " in TEST mode" : "") + " · ") +
         (tt.status === "error" ? (tt.message || "") : fmt.format(tt.sent || 0) + " sales sent to TikTok" +
-          (tt.last_sync ? " · last sent " + new Date(tt.last_sync * 1000).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "")))) : null;
+          (tt.last_sync ? " · last sent " + new Date(tt.last_sync * 1000).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "") +
+          " · last 7 days: " + fmt.format(tt.accepted || 0) + " accepted" +
+          (tt.refunded_skipped ? ", " + fmt.format(tt.refunded_skipped) + " kept back (refunded)" : "") +
+          (tt.rejected ? ", " + fmt.format(tt.rejected) + " refused by TikTok (" + (tt.last_rejection || "") + ")" : "") +
+          (tt.message ? " · " + tt.message : "")))) : null;
       const off = tt.connected ? h("button", { class: "btn btn-ghost", type: "button", style: "align-self:flex-start", onclick: async () => {
         try { const r = await api("/connect/" + cid() + "/tiktok/disconnect", { method: "POST" }); status = await api("/status/" + cid()); toast(r.note); route(); } catch (err) { if (err.message !== "signed out") toast(err.message); } } }, "Disconnect") : null;
       return h("section", { class: "card", style: "display:flex;flex-direction:column;gap:10px" },
         h("div", { class: "between" }, h("h2", {}, "TikTok"), h("span", { class: "badge b-neutral" }, "Sends real sales to TikTok")),
-        h("p", { class: "sub", style: "margin:0" }, "Every real, paid sale ProAds sees goes to TikTok (hashed, never raw), so your TikTok ads learn who actually buys, not just who watches. Refunds stay in ProAds: TikTok has no refund event."),
+        h("p", { class: "sub", style: "margin:0" }, "Every real, paid sale goes to TikTok as a Purchase, valued the same way as on Meta (what was paid, or your profit if you chose that), so TikTok ads learn who actually buys, not who watches. Customer details are hashed, never sent raw. TikTok has no refund event, so ProAds never sends a sale that was already refunded, sends partly refunded ones at what you kept, and if your refunds run high it waits 48 hours before sending each sale."),
         h("ol", { style: "margin:0;padding-left:20px;font-size:14px;display:flex;flex-direction:column;gap:4px" },
           h("li", {}, "Open ", h("a", { href: "https://ads.tiktok.com/i18n/events_manager", target: "_blank", rel: "noopener" }, "TikTok Events Manager"), " and pick your Pixel (or create one: Web events → Set up web events)."),
           h("li", {}, "Copy the Pixel ID shown under its name."),

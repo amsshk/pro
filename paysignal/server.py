@@ -628,37 +628,48 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         return requests
 
     def tiktok_push(client_id: str) -> dict:
-        """Send this business's new paid purchases to TikTok."""
+        """Send this business's new paid purchases to TikTok, valued and filtered exactly like the Meta side."""
         with state.lock:
             row = state.tiktok.get(client_id)
             if not row:
                 return {"skipped": "not connected"}
-            todo = tiktok.pending(state.store.purchases(client_id), state.tiktok, client_id)
-        events = [tiktok.purchase_event(p) for p in todo]
+            state.ensure_trained(client_id)
+            eng = state.engine(client_id)
+            mode = (state.config(client_id).get("meta") or {}).get("value_mode") or state.signals.value_mode(client_id)
+
+            def value_of(p):
+                if mode == "profit" and p.cost_of_goods() is not None:
+                    return eng.scorer.margin(p)
+                return p.amount
+            pl = tiktok.plan(state.store.purchases(client_id), state.tiktok, client_id,
+                             lambda p: state.store.refunded_amount(client_id, p.external_id), value_of)
+            state.tiktok.mark_sent(client_id, [tiktok.event_id(p) for p in pl["refunded"]], "refunded",
+                                   "refunded before it was sent")
+        events = [tiktok.purchase_event(p, v) for p, v in pl["send"]]
         events = [e for e in events if tiktok.has_match_key(e)]
+        held = (f" {pl['held']} newer sale(s) wait {pl['hold_hours']} hours first, so quick refunds are caught." if pl["held"] else "")
         if not events:
             with state.lock:
-                if row["status"] == "waiting":
-                    state.tiktok.result(client_id, True, "Connected. New sales will be sent to TikTok as they come in.")
-            return {"sent": 0}
+                if row["status"] in ("waiting", "ok", None):    # an error stays visible until a send works
+                    state.tiktok.result(client_id, True, ("Connected. New sales go to TikTok as they come in." if row["status"] == "waiting"
+                                                          else "Up to date.") + held)
+            return {"sent": 0, "held": pl["held"]}
         token = shopify_app.decrypt(row["token_enc"])
-        results = tiktok.send(events, row["pixel_code"], token, tiktok_http(), row["test_code"])
-        sent_ids, bad = [], None
-        for i, r in enumerate(results):
-            if r["ok"]:
-                sent_ids += [e["event_id"] for e in events[i * tiktok.BATCH:(i + 1) * tiktok.BATCH]]
-            else:
-                bad = r["message"]
+        d = tiktok.deliver(events, row["pixel_code"], token, tiktok_http(), row["test_code"])
         with state.lock:
-            state.tiktok.mark_sent(client_id, sent_ids)
-            if bad:
-                state.tiktok.result(client_id, False, tiktok.explain(bad), len(sent_ids))
+            state.tiktok.mark_sent(client_id, d["sent"])
+            for eid, why in d["rejected"]:
+                state.tiktok.mark_sent(client_id, [eid], "rejected", (why or "")[:300])
+            if d["stopped"]:
+                state.tiktok.result(client_id, False, tiktok.explain(d["stopped"]), len(d["sent"]))
             else:
-                state.tiktok.result(client_id, True, f"Sent {len(sent_ids)} sale(s) to TikTok" +
-                                    (" as TEST events (see Events Manager > Test events)." if row["test_code"] else "."), len(sent_ids))
-        if bad:
-            log.warning("TikTok refused events of %s: %s", client_id, bad)
-        return {"sent": len(sent_ids), "error": bad}
+                msg = f"Sent {len(d['sent'])} sale(s) to TikTok" + (" as TEST events (Events Manager > Test events)." if row["test_code"] else ".")
+                if d["rejected"]:
+                    msg += f" TikTok refused {len(d['rejected'])}: {d['rejected'][0][1]}"
+                state.tiktok.result(client_id, True, msg + held, len(d["sent"]))
+        if d["stopped"]:
+            log.warning("TikTok stopped sending for %s: %s", client_id, d["stopped"])
+        return {"sent": len(d["sent"]), "rejected": len(d["rejected"]), "error": d["stopped"], "held": pl["held"]}
     state.tiktok_push = tiktok_push
 
     def tiktok_push_all() -> None:
@@ -692,7 +703,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         res = tiktok_push(client_id)
         log.info("tiktok connected for %s (%s)", client_id, "test" if test else "live")
         with state.lock:
-            out = tiktok.TikTokStore.public(state.tiktok.get(client_id))
+            out = {**tiktok.TikTokStore.public(state.tiktok.get(client_id)), **state.tiktok.health(client_id)}
         return {"ok": not res.get("error"), **out}
 
     @flask.post("/connect/<client_id>/tiktok/disconnect")
@@ -2786,7 +2797,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 "shopify": {"configured": bool(cfg.get("shopify_webhook_secret") or shop),
                             **payments.get("shopify", {})},
                 "shopify_app": shop_info,
-                "tiktok": tiktok.TikTokStore.public(state.tiktok.get(client_id)),
+                "tiktok": {**tiktok.TikTokStore.public(state.tiktok.get(client_id)), **state.tiktok.health(client_id)},
                 "stripe": {"configured": bool(cfg.get("stripe_webhook_secret")) or bool(state.stripe_links.get(client_id)),
                            **payments.get("stripe", {})},
                 "stripe_api": stripe_sync.StripeLinks.public(state.stripe_links.get(client_id)),

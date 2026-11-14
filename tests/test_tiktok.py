@@ -37,7 +37,7 @@ def pay(i, days=0, **kw):
 def test_event_is_hashed_and_has_tiktok_shape():
     ev = tiktok.purchase_event(pay(1, email=" Sara@Mail.com ", phone="0501234567", ttclid="E.C.abc", ttp="tp1",
                                    items=[LineItem("SKU1", "Serum", 2, 60.0)]))
-    assert ev["event"] == "CompletePayment" and ev["event_id"] == "shop:stripe:ch_1"
+    assert ev["event"] == "Purchase" and ev["event_id"] == "ch_1"
     assert ev["user"]["email"] == sha("sara@mail.com") and ev["user"]["phone"] == sha("+971501234567")
     assert ev["user"]["ttclid"] == "E.C.abc" and ev["user"]["ttp"] == "tp1"
     assert ev["properties"]["value"] == 120.0 and ev["properties"]["currency"] == "AED"
@@ -98,4 +98,52 @@ def test_proads_signup_goes_to_tiktok_with_click_id(monkeypatch):
                             {"ttclid": "CLICK", "ttp": "TTP", "ip": "1.2.3.4", "ua": "UA", "url": "https://pro.ezdevsoft.net/"}, "signup:acme")
     tt = ev["_tiktok"]
     assert tt["event"] == "CompleteRegistration" and tt["event_id"] == "signup:acme"
+    st = growth.build_event("StartTrial", {"client_id": "acme", "email": "o@a.ae"}, {}, "activate:acme")
+    assert st["_tiktok"]["event"] == "StartTrial"
     assert tt["user"]["ttclid"] == "CLICK" and tt["user"]["email"] == sha("owner@acme.ae") and tt["user"]["phone"] == sha("+971501234567")
+
+
+def test_refunded_sales_never_reach_tiktok_and_partial_ones_send_kept_value(app):
+    st = state_of(app)
+    st.tiktok_http = http = Http()
+    st.store.add(pay(1, days=3, email="a@b.co"))
+    st.store.add(pay(2, days=3, email="c@d.co"))
+    st.store.add(Payment(client_id="shop", source="stripe", external_id="ch_1:refund:12000", kind="refund", amount=120.0,
+                         currency="AED", occurred_at=datetime.now(timezone.utc), refund_of="ch_1"))
+    st.store.add(Payment(client_id="shop", source="stripe", external_id="ch_2:refund:3000", kind="refund", amount=30.0,
+                         currency="AED", occurred_at=datetime.now(timezone.utc), refund_of="ch_2"))
+    r = app.test_client().post("/connect/shop/tiktok", json={"pixel_code": "C4ABC123DEF456", "access_token": "x" * 40}, headers=H).json
+    data = http.calls[0][1]["data"]
+    assert [e["event_id"] for e in data] == ["ch_2"] and data[0]["properties"]["value"] == 90.0
+    assert r["refunded_skipped"] == 1 and r["accepted"] == 1
+
+
+def test_high_refund_business_waits_48h_before_sending(app):
+    st = state_of(app)
+    st.tiktok_http = http = Http()
+    for i in range(5):
+        st.store.add(pay(10 + i, days=30, email=f"x{i}@b.co"))
+    st.store.add(Payment(client_id="shop", source="stripe", external_id="r1", kind="refund", amount=120.0, currency="AED",
+                         occurred_at=datetime.now(timezone.utc) - timedelta(days=29), refund_of="ch_10"))   # 20% refunded
+    st.store.add(pay(1, email="new@b.co"))                    # 0 days old: held
+    st.store.add(pay(2, days=3, email="older@b.co"))          # 3 days old: sent
+    r = app.test_client().post("/connect/shop/tiktok", json={"pixel_code": "C4ABC123DEF456", "access_token": "x" * 40}, headers=H).json
+    assert [e["event_id"] for e in http.calls[0][1]["data"]] == ["ch_2"] and "wait 48 hours" in r["message"]
+
+
+def test_one_bad_event_is_set_aside_and_the_rest_still_go(app):
+    st = state_of(app)
+
+    class Picky(Http):
+        def post(self, url, json=None, timeout=None, headers=None):
+            self.calls.append((url, json, headers))
+            bad = any(e["event_id"] == "ch_2" for e in json["data"])
+            return R({"code": 40002, "message": "Invalid value for currency"}) if bad else R({"code": 0, "message": "OK"})
+    st.tiktok_http = http = Picky()
+    for i in (1, 2, 3):
+        st.store.add(pay(i, days=2, email=f"p{i}@b.co"))
+    r = app.test_client().post("/connect/shop/tiktok", json={"pixel_code": "C4ABC123DEF456", "access_token": "x" * 40}, headers=H).json
+    assert r["accepted"] == 2 and r["rejected"] == 1 and "currency" in r["last_rejection"]
+    n = len(http.calls)
+    st.tiktok_push("shop")
+    assert len(http.calls) == n                                # rejected one isn't retried forever
