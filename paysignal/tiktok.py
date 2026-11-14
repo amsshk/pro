@@ -75,6 +75,7 @@ def purchase_event(p: Payment, value: Optional[float] = None) -> dict:
     if p.items:
         ev["properties"]["contents"] = [{"content_id": i.sku or i.name, "content_name": i.name,
                                          "quantity": i.quantity, "price": i.unit_price} for i in p.items[:50]]
+        ev["properties"]["num_items"] = sum(i.quantity for i in p.items)
     if p.event_source_url:
         ev["page"] = {"url": p.event_source_url}
     return ev
