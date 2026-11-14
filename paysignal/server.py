@@ -167,14 +167,14 @@ class App:
         if not (cfg["pixel"] and cfg["token"]):
             return
         with self.lock:
-            if self.tiktok.was_sent("proads", ev["event_id"]):
+            if self.tiktok.was_sent("proads", cfg["pixel"], ev["event_id"]):
                 return
 
         def run():
             res = tiktok.send([ev], cfg["pixel"], cfg["token"], self.tiktok_http or __import__("requests"), cfg["test_code"] or None)
             if res and res[0]["ok"]:
                 with self.lock:
-                    self.tiktok.mark_sent("proads", [ev["event_id"]])
+                    self.tiktok.mark_sent("proads", cfg["pixel"], [ev["event_id"]])
             else:
                 log.warning("TikTok didn't accept ProAds event %s: %s", ev["event"], res and res[0]["message"])
         if self.tiktok_http is not None:
@@ -641,9 +641,10 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 if mode == "profit" and p.cost_of_goods() is not None:
                     return eng.scorer.margin(p)
                 return p.amount
+            px = row["pixel_code"]
             pl = tiktok.plan(state.store.purchases(client_id), state.tiktok, client_id,
-                             lambda p: state.store.refunded_amount(client_id, p.external_id), value_of)
-            state.tiktok.mark_sent(client_id, [tiktok.event_id(p) for p in pl["refunded"]], "refunded",
+                             lambda p: state.store.refunded_amount(client_id, p.external_id), value_of, pixel_code=px)
+            state.tiktok.mark_sent(client_id, px, [tiktok.event_id(p) for p in pl["refunded"]], "refunded",
                                    "refunded before it was sent")
         events = [tiktok.purchase_event(p, v) for p, v in pl["send"]]
         events = [e for e in events if tiktok.has_match_key(e)]
@@ -651,22 +652,22 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if not events:
             with state.lock:
                 if row["status"] in ("waiting", "ok", None):    # an error stays visible until a send works
-                    state.tiktok.result(client_id, True, ("Connected. New sales go to TikTok as they come in." if row["status"] == "waiting"
+                    state.tiktok.result(client_id, px, True, ("Connected. New sales go to TikTok as they come in." if row["status"] == "waiting"
                                                           else "Up to date.") + held)
             return {"sent": 0, "held": pl["held"]}
         token = shopify_app.decrypt(row["token_enc"])
         d = tiktok.deliver(events, row["pixel_code"], token, tiktok_http(), row["test_code"])
         with state.lock:
-            state.tiktok.mark_sent(client_id, d["sent"])
+            state.tiktok.mark_sent(client_id, px, d["sent"])
             for eid, why in d["rejected"]:
-                state.tiktok.mark_sent(client_id, [eid], "rejected", (why or "")[:300])
+                state.tiktok.mark_sent(client_id, px, [eid], "rejected", (why or "")[:300])
             if d["stopped"]:
-                state.tiktok.result(client_id, False, tiktok.explain(d["stopped"]), len(d["sent"]))
+                state.tiktok.result(client_id, px, False, tiktok.explain(d["stopped"]), len(d["sent"]))
             else:
                 msg = f"Sent {len(d['sent'])} sale(s) to TikTok" + (" as TEST events (Events Manager > Test events)." if row["test_code"] else ".")
                 if d["rejected"]:
                     msg += f" TikTok refused {len(d['rejected'])}: {d['rejected'][0][1]}"
-                state.tiktok.result(client_id, True, msg + held, len(d["sent"]))
+                state.tiktok.result(client_id, px, True, msg + held, len(d["sent"]))
         if d["stopped"]:
             log.warning("TikTok stopped sending for %s: %s", client_id, d["stopped"])
         return {"sent": len(d["sent"]), "rejected": len(d["rejected"]), "error": d["stopped"], "held": pl["held"]}
@@ -710,7 +711,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         except shopify_app.ShopifyError:
             abort(503, "ProAds can't store keys safely yet (PROADS_SECRET_KEY is missing on the server).")
         with state.lock:
-            state.tiktok.save(client_id, pixel, enc, test)
+            state.tiktok.save(client_id, pixel, enc, test, str(body.get("name") or "").strip() or None)
         log.info("tiktok connected for %s (%s)", client_id, "test" if test else "live")
         if state.tiktok_http is not None:            # tests: send right away
             res = tiktok_push(client_id)
@@ -721,21 +722,39 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 except Exception:
                     log.exception("first TikTok send failed for %s", client_id)
                     with state.lock:
-                        state.tiktok.result(client_id, False, "ProAds couldn't send to TikTok yet. It will try again in a few minutes.")
+                        state.tiktok.result(client_id, pixel, False, "ProAds couldn't send to TikTok yet. It will try again in a few minutes.")
             threading.Thread(target=bg, daemon=True, name="tiktok-first-send").start()
             res = {}
         with state.lock:
-            out = {**tiktok.TikTokStore.public(state.tiktok.get(client_id)), **state.tiktok.health(client_id)}
+            out = state.tiktok.public(client_id)
         if not res and out.get("status") == "waiting":
             out["message"] = "Connected. ProAds is sending your recent sales to TikTok now: refresh in a minute to see the result."
         return {"ok": not res.get("error"), **out}
 
+    @flask.post("/connect/<client_id>/tiktok/use")
+    def tiktok_use(client_id):
+        """Switch which saved Pixel receives the sales (the others get nothing, so nothing is counted twice)."""
+        state.require_key(client_id)
+        pixel = str((request.get_json(silent=True) or {}).get("pixel_code") or "").strip().upper()
+        with state.lock:
+            if not state.tiktok.activate(client_id, pixel):
+                abort(404, "That Pixel isn't saved in this account.")
+        threading.Thread(target=lambda: tiktok_push(client_id), daemon=True).start() if state.tiktok_http is None else tiktok_push(client_id)
+        with state.lock:
+            return {"ok": True, **state.tiktok.public(client_id)}
+
     @flask.post("/connect/<client_id>/tiktok/disconnect")
     def tiktok_disconnect(client_id):
+        """Remove one saved Pixel (pixel_code) or, with none given, all of them."""
         state.require_key(client_id)
+        pixel = str((request.get_json(silent=True) or {}).get("pixel_code") or "").strip().upper() or None
         with state.lock:
-            state.tiktok.remove(client_id)
-        return {"ok": True, "note": "ProAds deleted the TikTok token. You can also delete it in TikTok Events Manager."}
+            state.tiktok.remove(client_id, pixel)
+            left = state.tiktok.public(client_id)
+        note = "ProAds deleted that Pixel's token. You can also delete the token in TikTok Events Manager."
+        if pixel and left["pixels"] and not left["connected"]:
+            note += " Choose which of your other Pixels should receive sales."
+        return {"ok": True, "note": note, **left}
 
     @flask.post("/connect/<client_id>/stripe/disconnect")
     def stripe_disconnect(client_id):
@@ -2821,7 +2840,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 "shopify": {"configured": bool(cfg.get("shopify_webhook_secret") or shop),
                             **payments.get("shopify", {})},
                 "shopify_app": shop_info,
-                "tiktok": {**tiktok.TikTokStore.public(state.tiktok.get(client_id)), **state.tiktok.health(client_id)},
+                "tiktok": state.tiktok.public(client_id),
                 "stripe": {"configured": bool(cfg.get("stripe_webhook_secret")) or bool(state.stripe_links.get(client_id)),
                            **payments.get("stripe", {})},
                 "stripe_api": stripe_sync.StripeLinks.public(state.stripe_links.get(client_id)),

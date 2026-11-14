@@ -1362,42 +1362,60 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         off);
     };
     const tiktokCard = () => {
-      const tt = (status.connections && status.connections.tiktok) || { connected: false };
+      const tt = (status.connections && status.connections.tiktok) || { connected: false, pixels: [] };
+      const pixels = tt.pixels || [];
       const out = h("div", {});
-      const pixIn = h("input", { autocomplete: "off", spellcheck: "false", placeholder: "Pixel ID, e.g. C4ABC123DEF456", "aria-label": "TikTok Pixel ID", value: tt.pixel_code || "" });
+      const reload = async (note) => { status = await api("/status/" + cid()); if (note) toast(note); route(); };
+      const nameIn = h("input", { autocomplete: "off", placeholder: "Name, e.g. Verified sales", "aria-label": "Pixel name" });
+      const pixIn = h("input", { autocomplete: "off", spellcheck: "false", placeholder: "Pixel ID, e.g. C4ABC123DEF456", "aria-label": "TikTok Pixel ID" });
       const tokIn = h("input", { type: "password", autocomplete: "off", spellcheck: "false", placeholder: "Events API access token", "aria-label": "TikTok Events API access token" });
       const testIn = h("input", { autocomplete: "off", spellcheck: "false", placeholder: "Test event code (optional, e.g. TEST12345)", "aria-label": "TikTok test event code" });
-      const go = h("button", { class: "btn btn-primary", type: "submit", style: "align-self:flex-start" }, tt.connected ? "Save" : "Connect TikTok");
+      const go = h("button", { class: "btn btn-primary", type: "submit", style: "align-self:flex-start" }, pixels.length ? "Add Pixel and use it" : "Connect TikTok");
       const form = h("form", { style: "display:flex;flex-direction:column;gap:8px", onsubmit: async (e) => {
-        e.preventDefault(); go.disabled = true; out.replaceChildren(h("p", { class: "sub", style: "margin:0" }, "Connecting and sending your recent sales to TikTok…"));
+        e.preventDefault(); go.disabled = true; out.replaceChildren(h("p", { class: "sub", style: "margin:0" }, "Connecting…"));
         try {
           const r = await api("/connect/" + cid() + "/tiktok", { method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ pixel_code: pixIn.value, access_token: tokIn.value, test_event_code: testIn.value }) });
-          tokIn.value = ""; status = await api("/status/" + cid());
-          out.replaceChildren(h("div", { class: r.ok ? "result" : "result err" }, h("span", { class: r.ok ? "ok" : "" }, r.message || "Connected.")));
-          setTimeout(() => route(), 1500);
+            body: JSON.stringify({ name: nameIn.value, pixel_code: pixIn.value, access_token: tokIn.value, test_event_code: testIn.value }) });
+          tokIn.value = "";
+          out.replaceChildren(h("div", { class: "result" }, h("span", { class: "ok" }, r.message || "Connected.")));
+          setTimeout(() => reload(), 1500);
         } catch (err) { if (err.message !== "signed out") out.replaceChildren(errorCard(err.message)); }
         go.disabled = false;
-      } }, pixIn, tokIn, testIn, go);
-      const state_ = tt.connected ? h("div", { class: tt.status === "error" ? "result err" : "result" }, h("span", {},
-        (tt.status === "error" ? "TikTok refused the last send: " : "Connected" + (tt.test_mode ? " in TEST mode" : "") + " · ") +
-        (tt.status === "error" ? (tt.message || "") : fmt.format(tt.sent || 0) + " sales sent to TikTok" +
-          (tt.last_sync ? " · last sent " + new Date(tt.last_sync * 1000).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "") +
-          " · last 7 days: " + fmt.format(tt.accepted || 0) + " accepted" +
-          (tt.refunded_skipped ? ", " + fmt.format(tt.refunded_skipped) + " kept back (refunded)" : "") +
-          (tt.rejected ? ", " + fmt.format(tt.rejected) + " refused by TikTok (" + (tt.last_rejection || "") + ")" : "") +
-          (tt.message ? " · " + tt.message : "")))) : null;
-      const off = tt.connected ? h("button", { class: "btn btn-ghost", type: "button", style: "align-self:flex-start", onclick: async () => {
-        try { const r = await api("/connect/" + cid() + "/tiktok/disconnect", { method: "POST" }); status = await api("/status/" + cid()); toast(r.note); route(); } catch (err) { if (err.message !== "signed out") toast(err.message); } } }, "Disconnect") : null;
+      } }, nameIn, pixIn, tokIn, testIn, go);
+      const when = (t) => new Date(t * 1000).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+      const row = (px) => {
+        const use = px.active ? h("span", { class: "badge b-measured" }, "Receives the sales") :
+          h("button", { class: "btn btn-ghost", type: "button", onclick: async (e) => { e.target.disabled = true;
+            try { await api("/connect/" + cid() + "/tiktok/use", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pixel_code: px.pixel_code }) }); reload("Sales now go to " + px.name + "."); }
+            catch (err) { e.target.disabled = false; if (err.message !== "signed out") toast(err.message); } } }, "Use this one");
+        const rm = h("button", { class: "btn btn-ghost", type: "button", onclick: async (e) => { e.target.disabled = true;
+          try { const r = await api("/connect/" + cid() + "/tiktok/disconnect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pixel_code: px.pixel_code }) }); reload(r.note); }
+          catch (err) { e.target.disabled = false; if (err.message !== "signed out") toast(err.message); } } }, "Remove");
+        const line = px.status === "error" ? "TikTok refused the last send: " + (px.message || "") :
+          fmt.format(px.sent || 0) + " sales sent" + (px.test_mode ? " (test mode)" : "") + (px.last_sync ? " · last " + when(px.last_sync) : "") +
+          (px.active && tt.accepted != null ? " · last 7 days: " + fmt.format(tt.accepted || 0) + " accepted" +
+            (tt.refunded_skipped ? ", " + fmt.format(tt.refunded_skipped) + " kept back (refunded)" : "") +
+            (tt.rejected ? ", " + fmt.format(tt.rejected) + " refused (" + (tt.last_rejection || "") + ")" : "") : "") +
+          (px.active && px.message ? " · " + px.message : "");
+        return h("div", { class: px.status === "error" ? "result err" : "result", style: "flex-direction:column;align-items:stretch;gap:8px" },
+          h("div", { class: "between" }, h("b", {}, px.name + " · " + px.pixel_code), use),
+          h("span", { style: "font-size:13px" }, line),
+          h("div", { style: "display:flex;gap:8px" }, rm));
+      };
       return h("section", { class: "card", style: "display:flex;flex-direction:column;gap:10px" },
         h("div", { class: "between" }, h("h2", {}, "TikTok"), h("span", { class: "badge b-neutral" }, "Sends real sales to TikTok")),
         h("p", { class: "sub", style: "margin:0" }, "Every real, paid sale goes to TikTok as a Purchase, valued the same way as on Meta (what was paid, or your profit if you chose that), so TikTok ads learn who actually buys, not who watches. Customer details are hashed, never sent raw. TikTok has no refund event, so ProAds never sends a sale that was already refunded, sends partly refunded ones at what you kept, and if your refunds run high it waits 48 hours before sending each sale."),
+        pixels.length ? h("div", { style: "display:flex;flex-direction:column;gap:8px" }, pixels.map(row)) : null,
+        pixels.length > 1 || (pixels.length && !tt.connected) ? h("p", { class: "small", style: "margin:0" },
+          tt.connected ? "Only one Pixel receives the sales at a time, so a sale is never counted twice. Switching sends the new one the last 7 days of sales it hasn't had."
+            : "None of your saved Pixels receives sales right now: choose one with \u201cUse this one\u201d.") : null,
+        h("b", { style: "font-size:14px;margin-top:4px" }, pixels.length ? "Add another Pixel" : "Connect a Pixel"),
         h("ol", { style: "margin:0;padding-left:20px;font-size:14px;display:flex;flex-direction:column;gap:4px" },
-          h("li", {}, "Open ", h("a", { href: "https://ads.tiktok.com/i18n/events_manager", target: "_blank", rel: "noopener" }, "TikTok Events Manager"), " and pick your Pixel (or create one: Web events → Set up web events)."),
-          h("li", {}, "Copy the Pixel ID shown under its name."),
+          h("li", {}, "Open ", h("a", { href: "https://ads.tiktok.com/i18n/events_manager", target: "_blank", rel: "noopener" }, "TikTok Events Manager"), " and pick your Pixel (or create one: Web events → Set up web events → Manual setup → Events API)."),
+          h("li", {}, "Copy the Pixel ID shown under its name (letters and numbers)."),
           h("li", {}, "Open the Pixel's Settings → Events API → Generate access token, and copy it."),
-          h("li", {}, "Optional: from Test events, copy the test code to try it safely first. Remove it later to go live.")),
-        state_, form, out, off);
+          h("li", {}, "Optional: from Test events, copy the test code to try it safely first.")),
+        form, out);
     };
     const shopCard = (k) => {
       if (k === "stripe") return stripeCard();

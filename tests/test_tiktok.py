@@ -155,3 +155,34 @@ def test_account_ids_are_not_accepted_as_pixel_or_token(app):
     assert r.status_code == 400 and "not a Pixel ID" in r.json["error"]
     r = c.post("/connect/shop/tiktok", json={"pixel_code": "C4ABC123DEF456", "access_token": "7651694019151560725"}, headers=H)
     assert r.status_code == 400 and "not an access token" in r.json["error"]
+
+
+def test_several_pixels_one_receives_and_switching_sends_what_it_missed(app):
+    st = state_of(app)
+    st.tiktok_http = http = Http()
+    st.store.add(pay(1, days=1, email="a@b.co"))
+    c = app.test_client()
+    c.post("/connect/shop/tiktok", json={"name": "Shopify app", "pixel_code": "D9TJ4PRC77U3482UTHL0", "access_token": "a" * 40}, headers=H)
+    r = c.post("/connect/shop/tiktok", json={"name": "Verified sales", "pixel_code": "DBS29OJC77U7CBT60R3G", "access_token": "b" * 40}, headers=H).json
+    assert r["pixel_code"] == "DBS29OJC77U7CBT60R3G" and [p["active"] for p in r["pixels"]] == [True, False]
+    assert [c_[1]["event_source_id"] for c_ in http.calls] == ["D9TJ4PRC77U3482UTHL0", "DBS29OJC77U7CBT60R3G"]
+    st.tiktok_push("shop")                                    # the active one already has it
+    assert len(http.calls) == 2
+    r = c.post("/connect/shop/tiktok/use", json={"pixel_code": "D9TJ4PRC77U3482UTHL0"}, headers=H).json
+    assert r["pixel_code"] == "D9TJ4PRC77U3482UTHL0" and len(http.calls) == 2   # that one already got it too
+    r = c.post("/connect/shop/tiktok/disconnect", json={"pixel_code": "D9TJ4PRC77U3482UTHL0"}, headers=H).json
+    assert not r["connected"] and len(r["pixels"]) == 1 and "Choose" in r["note"]
+    assert "token" not in str(c.get("/status/shop", headers=H).json["connections"]["tiktok"]).replace("tiktok", "")
+
+
+def test_old_single_pixel_tables_are_carried_over(tmp_path):
+    import sqlite3
+    db = sqlite3.connect(tmp_path / "m.db")
+    db.executescript("""CREATE TABLE tiktok_links (client_id TEXT PRIMARY KEY, pixel_code TEXT NOT NULL, token_enc TEXT NOT NULL,
+        test_code TEXT, connected_at INTEGER NOT NULL, last_sync INTEGER, status TEXT, message TEXT, sent INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE tiktok_sent (client_id TEXT NOT NULL, event_id TEXT NOT NULL, sent_at INTEGER NOT NULL, status TEXT, reason TEXT,
+        PRIMARY KEY (client_id, event_id));
+        INSERT INTO tiktok_links VALUES ('shop','C4ABC123DEF456','enc',NULL,1,NULL,'ok',NULL,3);
+        INSERT INTO tiktok_sent VALUES ('shop','ch_1',1,'accepted',NULL);""")
+    st = tiktok.TikTokStore(db)
+    assert st.get("shop")["pixel_code"] == "C4ABC123DEF456" and st.was_sent("shop", "C4ABC123DEF456", "ch_1")

@@ -109,73 +109,128 @@ def explain(message: str) -> str:
 
 
 class TikTokStore:
+    """A business can keep several TikTok Pixels (each with its own token) and pick which one gets its sales.
+    Only one is active at a time, so a sale is never counted in two Pixels. What was sent is remembered per Pixel:
+    switching to another Pixel sends it the recent sales it hasn't had yet."""
     SCHEMA = """
-    CREATE TABLE IF NOT EXISTS tiktok_links (client_id TEXT PRIMARY KEY, pixel_code TEXT NOT NULL, token_enc TEXT NOT NULL,
-        test_code TEXT, connected_at INTEGER NOT NULL, last_sync INTEGER, status TEXT, message TEXT,
-        sent INTEGER NOT NULL DEFAULT 0);
-    CREATE TABLE IF NOT EXISTS tiktok_sent (client_id TEXT NOT NULL, event_id TEXT NOT NULL, sent_at INTEGER NOT NULL,
-        PRIMARY KEY (client_id, event_id));
+    CREATE TABLE IF NOT EXISTS tiktok_pixels (client_id TEXT NOT NULL, pixel_code TEXT NOT NULL, name TEXT,
+        token_enc TEXT NOT NULL, test_code TEXT, added_at INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 0,
+        last_sync INTEGER, status TEXT, message TEXT, sent INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (client_id, pixel_code));
+    CREATE TABLE IF NOT EXISTS tiktok_delivered (client_id TEXT NOT NULL, pixel_code TEXT NOT NULL, event_id TEXT NOT NULL,
+        sent_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'accepted', reason TEXT,
+        PRIMARY KEY (client_id, pixel_code, event_id));
     """
+    COLS = ("client_id", "pixel_code", "name", "token_enc", "test_code", "added_at", "active", "last_sync", "status", "message", "sent")
 
     def __init__(self, db):
         self.db = db
         self.db.executescript(self.SCHEMA)
-        cols = [r[1] for r in self.db.execute("PRAGMA table_info(tiktok_sent)")]
-        if "status" not in cols:                    # accepted | rejected | refunded
-            self.db.execute("ALTER TABLE tiktok_sent ADD COLUMN status TEXT NOT NULL DEFAULT 'accepted'")
-            self.db.execute("ALTER TABLE tiktok_sent ADD COLUMN reason TEXT")
+        self._migrate()
         self.db.commit()
 
-    def save(self, client_id: str, pixel_code: str, token_enc: str, test_code: Optional[str]) -> None:
-        self.db.execute("INSERT INTO tiktok_links (client_id, pixel_code, token_enc, test_code, connected_at, status)"
-                        " VALUES (?,?,?,?,?,'waiting') ON CONFLICT(client_id) DO UPDATE SET pixel_code=excluded.pixel_code,"
-                        " token_enc=excluded.token_enc, test_code=excluded.test_code, connected_at=excluded.connected_at,"
-                        " status='waiting', message=NULL",
-                        (client_id, pixel_code, token_enc, test_code or None, int(time.time())))
+    def _migrate(self):
+        """Earlier versions kept one Pixel per account (tiktok_links / tiktok_sent): carry them over once."""
+        tables = {r[0] for r in self.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "tiktok_links" in tables:
+            for r in self.db.execute("SELECT client_id, pixel_code, token_enc, test_code, connected_at, last_sync, status,"
+                                     " message, sent FROM tiktok_links").fetchall():
+                self.db.execute("INSERT OR IGNORE INTO tiktok_pixels (client_id, pixel_code, name, token_enc, test_code, added_at,"
+                                " active, last_sync, status, message, sent) VALUES (?,?,?,?,?,?,1,?,?,?,?)",
+                                (r[0], r[1], "TikTok Pixel", *r[2:]))
+            if "tiktok_sent" in tables:
+                cols = [c[1] for c in self.db.execute("PRAGMA table_info(tiktok_sent)")]
+                st = "COALESCE(s.status, 'accepted')" if "status" in cols else "'accepted'"
+                rs = "s.reason" if "reason" in cols else "NULL"
+                self.db.execute(f"INSERT OR IGNORE INTO tiktok_delivered (client_id, pixel_code, event_id, sent_at, status, reason)"
+                                f" SELECT s.client_id, l.pixel_code, s.event_id, s.sent_at, {st}, {rs} FROM tiktok_sent s"
+                                f" JOIN tiktok_links l ON l.client_id = s.client_id")
+                self.db.execute("DROP TABLE tiktok_sent")
+            self.db.execute("DROP TABLE tiktok_links")
+
+    def _row(self, r) -> Optional[dict]:
+        return dict(zip(self.COLS, r)) if r else None
+
+    def save(self, client_id: str, pixel_code: str, token_enc: str, test_code: Optional[str], name: Optional[str] = None) -> None:
+        """Add a Pixel (or update its token) and make it the one that receives the sales."""
+        self.db.execute("UPDATE tiktok_pixels SET active=0 WHERE client_id=?", (client_id,))
+        self.db.execute("INSERT INTO tiktok_pixels (client_id, pixel_code, name, token_enc, test_code, added_at, active, status)"
+                        " VALUES (?,?,?,?,?,?,1,'waiting') ON CONFLICT(client_id, pixel_code) DO UPDATE SET"
+                        " name=COALESCE(excluded.name, tiktok_pixels.name), token_enc=excluded.token_enc, test_code=excluded.test_code,"
+                        " active=1, status='waiting', message=NULL",
+                        (client_id, pixel_code, (name or "").strip()[:80] or None, token_enc, test_code or None, int(time.time())))
         self.db.commit()
+
+    def activate(self, client_id: str, pixel_code: str) -> bool:
+        if not self.db.execute("SELECT 1 FROM tiktok_pixels WHERE client_id=? AND pixel_code=?", (client_id, pixel_code)).fetchone():
+            return False
+        self.db.execute("UPDATE tiktok_pixels SET active = (pixel_code = ?) WHERE client_id=?", (pixel_code, client_id))
+        self.db.execute("UPDATE tiktok_pixels SET status='waiting', message=NULL WHERE client_id=? AND pixel_code=?", (client_id, pixel_code))
+        self.db.commit()
+        return True
 
     def get(self, client_id: str) -> Optional[dict]:
-        r = self.db.execute("SELECT client_id, pixel_code, token_enc, test_code, connected_at, last_sync, status, message, sent"
-                            " FROM tiktok_links WHERE client_id=?", (client_id,)).fetchone()
-        keys = ("client_id", "pixel_code", "token_enc", "test_code", "connected_at", "last_sync", "status", "message", "sent")
-        return dict(zip(keys, r)) if r else None
+        """The Pixel that receives the sales now."""
+        return self._row(self.db.execute(f"SELECT {', '.join(self.COLS)} FROM tiktok_pixels WHERE client_id=? AND active=1",
+                                         (client_id,)).fetchone())
+
+    def pixels(self, client_id: str) -> list[dict]:
+        return [self._row(r) for r in self.db.execute(f"SELECT {', '.join(self.COLS)} FROM tiktok_pixels WHERE client_id=?"
+                                                      " ORDER BY active DESC, added_at", (client_id,)).fetchall()]
 
     def all(self) -> list[str]:
-        return [r[0] for r in self.db.execute("SELECT client_id FROM tiktok_links")]
+        return [r[0] for r in self.db.execute("SELECT client_id FROM tiktok_pixels WHERE active=1")]
 
-    def remove(self, client_id: str) -> None:
-        self.db.execute("DELETE FROM tiktok_links WHERE client_id=?", (client_id,))
+    def remove(self, client_id: str, pixel_code: Optional[str] = None) -> None:
+        """Remove one Pixel (or all). If the active one goes, nothing receives sales until another is chosen."""
+        if pixel_code:
+            self.db.execute("DELETE FROM tiktok_pixels WHERE client_id=? AND pixel_code=?", (client_id, pixel_code))
+        else:
+            self.db.execute("DELETE FROM tiktok_pixels WHERE client_id=?", (client_id,))
         self.db.commit()
 
-    def was_sent(self, client_id: str, event_id: str) -> bool:
-        return self.db.execute("SELECT 1 FROM tiktok_sent WHERE client_id=? AND event_id=?", (client_id, event_id)).fetchone() is not None
+    def was_sent(self, client_id: str, pixel_code: str, event_id: str) -> bool:
+        return self.db.execute("SELECT 1 FROM tiktok_delivered WHERE client_id=? AND pixel_code=? AND event_id=?",
+                               (client_id, pixel_code, event_id)).fetchone() is not None
 
-    def mark_sent(self, client_id: str, event_ids: list[str], status: str = "accepted", reason: Optional[str] = None) -> None:
+    def mark_sent(self, client_id: str, pixel_code: str, event_ids: list[str], status: str = "accepted",
+                  reason: Optional[str] = None) -> None:
         now = int(time.time())
-        self.db.executemany("INSERT OR IGNORE INTO tiktok_sent (client_id, event_id, sent_at, status, reason) VALUES (?,?,?,?,?)",
-                            [(client_id, e, now, status, reason) for e in event_ids])
+        self.db.executemany("INSERT OR IGNORE INTO tiktok_delivered (client_id, pixel_code, event_id, sent_at, status, reason)"
+                            " VALUES (?,?,?,?,?,?)", [(client_id, pixel_code, e, now, status, reason) for e in event_ids])
         self.db.commit()
 
-    def health(self, client_id: str, days: int = 7) -> dict:
+    def result(self, client_id: str, pixel_code: str, ok: bool, message: Optional[str], sent: int = 0) -> None:
+        self.db.execute("UPDATE tiktok_pixels SET last_sync=?, status=?, message=?, sent=sent+? WHERE client_id=? AND pixel_code=?",
+                        (int(time.time()), "ok" if ok else "error", message, sent, client_id, pixel_code))
+        self.db.commit()
+
+    def health(self, client_id: str, pixel_code: Optional[str], days: int = 7) -> dict:
+        if not pixel_code:
+            return {}
         since = int(time.time()) - days * 86400
-        rows = dict(self.db.execute("SELECT status, COUNT(*) FROM tiktok_sent WHERE client_id=? AND sent_at>=? GROUP BY status",
-                                    (client_id, since)).fetchall())
-        last = self.db.execute("SELECT reason FROM tiktok_sent WHERE client_id=? AND status='rejected' ORDER BY sent_at DESC LIMIT 1",
-                               (client_id,)).fetchone()
+        rows = dict(self.db.execute("SELECT status, COUNT(*) FROM tiktok_delivered WHERE client_id=? AND pixel_code=? AND sent_at>=?"
+                                    " GROUP BY status", (client_id, pixel_code, since)).fetchall())
+        last = self.db.execute("SELECT reason FROM tiktok_delivered WHERE client_id=? AND pixel_code=? AND status='rejected'"
+                               " ORDER BY sent_at DESC LIMIT 1", (client_id, pixel_code)).fetchone()
         return {"accepted": rows.get("accepted", 0), "rejected": rows.get("rejected", 0), "refunded_skipped": rows.get("refunded", 0),
                 "last_rejection": last[0] if last else None}
 
-    def result(self, client_id: str, ok: bool, message: Optional[str], sent: int = 0) -> None:
-        self.db.execute("UPDATE tiktok_links SET last_sync=?, status=?, message=?, sent=sent+? WHERE client_id=?",
-                        (int(time.time()), "ok" if ok else "error", message, sent, client_id))
-        self.db.commit()
-
     @staticmethod
-    def public(row: Optional[dict]) -> dict:
-        if not row:
-            return {"connected": False}
-        return {"connected": True, "pixel_code": row["pixel_code"], "test_mode": bool(row["test_code"]),
-                "status": row["status"], "message": row["message"], "last_sync": row["last_sync"], "sent": row["sent"]}
+    def _pub(row: dict) -> dict:
+        return {"pixel_code": row["pixel_code"], "name": row["name"] or "TikTok Pixel", "active": bool(row["active"]),
+                "test_mode": bool(row["test_code"]), "status": row["status"], "message": row["message"],
+                "last_sync": row["last_sync"], "sent": row["sent"]}
+
+    def public(self, client_id: str) -> dict:
+        """Never includes a token."""
+        rows = self.pixels(client_id)
+        act = next((r for r in rows if r["active"]), None)
+        out = {"connected": bool(act), "pixels": [self._pub(r) for r in rows]}
+        if act:
+            out.update(self._pub(act))
+            out.update(self.health(client_id, act["pixel_code"]))
+        return out
 
 
 def refund_rate(payments: list[Payment], refunded) -> float:
@@ -187,14 +242,14 @@ def refund_rate(payments: list[Payment], refunded) -> float:
 
 
 def plan(payments: list[Payment], store: "TikTokStore", client_id: str, refunded, value_of,
-         now: Optional[datetime] = None) -> dict:
+         now: Optional[datetime] = None, pixel_code: str = "") -> dict:
     """What to send now: {"send": [(payment, value)], "refunded": [payment], "held": int, "hold_hours": int}."""
     now = now or datetime.now(timezone.utc)
     rate = refund_rate(payments, refunded)
     hold = HOLD if rate >= HIGH_REFUND_RATE else timedelta(0)
     out = {"send": [], "refunded": [], "held": 0, "hold_hours": int(hold.total_seconds() // 3600), "refund_rate": round(rate, 3)}
     for p in payments:
-        if p.kind != "purchase" or p.occurred_at < now - MAX_AGE or store.was_sent(client_id, event_id(p)):
+        if p.kind != "purchase" or p.occurred_at < now - MAX_AGE or store.was_sent(client_id, pixel_code, event_id(p)):
             continue
         if p.occurred_at > now - hold:
             out["held"] += 1
