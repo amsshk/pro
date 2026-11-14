@@ -147,3 +147,11 @@ def test_one_bad_event_is_set_aside_and_the_rest_still_go(app):
     n = len(http.calls)
     st.tiktok_push("shop")
     assert len(http.calls) == n                                # rejected one isn't retried forever
+
+
+def test_account_ids_are_not_accepted_as_pixel_or_token(app):
+    c = app.test_client()
+    r = c.post("/connect/shop/tiktok", json={"pixel_code": "7651683849232695297", "access_token": "x" * 40}, headers=H)
+    assert r.status_code == 400 and "not a Pixel ID" in r.json["error"]
+    r = c.post("/connect/shop/tiktok", json={"pixel_code": "C4ABC123DEF456", "access_token": "7651694019151560725"}, headers=H)
+    assert r.status_code == 400 and "not an access token" in r.json["error"]

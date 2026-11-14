@@ -693,10 +693,14 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             if token.lower().startswith(label):
                 token = token[len(label):]
         test = str(body.get("test_event_code") or "").strip() or None
+        if pixel.isdigit():
+            abort(400, "That's a TikTok account or Business Center ID (only numbers), not a Pixel ID. The Pixel ID is in TikTok Events Manager, under the Pixel's name, and has letters and numbers (like C4ABC123DEF456).")
         if not tiktok.PIXEL_RE.match(pixel):
             abort(400, "That doesn't look like a TikTok Pixel ID. In TikTok Events Manager, copy the ID shown under the Pixel's name (letters and numbers, like C4ABC123DEF456).")
         if not token:
             abort(400, "The access token box is empty. In TikTok Events Manager: open the Pixel > Settings > Events API > Generate access token, copy it and paste it in the second box.")
+        if token.isdigit():
+            abort(400, "That's an ID (only numbers), not an access token. Generate the token in TikTok Events Manager: Pixel > Settings > Events API > Generate access token.")
         if token.upper() == pixel:
             abort(400, "That's the Pixel ID again. The second box needs the access token: Pixel > Settings > Events API > Generate access token.")
         if len(token) < 16:
