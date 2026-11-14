@@ -731,6 +731,28 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             out["message"] = "Connected. ProAds is sending your recent sales to TikTok now: refresh in a minute to see the result."
         return {"ok": not res.get("error"), **out}
 
+    @flask.post("/connect/<client_id>/tiktok/test")
+    def tiktok_test(client_id):
+        """One sample Purchase to the active Pixel's Test events (needs the code from TikTok's Test events tab), to
+        prove the connection before any real sale. Test events never count in TikTok's reports or learning."""
+        state.require_key(client_id)
+        code = re.sub(r"\s+", "", str((request.get_json(silent=True) or {}).get("test_event_code") or ""))
+        if not code:
+            abort(400, "Paste the test code from TikTok Events Manager: open the Pixel > Test events (it looks like TEST12345).")
+        with state.lock:
+            row = state.tiktok.get(client_id)
+        if not row:
+            abort(400, "Choose which Pixel receives the sales first.")
+        ev = {"event": "Purchase", "event_time": int(time.time()), "event_id": f"proads-test-{secrets.token_hex(4)}",
+              "user": tiktok.user_for(email="test@proads.example", external_id=f"proads-test-{client_id}"),
+              "properties": {"value": 1.0, "currency": (state.config(client_id).get("currency") or "AED"),
+                             "content_type": "product", "order_id": "proads-test"}}
+        r = tiktok.send([ev], row["pixel_code"], shopify_app.decrypt(row["token_enc"]), tiktok_http(), code)[0]
+        if not r["ok"]:
+            abort(400, tiktok.explain(r["message"]))
+        return {"ok": True, "message": "Sent. In TikTok Events Manager > " + row["pixel_code"] +
+                " > Test events, a Purchase should appear within a minute. Test events don't count in reports or learning."}
+
     @flask.post("/connect/<client_id>/tiktok/use")
     def tiktok_use(client_id):
         """Switch which saved Pixel receives the sales (the others get nothing, so nothing is counted twice)."""

@@ -186,3 +186,14 @@ def test_old_single_pixel_tables_are_carried_over(tmp_path):
         INSERT INTO tiktok_sent VALUES ('shop','ch_1',1,'accepted',NULL);""")
     st = tiktok.TikTokStore(db)
     assert st.get("shop")["pixel_code"] == "C4ABC123DEF456" and st.was_sent("shop", "C4ABC123DEF456", "ch_1")
+
+
+def test_test_event_goes_with_the_code(app):
+    st = state_of(app)
+    st.tiktok_http = http = Http()
+    c = app.test_client()
+    c.post("/connect/shop/tiktok", json={"pixel_code": "DBS29OJC77U7CBT60R3G", "access_token": "b" * 40}, headers=H)
+    assert c.post("/connect/shop/tiktok/test", json={}, headers=H).status_code == 400
+    r = c.post("/connect/shop/tiktok/test", json={"test_event_code": " TEST123 "}, headers=H)
+    body = http.calls[-1][1]
+    assert r.status_code == 200 and body["test_event_code"] == "TEST123" and body["data"][0]["event"] == "Purchase"

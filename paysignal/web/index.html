@@ -1397,9 +1397,24 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
             (tt.refunded_skipped ? ", " + fmt.format(tt.refunded_skipped) + " kept back (refunded)" : "") +
             (tt.rejected ? ", " + fmt.format(tt.rejected) + " refused (" + (tt.last_rejection || "") + ")" : "") : "") +
           (px.active && px.message ? " · " + px.message : "");
+        let testBox = null;
+        if (px.active) {
+          const codeIn = h("input", { autocomplete: "off", spellcheck: "false", placeholder: "Test code from Test events, e.g. TEST12345", "aria-label": "TikTok test code", style: "flex:1;min-width:200px" });
+          const tOut = h("div", {});
+          const tBtn = h("button", { class: "btn btn-ghost", type: "submit" }, "Send a test event");
+          testBox = h("div", { style: "display:flex;flex-direction:column;gap:6px" },
+            h("form", { style: "display:flex;gap:8px;flex-wrap:wrap", onsubmit: async (e) => {
+              e.preventDefault(); tBtn.disabled = true;
+              try { const r = await api("/connect/" + cid() + "/tiktok/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ test_event_code: codeIn.value }) });
+                tOut.replaceChildren(h("span", { class: "ok", style: "font-size:13px" }, r.message)); }
+              catch (err) { if (err.message !== "signed out") tOut.replaceChildren(errorCard(err.message)); }
+              tBtn.disabled = false;
+            } }, codeIn, tBtn), tOut);
+        }
         return h("div", { class: px.status === "error" ? "result err" : "result", style: "flex-direction:column;align-items:stretch;gap:8px" },
           h("div", { class: "between" }, h("b", {}, px.name + " · " + px.pixel_code), use),
           h("span", { style: "font-size:13px" }, line),
+          testBox,
           h("div", { style: "display:flex;gap:8px" }, rm));
       };
       return h("section", { class: "card", style: "display:flex;flex-direction:column;gap:10px" },
