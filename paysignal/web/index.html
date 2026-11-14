@@ -279,6 +279,9 @@ main{background:transparent}
 <noscript>ProAds needs JavaScript turned on.</noscript>
 <script>
 "use strict";
+const CAMP_STATE = { ACTIVE: "Live", IN_REVIEW: "In review by Meta", NOT_RUNNING: "On, but no ad is running", PAUSED: "Paused",
+  PAUSED_BILLING: "Paused: add card", published: "Published", draft: "Draft" };
+const campState = (st) => CAMP_STATE[st] || "Paused";
 (function () {
   // theme: light by default, night mode remembered per browser
   let theme = "light";
@@ -1479,6 +1482,7 @@ main{background:transparent}
     const hist = h("div", { class: "scroll" }, loading());
     const when = (x) => x ? new Date(x.replace(" ", "T") + "Z").toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
     const badge = (st) => ({ ACTIVE: ["b-measured", "Live"], PAUSED: ["b-neutral", "Paused"], PAUSED_BILLING: ["b-est", "Paused: add card"],
+      IN_REVIEW: ["b-est", "In review by Meta"], NOT_RUNNING: ["b-est", "On, but no ad is running"],
       published: ["b-neutral", "Published"], draft: ["b-neutral", "Draft"] })[st] || ["b-neutral", st];
     async function openDraft(id) {
       out.replaceChildren(loading());
@@ -1862,7 +1866,7 @@ main{background:transparent}
   }
 
   function launchCard(launch) {
-    const live = launch.status === "ACTIVE";
+    const live = ["ACTIVE", "IN_REVIEW", "NOT_RUNNING"].includes(launch.status);   // switched on in Meta
     if (launch.status === "PAUSED_BILLING") return h("div", { class: "result err", style: "flex-direction:column;align-items:stretch;gap:12px" },
       h("span", { class: "ok" }, "Paused: your free ad test ended"), h("span", { class: "sub", style: "font-size:13px" }, "Add your card and this campaign starts again by itself."),
       h("a", { class: "btn btn-primary", href: "#/billing", style: "align-self:flex-start" }, "Add card"));
@@ -1886,7 +1890,10 @@ main{background:transparent}
     const pause = h("button", { class: "btn btn-ghost", type: "button", onclick: (e) => { e.target.disabled = true; setTo("pause"); } }, "Pause");
     box.append(...(live ? [pause, open] : [goLive, open]));
     const card = h("div", { class: "result", style: "flex-direction:column;align-items:stretch;gap:12px" },
-      h("span", { class: "ok" }, live ? "Live: Meta is spending up to " + money : "Created in Meta, paused. Nothing is spending yet."),
+      h("span", live && launch.status !== "ACTIVE" ? { style: "color:var(--amber);font-weight:600" } : { class: "ok" }, launch.status === "ACTIVE" ? "Live: Meta is spending up to " + money :
+        launch.status === "IN_REVIEW" ? "Switched on. Meta is still reviewing the ads, so nothing is spending yet." :
+        launch.status === "NOT_RUNNING" ? "Switched on, but none of its ads can run (rejected or paused in Ads Manager). Nothing is spending." :
+        "Created in Meta, paused. Nothing is spending yet."),
       h("span", { class: "sub", style: "font-size:13px" }, launch.ads.length + " ads · campaign " + launch.campaign_id + (live ? " · give it 3–4 days before judging" : " · check it in Ads Manager, then go live")),
       box);
     return card;
@@ -2250,7 +2257,7 @@ main{background:transparent}
     blocks.push(camps.length ? h("section", { class: "card" },
       h("div", { class: "between" }, h("h2", {}, "Learning status"), h("span", { class: "small" }, "from Meta · ad sets usually need about 50 results a week")),
       camps.map((c) => h("div", { class: "adset", style: "gap:10px" },
-        h("div", { class: "between" }, h("b", {}, c.name || c.campaign_id), h("span", { class: "small" }, c.status === "ACTIVE" ? "Live" : "Paused")),
+        h("div", { class: "between" }, h("b", {}, c.name || c.campaign_id), h("span", { class: "small" }, campState(c.status))),
         c.error ? h("span", { class: "small" }, c.error) : [
           (c.adsets || []).map((a) => h("div", { style: "display:flex;flex-direction:column;gap:4px" },
             h("div", { class: "between", style: "gap:10px;flex-wrap:wrap" }, h("span", {}, a.name),
@@ -2384,7 +2391,7 @@ main{background:transparent}
           if (c.error) return h("tr", {}, h("td", {}, c.name || c.campaign_id), h("td", { colspan: stepNames.length + 3, class: "small" }, c.error));
           const st = (c.autopsy.steps || []).slice(1);
           const tr = h("tr", { class: "erow", tabindex: 0 },
-            h("td", {}, h("b", {}, c.name || c.campaign_id), h("span", { class: "small", style: "display:block" }, c.status === "ACTIVE" ? "Live" : "Paused")),
+            h("td", {}, h("b", {}, c.name || c.campaign_id), h("span", { class: "small", style: "display:block" }, campState(c.status))),
             st.map((s) => h("td", { style: heat(s.step, s.from_previous) }, s.from_previous == null ? "–" : (s.from_previous * 100).toFixed(s.from_previous < 0.1 ? 2 : 0) + "%",
               h("span", { class: "small", style: "display:block" }, fmt.format(s.count)))),
             h("td", {}, money(c.spend)), h("td", {}, c.results ? money(c.spend / c.results) : "–"),
@@ -2962,7 +2969,7 @@ main{background:transparent}
       h("div", { class: "track", "aria-hidden": "true" }, h("div", { style: "width:" + Math.max(2, Math.round(100 * x.sales / maxProd)) + "%" })))), "Product names appear when your sales include them (Shopify or a product column).");
     const camps = (d.campaigns || []).length ? h("section", { class: "card" }, h("div", { class: "between" }, h("h2", {}, "Campaigns"), h("a", { href: "#/assistant", style: "font-size:13px" }, "New campaign")),
       d.campaigns.map((x) => h("div", { class: "between", style: "font-size:14px;gap:8px" }, h("span", {}, x.name || x.campaign_id),
-        h("span", { class: "badge " + (x.status === "ACTIVE" ? "b-measured" : "b-neutral") }, x.status === "ACTIVE" ? "Live" : x.status === "PAUSED_BILLING" ? "Paused: add card" : "Paused")))) : null;
+        h("span", { class: "badge " + (x.status === "ACTIVE" ? "b-measured" : "b-neutral") }, campState(x.status))))) : null;
     const extra = h("div", { style: "display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color: var(--muted)" },
       h("span", {}, "Refunds: ", h("b", { style: "color: var(--text)" }, pct(d.refund_rate)), " of sales"),
       d.returning_rate !== null ? h("span", {}, "Returning customers: ", h("b", { style: "color: var(--text)" }, pct(d.returning_rate))) : null,
@@ -2976,7 +2983,7 @@ main{background:transparent}
           h("p", { class: "sub", style: "margin:0;font-size:14px" }, "No sign-ups yet. Launch your first ProAds campaign to bring them in."));
       const camps = h("section", { class: "card" }, h("div", { class: "between" }, h("h2", {}, "Your campaigns"), h("a", { href: "#/assistant", style: "font-size:13px" }, "New campaign")),
         d.campaigns.length ? d.campaigns.map((x) => h("div", { class: "between", style: "font-size:14px;gap:8px" }, h("span", {}, x.name || x.campaign_id),
-          h("span", { class: "badge " + (x.status === "ACTIVE" ? "b-measured" : "b-neutral") }, x.status === "ACTIVE" ? "Live" : "Paused"))) :
+          h("span", { class: "badge " + (x.status === "ACTIVE" ? "b-measured" : "b-neutral") }, campState(x.status)))) :
           h("p", { class: "sub", style: "margin:0;font-size:14px" }, "None yet."));
       const [adsBox, acq, dv] = await Promise.all([adsSection(homePeriod), api("/acquisition/" + cid()).catch(() => null), api("/delivery/" + cid()).catch(() => null)]);
       const bad = dv ? ((dv.health ? dv.health.alerts : dv.alerts) || []).filter((a) => (a.level || "bad") === "bad") : [];

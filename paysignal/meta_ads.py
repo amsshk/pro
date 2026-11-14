@@ -336,6 +336,40 @@ class Publisher:
         for obj_id in [launch["campaign_id"], *launch["ad_sets"], *launch["ads"]]:
             self._post(obj_id, {"status": status}, f"switching {obj_id} to {status.lower()}")
 
+    def live_states(self, campaign_ids: list[str]) -> dict:
+        """What is really happening in Meta right now, per campaign (whatever was switched in Ads Manager):
+        ACTIVE (an ad is delivering), IN_REVIEW, NOT_RUNNING (switched on but no ad can run), PAUSED or REMOVED."""
+        fields = "status,effective_status,ads.limit(50){effective_status}"
+        found: dict = {}
+        for i in range(0, len(campaign_ids), 40):
+            chunk = campaign_ids[i:i + 40]
+            r = self.http.get(self._url(""), params={"ids": ",".join(chunk), "fields": fields,
+                                                     "access_token": self.s["token"]}, timeout=30)
+            try:
+                found.update(self._check(r, "reading campaign status"))
+            except PublishError:
+                for cid in chunk:                      # one deleted campaign fails the batch: ask one by one
+                    try:
+                        found[cid] = self._get(cid, fields, f"reading campaign {cid}")
+                    except PublishError as e:
+                        if "does not exist" in str(e) or "Unsupported get request" in str(e):
+                            found[cid] = {"effective_status": "DELETED"}
+        out = {}
+        for cid, c in found.items():
+            eff = (c.get("effective_status") or "").upper()
+            ads = [(a.get("effective_status") or "").upper() for a in ((c.get("ads") or {}).get("data") or [])]
+            if eff in ("DELETED", "ARCHIVED") or (c.get("status") or "").upper() in ("DELETED", "ARCHIVED"):
+                out[cid] = "REMOVED"
+            elif eff != "ACTIVE":
+                out[cid] = "PAUSED"
+            elif "ACTIVE" in ads:
+                out[cid] = "ACTIVE"
+            elif any(a in ("PENDING_REVIEW", "IN_PROCESS", "PREAPPROVED") for a in ads):
+                out[cid] = "IN_REVIEW"
+            else:
+                out[cid] = "NOT_RUNNING"
+        return out
+
     def status_of(self, campaign_id: str) -> str:
         """What Meta says the campaign's own switch is (ACTIVE, PAUSED, DELETED, ARCHIVED)."""
         return (self._get(campaign_id, "status", f"checking campaign {campaign_id}").get("status") or "").upper()
@@ -367,7 +401,7 @@ class LaunchStore:
         self.db.commit()
 
     def list(self, client_id: str) -> list[dict]:
-        rows = self.db.execute("SELECT data, status, created_at FROM ad_launches WHERE client_id=?"
+        rows = self.db.execute("SELECT data, status, created_at FROM ad_launches WHERE client_id=? AND status<>'REMOVED'"
                                " ORDER BY created_at DESC, rowid DESC", (client_id,)).fetchall()
         return [{**json.loads(d), "status": st, "created_day": (ca or "")[:10]} for d, st, ca in rows]
 

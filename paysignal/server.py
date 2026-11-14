@@ -790,6 +790,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     def ads_report_for(client_id: str, period: str = "30", fresh: bool = False) -> dict:
         days = {"today": 1, "7": 7, "30": 30, "90": 90, "365": 365}.get(period, 30)
         admin = is_admin(client_id)
+        sync_launch_status(client_id, force=fresh)
         with state.lock:
             launches = state.launches.list(client_id)
         if not launches:
@@ -2128,9 +2129,51 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         log.info("%s set campaign %s to %s", client_id, campaign_id, status)
         return {**launch, "status": status}
 
+    launch_checked: dict = {}
+
+    def sync_launch_status(client_id: str, force: bool = False) -> dict:
+        """Make ProAds show what Meta really shows: a campaign switched off, deleted or with no running ad in
+        Ads Manager stops being called "Live" here. Checked at most every 2 minutes per client."""
+        if not force and time.time() - launch_checked.get(client_id, 0) < 120:
+            return {}
+        launch_checked[client_id] = time.time()
+        with state.lock:
+            launches = state.launches.list(client_id)
+        s = state.ads_settings(client_id, is_admin(client_id))
+        if not launches or not s:
+            return {}
+        try:
+            real = meta_ads.Publisher(state.ads_http, s).live_states([l["campaign_id"] for l in launches])
+        except Exception as e:                         # Meta unreachable: keep showing the last known state
+            log.warning("campaign status check for %s failed: %s", client_id, e)
+            return {}
+        changed = {}
+        with state.lock:
+            for l in launches:
+                now = real.get(l["campaign_id"])
+                if not now or now == l["status"]:
+                    continue
+                if l["status"] == "PAUSED_BILLING" and now in ("PAUSED", "NOT_RUNNING"):
+                    continue                           # ProAds paused it for an unpaid plan: keep that reason
+                state.launches.set_status(client_id, l["campaign_id"], now)
+                changed[l["campaign_id"]] = now
+        if changed:
+            log.info("campaign status for %s updated from Meta: %s", client_id, changed)
+        return changed
+    state.sync_launch_status = sync_launch_status
+
+    def sync_all_launch_status() -> None:
+        for cid in state.launches.clients():
+            try:
+                sync_launch_status(cid, force=True)
+            except Exception:
+                log.exception("campaign status check failed for %s", cid)
+    state.sync_all_launch_status = sync_all_launch_status
+
     @flask.get("/campaign/<client_id>/launches")
     def campaign_launches(client_id):
         state.require_key(client_id)
+        sync_launch_status(client_id)
         with state.lock:
             return {"launches": state.launches.list(client_id), "missing": meta_ads.missing()}
 
@@ -4104,7 +4147,7 @@ def _start_worker(state: App, every: int) -> None:
                     state.enforce_ads_trials()
             except Exception:
                 log.exception("ad test check failed")
-            for job in ("retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees"):
+            for job in ("sync_all_launch_status", "retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees"):
                 try:
                     if getattr(state, job, None):
                         getattr(state, job)()
