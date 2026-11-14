@@ -688,12 +688,19 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         state.require_key(client_id)
         body = request.get_json(silent=True) or {}
         pixel = str(body.get("pixel_code") or "").strip().upper()
-        token = str(body.get("access_token") or "").strip()
+        token = re.sub(r"\s+", "", str(body.get("access_token") or ""))      # copies often bring spaces or line breaks
+        for label in ("accesstoken:", "token:", "access-token:"):
+            if token.lower().startswith(label):
+                token = token[len(label):]
         test = str(body.get("test_event_code") or "").strip() or None
         if not tiktok.PIXEL_RE.match(pixel):
             abort(400, "That doesn't look like a TikTok Pixel ID. In TikTok Events Manager, copy the ID shown under the Pixel's name (letters and numbers, like C4ABC123DEF456).")
-        if len(token) < 20 or " " in token:
-            abort(400, "Paste the Events API access token from TikTok Events Manager (Pixel > Settings > Generate access token).")
+        if not token:
+            abort(400, "The access token box is empty. In TikTok Events Manager: open the Pixel > Settings > Events API > Generate access token, copy it and paste it in the second box.")
+        if token.upper() == pixel:
+            abort(400, "That's the Pixel ID again. The second box needs the access token: Pixel > Settings > Events API > Generate access token.")
+        if len(token) < 16:
+            abort(400, f"That token looks too short ({len(token)} characters). Copy the whole access token from TikTok Events Manager (Pixel > Settings > Events API > Generate access token).")
         try:
             enc = shopify_app.encrypt(token)
         except shopify_app.ShopifyError:
