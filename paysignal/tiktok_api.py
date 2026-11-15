@@ -225,7 +225,10 @@ MIN_ADGROUP_DAILY_USD = 20.0            # TikTok's minimum daily budget per ad g
 
 
 def pixels(http, token: str, advertiser_id: str) -> list[dict]:
-    d = _get(http, token, "pixel/list", {"advertiser_id": advertiser_id, "page_size": 50}, "reading the Pixels")
+    try:
+        d = _get(http, token, "pixel/list", {"advertiser_id": advertiser_id, "page": 1, "page_size": 20}, "reading the Pixels")
+    except TikTokAPIError:
+        d = _get(http, token, "pixel/list", {"advertiser_id": advertiser_id}, "reading the Pixels")
     out = []
     for p in d.get("pixels") or d.get("list") or []:
         out.append({"pixel_id": str(p.get("pixel_id") or ""), "code": p.get("pixel_code") or "", "name": p.get("pixel_name") or p.get("name") or ""})

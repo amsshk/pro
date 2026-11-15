@@ -2088,10 +2088,19 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       h("option", { value: "add_to_cart", selected: r.plan.optimization !== "purchase" ? true : null }, "Add to cart (best until you have ~25+ purchases a week)"),
       h("option", { value: "checkout" }, "Checkout started"),
       h("option", { value: "purchase", selected: r.plan.optimization === "purchase" ? true : null }, "Purchase"));
+    // if TikTok won't list the Pixels, the owner types the Pixel's number (Events Manager shows it next to the name)
+    const pixelIn = h("input", { inputmode: "numeric", placeholder: "Pixel number, e.g. 7672779598821212178", "aria-label": "Pixel number", hidden: true });
+    const pixelErr = h("span", { class: "small", style: "color:var(--amber)" });
+    const manualPixel = (why) => {
+      pixelSel.hidden = true; pixelIn.hidden = false;
+      pixelErr.textContent = (why ? why + " " : "") + "Type the Pixel's number instead: in TikTok Events Manager it's the long number in brackets next to the Pixel's name.";
+    };
     api("/tiktok/" + cid() + "/pixels").then((d) => {
-      pixelSel.replaceChildren(...(d.pixels.length ? d.pixels.map((p) => h("option", { value: p.pixel_id }, (p.name || "Pixel") + " · " + p.code +
-        (p.code === d.receives_sales ? " · gets ProAds' verified sales" : ""))) : [h("option", { value: "" }, "No Pixel in this ad account")]));
-    }).catch((e) => pixelSel.replaceChildren(h("option", { value: "" }, e.message)));
+      if (!d.pixels.length) { manualPixel("TikTok shows no Pixel in this ad account."); return; }
+      pixelSel.replaceChildren(...d.pixels.map((p) => h("option", { value: p.pixel_id }, (p.name || "Pixel") + " · " + p.code +
+        (p.code === d.receives_sales ? " · gets ProAds' verified sales" : ""))));
+    }).catch((e) => manualPixel(e.message));
+    const pixelValue = () => (pixelIn.hidden ? pixelSel.value : pixelIn.value.replace(/\D/g, ""));
     sets.forEach((s, i) => (Array.isArray(s.ads) ? s.ads : []).forEach((ad, j) => {
       const key = i + "-" + j;
       const slot = h("div", { style: "width:100%;max-width:200px;aspect-ratio:9/16;border-radius:10px;border:1px dashed var(--edge);display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--muted);text-align:center;padding:8px" }, "No video yet");
@@ -2139,11 +2148,12 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     btn.addEventListener("click", async () => {
       const missing = cards.length - Object.keys(media).length;
       if (missing > 0) { box.replaceChildren(errorCard("Choose a video for every ad (" + missing + " missing): click \u201cChoose video\u201d under each ad (then \u201cFrom my TikTok ad account\u201d), or \u201cUpload videos\u201d.")); return; }
-      if (!pixelSel.value) { box.replaceChildren(errorCard("Choose the Pixel.")); return; }
+      if (!pixelValue()) { box.replaceChildren(errorCard("Choose the Pixel (or type its number).")); return; }
+      if (/instagram\.com|tiktok\.com|facebook\.com|wa\.me/i.test(landing.value)) { box.replaceChildren(errorCard("The ads must open the shop's website (like https://bynawi.com), not a social profile: otherwise sales can't be tracked.")); return; }
       btn.disabled = true; box.replaceChildren(loading("Uploading the videos and creating the campaign in TikTok. This can take a few minutes…"));
       try {
         const launch = await api("/campaign/" + cid() + "/publish-tiktok", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ plan: r.plan, media, landing_url: landing.value.trim(), pixel_id: pixelSel.value, event: eventSel.value, draft_id: r.draft_id }) });
+          body: JSON.stringify({ plan: r.plan, media, landing_url: landing.value.trim(), pixel_id: pixelValue(), event: eventSel.value, draft_id: r.draft_id }) });
         if (typeof loadHistory === "function") loadHistory();
         btn.remove(); box.replaceChildren(tiktokLaunchCard(launch));
       } catch (e) {
@@ -2156,7 +2166,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     return h("div", { class: "adset", style: "gap:12px" },
       h("b", {}, "Publish to TikTok"),
       h("label", { class: "f", for: "tt-url" }, "Page the ads open (ProAds adds its TikTok tracking tags)", landing),
-      h("div", { class: "grid2" }, h("label", { class: "f" }, "Pixel", pixelSel), h("label", { class: "f" }, "Optimise for", eventSel)),
+      h("div", { class: "grid2" }, h("label", { class: "f" }, "Pixel", pixelSel, pixelIn, pixelErr), h("label", { class: "f" }, "Optimise for", eventSel)),
       h("p", { class: "sub", style: "margin:0;font-size:13px" }, "Every TikTok ad is a vertical video (9:16, 9–30 seconds works best). Choose one per ad; the line under each says what the AI suggests filming."),
       upBar, h("div", { style: "display:flex;gap:14px;flex-wrap:wrap" }, cards), btn, box);
   }

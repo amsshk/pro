@@ -2177,6 +2177,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if not pixel_id:
             abort(400, "Choose the Pixel TikTok should optimise with.")
         landing = (body.get("landing_url") or state.config(client_id).get("website", "")).strip()
+        if re.search(r"(instagram|tiktok|facebook)\.com|wa\.me", landing, re.I):
+            abort(400, "The ads must open the shop's website (like https://yourshop.com), not a social profile: otherwise sales can't be tracked.")
         try:
             landing = tiktok.tracking_url(landing)        # every sale shows the exact TikTok campaign and ad
         except ValueError as e:
