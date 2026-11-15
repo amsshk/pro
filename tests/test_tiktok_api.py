@@ -100,3 +100,84 @@ def test_revoked_token_asks_to_reconnect(app):
     c.post("/tiktok/shop/advertiser", json={"advertiser_id": "111"}, headers=H)
     s = c.get("/status/shop", headers=H).json["connections"]["tiktok_ads"]
     assert s["status"] == "expired" and "Connect the TikTok ad account again" in s["message"]
+
+
+class Publishing(FakeTikTok):
+    def __init__(self, fail_at=None):
+        super().__init__()
+        self.fail_at = fail_at
+
+    def post(self, url, json=None, timeout=None, headers=None, data=None, files=None):
+        path = url.split("/open_api/v1.3/")[-1].strip("/")
+        self.calls.append(("POST", path, json if json is not None else data, headers))
+        if path == "oauth2/access_token":
+            return super().post(url, json=json)
+        if path == self.fail_at:
+            return R({"code": 40002, "message": f"bad {path}"})
+        reply = {"campaign/create": {"campaign_id": "C1"}, "adgroup/create": {"adgroup_id": "G1"},
+                 "file/video/ad/upload": [{"video_id": "V1"}], "file/image/ad/upload": {"image_id": "I1"},
+                 "identity/create": {"identity_id": "ID1"}, "ad/create": {"ad_ids": ["A1", "A2"]}}.get(path, {})
+        return R({"code": 0, "data": reply})
+
+    def get(self, url, params=None, headers=None, timeout=None):
+        if "pixel/list" in url:
+            return R({"code": 0, "data": {"pixels": [{"pixel_id": "777", "pixel_code": "DBS29OJC77U7CBT60R3G", "pixel_name": "Verified"}]}})
+        if "file/video/ad/info" in url:
+            return R({"code": 0, "data": {"list": [{"video_id": "V1", "video_cover_url": "https://p16.tiktokcdn.com/cover.jpg"}]}})
+        if "identity/get" in url:
+            return R({"code": 0, "data": {"identity_list": []}})
+        return super().get(url, params=params, headers=headers, timeout=timeout)
+
+
+PLAN = {"name": "Bynawi Oud", "daily_budget": 100, "platform": "tiktok", "optimization": "add_to_cart",
+        "targeting": {"countries": ["AE"], "age_min": 18},
+        "ad_sets": [{"name": "UAE broad", "budget_share": 1, "ads": [
+            {"headline": "Oud that lasts all day", "primary_text": "Real oud, real compliments.", "call_to_action": "SHOP_NOW"},
+            {"headline": "Gift box unboxing", "primary_text": "The gift they'll remember.", "call_to_action": "ORDER_NOW"}]}]}
+
+
+def setup_publish(app, fail_at=None):
+    st = app.extensions["paysignal"]
+    st.tiktok_api_http = Publishing(fail_at)
+    c = app.test_client()
+    connect(c)
+    c.post("/tiktok/shop/advertiser", json={"advertiser_id": "7651683849232695297"}, headers=H)
+    ids = []
+    for n in (1, 2):
+        it = st.media.add("shop", {"source": "upload", "origin": "upload", "url": f"upload://v{n}-{id(st.tiktok_api_http)}", "kind": "video", "width": 1080, "height": 1920,
+                                   "quality": "good", "title": f"v{n}", "price": None, "poster": None, "ai": "none", "approved": 1}, b"\x00\x01video" * 10)
+        ids.append(it)
+    assert all(ids), ids
+    return c, st, ids
+
+
+def test_publish_creates_campaign_off_with_tracking_link_and_rolls_back_on_failure(app):
+    c, st, ids = setup_publish(app)
+    assert c.get("/tiktok/shop/pixels", headers=H).json["pixels"][0]["pixel_id"] == "777"
+    body = {"plan": PLAN, "media": {"0-0": f"media:{ids[0]}", "0-1": f"media:{ids[1]}"}, "landing_url": "bynawi.com",
+            "pixel_id": "777", "event": "add_to_cart"}
+    r = c.post("/campaign/shop/publish-tiktok", json=body, headers=H)
+    assert r.status_code == 200, r.json
+    calls = {p: b for _, p, b, _ in st.tiktok_api_http.calls if isinstance(p, str)}
+    assert calls["campaign/create"]["operation_status"] == "DISABLE" and calls["campaign/create"]["objective_type"] == "WEB_CONVERSIONS"
+    g = calls["adgroup/create"]
+    assert g["pixel_id"] == "777" and g["optimization_event"] == "ON_WEB_CART" and g["location_ids"] == ["290557"] and g["budget"] == 100
+    cr = calls["ad/create"]["creatives"][0]
+    assert "utm_source=tiktok" in cr["landing_page_url"] and cr["video_id"] == "V1" and cr["image_ids"] == ["I1"] and cr["identity_id"] == "ID1"
+    live = c.post("/campaign/shop/tiktok-launch/C1", json={"action": "live"}, headers=H)
+    assert live.status_code == 400                                     # needs confirm
+    assert c.post("/campaign/shop/tiktok-launch/C1", json={"action": "live", "confirm": True}, headers=H).json["status"] == "ACTIVE"
+
+    c2, st2, ids2 = setup_publish(app, fail_at="ad/create")
+    body["media"] = {"0-0": f"media:{ids2[0]}", "0-1": f"media:{ids2[1]}"}
+    r = c2.post("/campaign/shop/publish-tiktok", json=body, headers=H)
+    assert r.status_code == 502 and "bad ad/create" in r.json["error"]
+    dels = [b for _, p, b, _ in st2.tiktok_api_http.calls if p == "campaign/status/update"]
+    assert dels and dels[-1]["operation_status"] == "DELETE"
+
+
+def test_tiktok_budget_minimum_checked_before_ai(app, monkeypatch):
+    from paysignal import billing
+    monkeypatch.setattr(billing, "fx_rate", lambda a, b, http=None: 3.6725)
+    r = app.test_client().post("/campaign/shop", json={"daily_budget": 10, "platform": "tiktok"}, headers=H)
+    assert r.status_code == 400 and "minimum" in r.json["error"]

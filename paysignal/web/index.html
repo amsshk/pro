@@ -1649,6 +1649,19 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     const brief = pendingBrief; pendingBrief = "";
     const notes = h("textarea", { id: "notes", placeholder: "What you sell, your offer, who to reach, what to avoid…", dir: "auto" },
       brief ? brief : status && status.admin ? "Target business owners, shop owners, clinics, restaurants and marketing agencies in the UAE who already sell online or on Instagram. Main message: stop paying for likes and views, find the posts and ads that bring paying customers. Offer: free sales audit in the first week, free to start, test ads free for 3 days, no card needed. Tone: confident, short, direct. English only. Do not promise specific results or numbers. Avoid students and job seekers." : "");
+    const ttA = (status && status.connections && status.connections.tiktok_ads) || {};
+    const platformSel = h("select", { id: "platform" },
+      h("option", { value: "tiktok", selected: ttA.advertiser_id ? true : null }, "TikTok"),
+      h("option", { value: "meta", selected: ttA.advertiser_id ? null : true }, "Instagram & Facebook (Meta)"));
+    const curLabel = h("span", {}, "Daily budget (" + (ttA.advertiser_id && ttA.currency ? ttA.currency : adsCurrency()) + ")");
+    const ttNote = h("p", { class: "small", style: "margin:0" });
+    const syncPlatform = () => {
+      const tt = platformSel.value === "tiktok";
+      curLabel.textContent = "Daily budget (" + (tt && ttA.currency ? ttA.currency : adsCurrency()) + ")";
+      ttNote.textContent = tt ? (ttA.advertiser_id ? "TikTok needs at least about 20 USD a day per ad group, and a video for every ad." :
+        "Connect the TikTok ad account first (Connect & upload > TikTok) to publish. You can still plan here.") : "";
+    };
+    platformSel.addEventListener("change", syncPlatform); syncPlatform();
     const out = h("div", { style: "display:flex;flex-direction:column;gap:12px" });
     const build = h("button", { class: "btn btn-primary", type: "submit" }, "Build campaign");
     const campForm = h("form", { style: "display:flex;flex-direction:column;gap:12px", onsubmit: async (e) => {
@@ -1656,7 +1669,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       out.replaceChildren(loading("Planning your campaign. This can take up to a minute…"));
       try {
         const r = await api("/campaign/" + cid(), { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ daily_budget: Number(budget.value), goal: goals[Number(goal.value)][0], conversion: goals[Number(goal.value)][1], notes: notes.value }) });
+          body: JSON.stringify({ daily_budget: Number(budget.value), goal: goals[Number(goal.value)][0], conversion: goals[Number(goal.value)][1], notes: notes.value, platform: platformSel.value }) });
         out.replaceChildren(renderPlan(r));
         loadHistory();
       } catch (err) {
@@ -1664,7 +1677,8 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       }
       build.disabled = false;
     } },
-      h("div", { class: "grid2" }, h("label", { class: "f", for: "budget" }, "Daily budget (" + adsCurrency() + ")", budget), h("label", { class: "f", for: "goal" }, "Goal", goal)),
+      h("label", { class: "f", for: "platform" }, "Where the ads run", platformSel), ttNote,
+      h("div", { class: "grid2" }, h("label", { class: "f", for: "budget" }, curLabel, budget), h("label", { class: "f", for: "goal" }, "Goal", goal)),
       h("label", { class: "f", for: "notes" }, "Notes", notes), mediaBox(), build);
 
     const hist = h("div", { class: "scroll" }, loading());
@@ -1729,7 +1743,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     const listOf = (title, xs) => Array.isArray(xs) && xs.length ? h("div", { style: "display:flex;flex-direction:column;gap:6px" }, h("b", { style: "font-size:14px" }, title), h("ul", { class: "list" }, xs.map((x) => h("li", { dir: "auto" }, typeof x === "string" ? x : JSON.stringify(x))))) : null;
     return h("div", { class: "plan" },
       h("div", { class: "between" }, h("b", { style: "font-size:16px", dir: "auto" }, p.name || "Campaign draft"),
-        h("span", { class: "sub", style: "font-size:13px" }, (p.optimization || "Sales") + " · " + fmt.format(Number(p.daily_budget || 0)) + " " + (p.currency || "") + "/day")),
+        h("span", { class: "sub", style: "font-size:13px" }, (p.platform === "tiktok" ? "TikTok · optimising for " + (p.optimization === "purchase" ? "purchases" : "add to cart") : (p.optimization || "Sales")) + " · " + fmt.format(Number(p.daily_budget || 0)) + " " + (p.currency || "") + "/day")),
       p.rationale ? h("p", { style: "margin:0;line-height:1.6;color:" + K().body, dir: "auto" }, p.rationale) : null,
       sets.map((s) => h("div", { class: "adset" },
         h("div", { class: "between" }, h("b", { dir: "auto" }, s.name || "Ad set"), h("span", { class: "sub" }, share(s))),
@@ -1738,6 +1752,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
           h("span", { style: "font-size:12px;color: var(--muted)" }, [ad.format, ad.hook, ad.offer].filter(Boolean).join(" · ") + (ad.source_post_id ? " · from " + ad.source_post_id : "")),
           ad.headline ? h("b", { dir: "auto" }, ad.headline) : null,
           ad.primary_text ? h("span", { dir: "auto", style: "white-space:pre-wrap" }, ad.primary_text) : null,
+          ad.video_brief ? h("span", { class: "sub", style: "font-size:13px", dir: "auto" }, "Video: " + ad.video_brief) : null,
           ad.why ? h("span", { class: "sub", style: "font-size:13px", dir: "auto" }, "Why: " + ad.why) : null)))),
       listOf("Tests", p.tests), listOf("Stop rules", p.kill_rules), listOf("What to watch", p.what_to_watch),
       h("div", { class: "between", style: "border-top:1px solid var(--line);padding-top:12px" },
@@ -1745,7 +1760,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
           ? h("span", { style: "color: var(--amber-txt); font-size:13px; font-weight:600" }, "Check before using: " + r.problems.join("; "))
           : h("span", { style: "color: var(--violet-txt); font-size:13px; font-weight:600" }, "Checks passed: within budget, splits add up")),
       organicSection(p.organic_plan, r.landing_url),
-      r.problems && r.problems.length ? null : publishSection(r, sets));
+      r.problems && r.problems.length ? null : ((p.platform === "tiktok" || r.platform === "tiktok") ? tiktokPublishSection(r, sets) : publishSection(r, sets)));
   }
 
   // ---------- organic plan: one tracking link + code per post ----------
@@ -2051,6 +2066,88 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       h("label", { class: "f", for: "pub-url" }, "Page the ads open", landing), placeBox, mediaBar,
       h("p", { class: "sub", style: "margin:0;font-size:13px" }, "ProAds picks the best of your own photos and videos for each ad (website, posts, uploads). Where it has none, it makes a designed image. Change any of them." + (status.admin ? "" : " Your first days of ads are a free test: no card needed.")),
       h("div", { style: "display:flex;gap:14px;flex-wrap:wrap" }, cards), btn, box);
+  }
+
+  // ---------- publish to TikTok ----------
+  function tiktokPublishSection(r, sets) {
+    if (r.tiktok_launch) return h("div", { class: "adset", style: "gap:12px" }, h("b", {}, "Created in TikTok"), tiktokLaunchCard(r.tiktok_launch));
+    if (!r.can_publish) return h("div", { class: "result err" }, h("span", {}, "To publish this to TikTok, ",
+      h("a", { href: "#/upload" }, "connect the TikTok ad account"), " (Connect & upload > TikTok) and choose it."));
+    const media = {}, cards = [];
+    const landing = h("input", { id: "tt-url", value: r.landing_url || "", placeholder: "https://your-website.com", required: true });
+    const pixelSel = h("select", { "aria-label": "Pixel" }, h("option", { value: "" }, "Loading your Pixels…"));
+    const eventSel = h("select", { "aria-label": "Optimise for" },
+      h("option", { value: "add_to_cart", selected: r.plan.optimization !== "purchase" ? true : null }, "Add to cart (best until you have ~25+ purchases a week)"),
+      h("option", { value: "checkout" }, "Checkout started"),
+      h("option", { value: "purchase", selected: r.plan.optimization === "purchase" ? true : null }, "Purchase"));
+    api("/tiktok/" + cid() + "/pixels").then((d) => {
+      pixelSel.replaceChildren(...(d.pixels.length ? d.pixels.map((p) => h("option", { value: p.pixel_id }, (p.name || "Pixel") + " · " + p.code +
+        (p.code === d.receives_sales ? " · gets ProAds' verified sales" : ""))) : [h("option", { value: "" }, "No Pixel in this ad account")]));
+    }).catch((e) => pixelSel.replaceChildren(h("option", { value: "" }, e.message)));
+    sets.forEach((s, i) => (Array.isArray(s.ads) ? s.ads : []).forEach((ad, j) => {
+      const key = i + "-" + j;
+      const slot = h("div", { style: "width:100%;max-width:200px;aspect-ratio:9/16;border-radius:10px;border:1px dashed var(--edge);display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--muted);text-align:center;padding:8px" }, "No video yet");
+      const tag = h("span", { class: "small" }, ad.video_brief ? "Film: " + ad.video_brief : "");
+      const setMedia = (it) => {
+        if (it.kind !== "video") { toast("TikTok ads need a video. Pick or upload a video."); return; }
+        media[key] = "media:" + it.id;
+        slot.replaceChildren(mediaThumb(it, "width:100%;aspect-ratio:9/16;border-radius:10px;border:1px solid var(--line)"));
+      };
+      cards.push(h("div", { style: "display:flex;flex-direction:column;gap:8px;flex:1 1 180px;max-width:220px" }, slot,
+        h("span", { style: "font-size:13px;font-weight:600" }, ad.headline || "Ad " + (j + 1)), tag,
+        h("button", { class: "chip", type: "button", onclick: () => openMediaPicker(setMedia) }, "Choose video")));
+    }));
+    const box = h("div", { style: "display:flex;flex-direction:column;gap:10px" });
+    const btn = h("button", { class: "btn btn-primary", type: "button" }, "Create in TikTok (switched off)");
+    btn.addEventListener("click", async () => {
+      const missing = cards.length - Object.keys(media).length;
+      if (missing > 0) { box.replaceChildren(errorCard("Choose a video for every ad (" + missing + " missing). Upload them with \u201cUpload photos or videos\u201d above.")); return; }
+      if (!pixelSel.value) { box.replaceChildren(errorCard("Choose the Pixel.")); return; }
+      btn.disabled = true; box.replaceChildren(loading("Uploading the videos and creating the campaign in TikTok. This can take a few minutes…"));
+      try {
+        const launch = await api("/campaign/" + cid() + "/publish-tiktok", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ plan: r.plan, media, landing_url: landing.value.trim(), pixel_id: pixelSel.value, event: eventSel.value, draft_id: r.draft_id }) });
+        if (typeof loadHistory === "function") loadHistory();
+        btn.remove(); box.replaceChildren(tiktokLaunchCard(launch));
+      } catch (e) {
+        if (e.message !== "signed out") box.replaceChildren(e.status === 402
+          ? h("div", { class: "result" }, h("span", {}, e.message), h("a", { class: "btn btn-primary", href: "#/billing" }, "See plans"))
+          : errorCard(e.message));
+        btn.disabled = false;
+      }
+    });
+    return h("div", { class: "adset", style: "gap:12px" },
+      h("b", {}, "Publish to TikTok"),
+      h("label", { class: "f", for: "tt-url" }, "Page the ads open (ProAds adds its TikTok tracking tags)", landing),
+      h("div", { class: "grid2" }, h("label", { class: "f" }, "Pixel", pixelSel), h("label", { class: "f" }, "Optimise for", eventSel)),
+      h("p", { class: "sub", style: "margin:0;font-size:13px" }, "Every TikTok ad is a vertical video (9:16, 9–30 seconds works best). Choose one per ad; the line under each says what the AI suggests filming."),
+      h("div", { style: "display:flex;gap:14px;flex-wrap:wrap" }, cards), btn, box);
+  }
+
+  function tiktokLaunchCard(launch) {
+    const live = launch.status === "ACTIVE";
+    const money = fmt.format(launch.daily_budget) + " " + (launch.currency || "") + "/day";
+    const box = h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" });
+    async function setTo(action) {
+      try {
+        const r = await api("/campaign/" + cid() + "/tiktok-launch/" + encodeURIComponent(launch.campaign_id), { method: "POST",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, confirm: action === "live" }) });
+        card.replaceWith(tiktokLaunchCard(r));
+      } catch (e) { if (e.message !== "signed out") toast(e.message); }
+    }
+    const open = h("a", { class: "btn btn-ghost", href: launch.manager_url, target: "_blank", rel: "noopener" }, "Open in TikTok Ads Manager");
+    const goLive = h("button", { class: "btn btn-primary", type: "button" }, "Go live");
+    goLive.addEventListener("click", () => box.replaceChildren(
+      h("span", { style: "flex-basis:100%;font-size:14px" }, "TikTok will start spending up to " + money + ". Start now?"),
+      h("button", { class: "btn btn-primary", type: "button", onclick: (e) => { e.target.disabled = true; setTo("live"); } }, "Yes, start spending"),
+      h("button", { class: "btn btn-ghost", type: "button", onclick: () => box.replaceChildren(goLive, open) }, "Not yet")));
+    const pause = h("button", { class: "btn btn-ghost", type: "button", onclick: (e) => { e.target.disabled = true; setTo("pause"); } }, "Pause");
+    box.append(...(live ? [pause, open] : [goLive, open]));
+    const card = h("div", { class: "result", style: "flex-direction:column;align-items:stretch;gap:12px" },
+      h("span", { class: "ok" }, live ? "Live on TikTok: spending up to " + money : "Created in TikTok, switched off. Nothing is spending yet."),
+      h("span", { class: "sub", style: "font-size:13px" }, (launch.ads || []).length + " ads · campaign " + launch.campaign_id + (live ? " · give it 5–7 days before judging" : " · check it in TikTok Ads Manager, then go live")),
+      box);
+    return card;
   }
 
   function launchCard(launch) {

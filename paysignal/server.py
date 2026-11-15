@@ -26,6 +26,7 @@ from __future__ import annotations
 import base64
 import hmac
 import json
+import math
 import logging
 import os
 import re
@@ -167,6 +168,7 @@ class App:
         self.windsor_http = None               # set in tests
         self.tiktok_ads = tiktok_api.TikTokAdsStore(self.store.db)
         self.tiktok_api_http = None            # set in tests
+        self.tiktok_launches = tiktok_api.TikTokLaunchStore(self.store.db)
         self.stripe_http = None
         self.media = media.MediaStore(self.store.db)
         self.media_http = None
@@ -2096,27 +2098,138 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         cfg = state.config(client_id)
         own = is_admin(client_id)                       # ProAds advertising itself: the result is a sign-up
         conversion = body.get("conversion") or ("signup" if own else "purchase")
+        platform = "tiktok" if body.get("platform") == "tiktok" else "meta"
         if own:
             product, landing = PROADS_PRODUCT, public_base() + "/"
         else:
             product = " ".join(x for x in (cfg.get("name", ""), cfg.get("website", "")) if x)
+            with state.lock:                           # what the business really sells: product names from its own site
+                titles = [it["title"] for it in state.media.list(client_id) if it.get("title") and it.get("source") != "upload"]
+            titles = list(dict.fromkeys(t.strip() for t in titles if t.strip()))[:25]
+            if titles:
+                product += ". Products on its website include: " + "; ".join(titles)
             landing = cfg.get("website", "")
+        if platform == "tiktok":
+            cur = ads_currency(client_id) if not tiktok_ads_ready(client_id) else (tiktok_ads_ready(client_id).get("currency") or ads_currency(client_id))
+            try:
+                minimum = tiktok_api.MIN_ADGROUP_DAILY_USD * billing.fx_rate("USD", cur)
+            except Exception:
+                minimum = 0
+            if minimum and budget < minimum - 0.5:
+                abort(400, f"TikTok's minimum is about {math.ceil(minimum)} {cur} a day per ad group (20 USD). Raise the daily budget to at least that.")
         if landing and not re.match(r"^https?://", landing):
             landing = "https://" + landing
         ai = need_ai()
         budget_currency = ads_currency(client_id)
         try:
-            out = build_campaign(ai, ai_context(client_id), budget, body.get("goal", ""), body.get("notes", ""),
+            ctx = ai_context(client_id)
+            if platform == "tiktok":
+                with state.lock:                       # what TikTok spend has done so far, per ad
+                    sp = state.windsor.spend_by_ad(client_id, (datetime.now(timezone.utc) - timedelta(days=90)).date().isoformat())
+                if sp:
+                    ctx["tiktok_ads_last_90_days"] = [{k: a[k] for k in ("campaign", "ad_name", "spend", "clicks", "impressions")} for a in sp][:20]
+            out = build_campaign(ai, ctx, budget, body.get("goal", ""), body.get("notes", ""),
                                  conversion=conversion, product=product, landing_url=landing,
-                                 budget_currency=budget_currency)
+                                 budget_currency=budget_currency, platform=platform)
         except PermissionError as e:
             abort(503, str(e))
         except (RuntimeError, CampaignError) as e:
             abort(502, str(e))
-        out["can_publish"] = state.ads_settings(client_id, own) is not None
+        out["platform"] = platform
+        out["can_publish"] = bool(tiktok_ads_ready(client_id)) if platform == "tiktok" else state.ads_settings(client_id, own) is not None
         with state.lock:
             out["draft_id"] = state.drafts.add(client_id, {k: v for k, v in out.items() if k != "can_publish"})
         return out
+
+    def tiktok_ads_ready(client_id: str) -> Optional[dict]:
+        with state.lock:
+            row = state.tiktok_ads.get(client_id)
+        return row if row and row["advertiser_id"] and row["status"] != "expired" else None
+
+    @flask.get("/tiktok/<client_id>/pixels")
+    def tiktok_pixels(client_id):
+        state.require_key(client_id)
+        row = tiktok_ads_ready(client_id)
+        if not row:
+            abort(400, "Connect the TikTok ad account first (Connect & upload > TikTok).")
+        try:
+            px = tiktok_api.pixels(tt_http(), tt_token(client_id, row), row["advertiser_id"])
+        except tiktok_api.TikTokAPIError as e:
+            abort(502, str(e))
+        with state.lock:
+            active = state.tiktok.get(client_id)
+        return {"pixels": px, "receives_sales": active["pixel_code"] if active else None}
+
+    @flask.post("/campaign/<client_id>/publish-tiktok")
+    def campaign_publish_tiktok(client_id):
+        """Create the campaign in the business's TikTok ad account, switched OFF until Go live."""
+        state.require_key(client_id)
+        row = tiktok_ads_ready(client_id)
+        if not row:
+            abort(400, "Connect the TikTok ad account first (Connect & upload > TikTok).")
+        if not is_admin(client_id):
+            gate_ads(client_id)
+        body = request.get_json(silent=True) or {}
+        plan, media_map = body.get("plan"), body.get("media") or {}
+        if not isinstance(plan, dict) or not isinstance(media_map, dict):
+            abort(400, "send JSON with the 'plan' and its 'media'")
+        pixel_id = str(body.get("pixel_id") or "")
+        if not pixel_id:
+            abort(400, "Choose the Pixel TikTok should optimise with.")
+        landing = (body.get("landing_url") or state.config(client_id).get("website", "")).strip()
+        try:
+            landing = tiktok.tracking_url(landing)        # every sale shows the exact TikTok campaign and ad
+        except ValueError as e:
+            abort(400, str(e))
+        resolved = resolve_media(client_id, media_map)
+        videos = {}
+        for k, v in resolved.items():
+            if isinstance(v, dict) and v.get("video_bytes"):
+                videos[k] = {"data": v["video_bytes"]}
+            elif isinstance(v, dict) and v.get("video_url"):
+                videos[k] = {"url": v["video_url"]}
+        try:
+            launch = tiktok_api.publish(tt_http(), tt_token(client_id, row), row["advertiser_id"], plan, videos, landing, pixel_id,
+                                        str(body.get("event") or plan.get("optimization") or "add_to_cart"),
+                                        state.config(client_id).get("name", ""))
+        except tiktok_api.TikTokAPIError as e:
+            abort(502, str(e))
+        launch["currency"] = row["currency"] or ads_currency(client_id)
+        with state.lock:
+            state.tiktok_launches.add(client_id, launch)
+            if body.get("draft_id"):
+                state.drafts.link(client_id, str(body["draft_id"]), launch["campaign_id"])
+        log.info("%s created TikTok campaign %s (off)", client_id, launch["campaign_id"])
+        return launch
+
+    @flask.post("/campaign/<client_id>/tiktok-launch/<campaign_id>")
+    def campaign_tiktok_launch(client_id, campaign_id):
+        """Go live or pause on TikTok. Going live needs {"confirm": true}: from then on TikTok spends the budget."""
+        state.require_key(client_id)
+        body = request.get_json(silent=True) or {}
+        action = body.get("action")
+        if action not in ("live", "pause"):
+            abort(400, "send {\"action\": \"live\"} or {\"action\": \"pause\"}")
+        if action == "live" and body.get("confirm") is not True:
+            abort(400, "going live spends money: send \"confirm\": true")
+        row = tiktok_ads_ready(client_id)
+        with state.lock:
+            launch = state.tiktok_launches.get(client_id, campaign_id)
+        if not row or not launch:
+            abort(404, "unknown TikTok campaign")
+        if action == "live" and not is_admin(client_id):
+            gate_ads(client_id)
+        try:
+            tiktok_api.set_campaign_status(tt_http(), tt_token(client_id, row), row["advertiser_id"], campaign_id, action == "live")
+        except tiktok_api.TikTokAPIError as e:
+            abort(502, str(e))
+        status = "ACTIVE" if action == "live" else "PAUSED"
+        with state.lock:
+            state.tiktok_launches.set_status(client_id, campaign_id, status)
+            if status == "ACTIVE" and not is_admin(client_id):
+                state.billing.start_ads_trial(client_id)
+        log.info("%s set TikTok campaign %s to %s", client_id, campaign_id, status)
+        return {**launch, "status": status}
 
     @flask.get("/campaign/<client_id>/history")
     def campaign_history(client_id):
@@ -2125,6 +2238,11 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         with state.lock:
             rows = state.drafts.list(client_id)
             launches = {l["campaign_id"]: l for l in state.launches.list(client_id)}
+            for r in rows:
+                if r["campaign_id"] and r["campaign_id"] not in launches:
+                    t = state.tiktok_launches.get(client_id, r["campaign_id"])
+                    if t:
+                        launches[r["campaign_id"]] = t
         for r in rows:
             l = launches.get(r["campaign_id"]) if r["campaign_id"] else None
             r["status"] = l["status"] if l else ("published" if r["campaign_id"] else "draft")
@@ -2136,10 +2254,13 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         with state.lock:
             d = state.drafts.get(client_id, draft_id)
             launch = state.launches.get(client_id, d["campaign_id"]) if d and d.get("campaign_id") else None
+            tt_launch = state.tiktok_launches.get(client_id, d["campaign_id"]) if d and d.get("campaign_id") else None
         if not d:
             abort(404, "unknown campaign")
-        d["can_publish"] = state.ads_settings(client_id, is_admin(client_id)) is not None
+        tiktok_plan = d.get("platform") == "tiktok" or (d.get("plan") or {}).get("platform") == "tiktok"
+        d["can_publish"] = bool(tiktok_ads_ready(client_id)) if tiktok_plan else state.ads_settings(client_id, is_admin(client_id)) is not None
         d["launch"] = launch
+        d["tiktok_launch"] = tt_launch
         return d
 
     @flask.post("/campaign/<client_id>/history/<draft_id>/delete")
@@ -2271,6 +2392,15 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             return False
         with state.lock:
             return not state.billing.ads_access(client_id)["allowed"]
+
+    def gate_ads(client_id):
+        """Same rule as Meta: after the free ad test, ads need a card on file."""
+        if needs_payment(client_id):
+            days = billing.ads_trial_days()
+            resp = jsonify({"error": f"Your free {days:g}-day ad test has ended. Add your card on Plan & billing "
+                                     "to keep running ads. Organic tools stay free.", "needs_plan": True})
+            resp.status_code = 402
+            abort(resp)
 
     def publisher(client_id, gate: bool = True):
         if gate and needs_payment(client_id):

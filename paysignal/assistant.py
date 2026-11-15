@@ -86,6 +86,37 @@ SYSTEM_CAMPAIGN = (
     '"tests": [str], "kill_rules": [str], "what_to_watch": [str]}'
 )
 
+SYSTEM_TIKTOK = (
+    "You are a senior TikTok ads strategist. Plan a TikTok campaign (TikTok placement only, website conversions) "
+    "for this business AND the organic TikTok/Instagram posts that go with it. It will be published as written.\n"
+    "Rules:\n"
+    "- Read the product description and the business's products carefully: write about what THIS business actually "
+    "sells (its real product names and category). Never describe it as something else.\n"
+    "- TikTok ads are short vertical videos. For each ad give: hook = what is said or shown in the first 2 seconds "
+    "(max 40 characters, used as the ad name), primary_text = the caption under the video (max 100 characters, "
+    "no hashtag spam, at most 2 hashtags), video_brief = what the video should show (for the business to film or "
+    "to pick from its videos), call_to_action one of: SHOP_NOW, ORDER_NOW, LEARN_MORE, BUY_NOW.\n"
+    "- Native TikTok style: people, hands, real use, unboxing, before/after, a reason to buy now. No TV-ad tone.\n"
+    "- Optimisation event: 'purchase' if the business has about 25+ verified purchases a week, otherwise "
+    "'add_to_cart' (TikTok needs enough events to learn). Say which and why in rationale.\n"
+    "- 1 ad group (2 only with a big budget), 2-3 ads each, broad targeting: TikTok finds the people.\n"
+    "- Build on proven winners in the data; anything not proven is labelled a test. Avoid what lost money.\n"
+    "- Never invent prices, results, reviews, discounts or numbers that are not in the data.\n"
+    "- Write the ads in English unless the notes ask for Arabic (then Arabic).\n"
+    "- Stay within the daily budget. Respect TikTok advertising policies; no sensitive-trait targeting.\n"
+    "- organic_plan: 5-7 posts for the next 7 days (TikTok first, Instagram Reels too) that test different hooks; "
+    "each asks people to use its own link or code (ProAds creates them).\n"
+    "Reply with only a JSON object in this shape:\n"
+    '{"name": str, "objective": "WEB_CONVERSIONS", "optimization": "purchase" or "add_to_cart", "daily_budget": number, '
+    '"currency": str, "rationale": str, "targeting": {"countries": [two-letter codes], "age_min": number}, '
+    '"ad_sets": [{"name": str, "audience": str, "budget_share": number, "placements": "TikTok", '
+    '"ads": [{"source_post_id": str or null, "format": "video", "hook": str, "video_brief": str, '
+    '"primary_text": str, "headline": str, "call_to_action": str, "why": str}]}], '
+    '"organic_plan": [{"day": str, "platform": "tiktok" or "instagram", "format": str, "hook": str, '
+    '"caption": str, "why": str}], '
+    '"tests": [str], "kill_rules": [str], "what_to_watch": [str]}'
+)
+
 PROADS_PRODUCT = (
     "ProAds (pro.ezdevsoft.net) is free software for UAE businesses and agencies that advertise on Instagram, "
     "Facebook and TikTok. A business uploads its sales list (Excel/CSV) or connects Shopify and gets a free audit "
@@ -162,17 +193,41 @@ def tidy_plan(plan: dict, conversion: str) -> dict:
     return plan
 
 
+def tidy_tiktok(plan: dict) -> dict:
+    plan["objective"] = "WEB_CONVERSIONS"
+    plan["platform"] = "tiktok"
+    plan["optimization"] = "purchase" if str(plan.get("optimization")).lower() == "purchase" else "add_to_cart"
+    t = plan.get("targeting") if isinstance(plan.get("targeting"), dict) else {}
+    countries = [c.upper() for c in t.get("countries") or [] if isinstance(c, str) and len(c) == 2] or ["AE"]
+    try:
+        age_min = int(t.get("age_min") or 18)
+    except (TypeError, ValueError):
+        age_min = 18
+    plan["targeting"] = {"countries": countries[:10], "age_min": max(18, min(age_min, 25))}
+    for s in plan.get("ad_sets") or []:
+        s["placements"] = "TikTok"
+        for ad in s.get("ads") or []:
+            cta = str(ad.get("call_to_action") or "").upper().replace(" ", "_")
+            ad["call_to_action"] = cta if cta in ("SHOP_NOW", "ORDER_NOW", "LEARN_MORE", "BUY_NOW") else "SHOP_NOW"
+            ad["format"] = "video"
+            ad["headline"] = str(ad.get("headline") or ad.get("hook") or "")[:40]
+            ad["primary_text"] = str(ad.get("primary_text") or "")[:100]
+    plan["organic_plan"] = [p for p in plan.get("organic_plan") or [] if isinstance(p, dict)][:10]
+    return plan
+
+
 def build_campaign(ai: MetaAI, context: dict, daily_budget: float, goal: str = "",
                    extra_instructions: str = "", conversion: str = "purchase", product: str = "",
-                   landing_url: str = "", budget_currency: str = "") -> dict:
+                   landing_url: str = "", budget_currency: str = "", platform: str = "meta") -> dict:
     conversion = "signup" if conversion == "signup" else "purchase"
     brief = {"daily_budget": daily_budget, "currency": budget_currency or context.get("currency", "AED"),
              "conversion": conversion,
              "goal": goal or ("sign-ups from businesses that go on to use the product" if conversion == "signup"
                               else "more paying customers who keep what they buy"),
              "product": product, "landing_page": landing_url, "notes": extra_instructions}
+    tiktok = platform == "tiktok"
     reply = ai.chat("campaign_builder", [
-        {"role": "developer", "content": SYSTEM_CAMPAIGN},
+        {"role": "developer", "content": SYSTEM_TIKTOK if tiktok else SYSTEM_CAMPAIGN},
         {"role": "user", "content": "Brief:\n" + json.dumps(brief, ensure_ascii=False) +
                                     "\n\nBusiness data:\n" + json.dumps(context, ensure_ascii=False, default=str)}],
         max_completion_tokens=16000)
@@ -180,9 +235,13 @@ def build_campaign(ai: MetaAI, context: dict, daily_budget: float, goal: str = "
         plan = _extract_json(reply.text)
     except (json.JSONDecodeError, CampaignError) as e:
         raise CampaignError(f"could not read the campaign the model returned: {e}") from e
+    if tiktok:
+        for s_ in plan.get("ad_sets") or []:             # TikTok ads have a hook, not a headline: fill it first
+            for ad in s_.get("ads") or []:
+                ad.setdefault("headline", ad.get("hook") or "")
     problems = validate_campaign(plan, daily_budget)
     if not problems:
-        plan = tidy_plan(plan, conversion)
+        plan = tidy_tiktok(plan) if tiktok else tidy_plan(plan, conversion)
         plan["currency"] = brief["currency"]
     return {"plan": plan, "problems": problems, "model": reply.model, "landing_url": landing_url,
             "cost_usd": reply.cost_usd, "status": "draft - review before launching"}
