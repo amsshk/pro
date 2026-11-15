@@ -2073,7 +2073,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     if (r.tiktok_launch) return h("div", { class: "adset", style: "gap:12px" }, h("b", {}, "Created in TikTok"), tiktokLaunchCard(r.tiktok_launch));
     if (!r.can_publish) return h("div", { class: "result err" }, h("span", {}, "To publish this to TikTok, ",
       h("a", { href: "#/upload" }, "connect the TikTok ad account"), " (Connect & upload > TikTok) and choose it."));
-    const media = {}, cards = [];
+    const media = {}, cards = [], setters = [];
     const landing = h("input", { id: "tt-url", value: r.landing_url || "", placeholder: "https://your-website.com", required: true });
     const pixelSel = h("select", { "aria-label": "Pixel" }, h("option", { value: "" }, "Loading your Pixels…"));
     const eventSel = h("select", { "aria-label": "Optimise for" },
@@ -2093,10 +2093,28 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         media[key] = "media:" + it.id;
         slot.replaceChildren(mediaThumb(it, "width:100%;aspect-ratio:9/16;border-radius:10px;border:1px solid var(--line)"));
       };
+      setters.push({ key, set: setMedia });
       cards.push(h("div", { style: "display:flex;flex-direction:column;gap:8px;flex:1 1 180px;max-width:220px" }, slot,
         h("span", { style: "font-size:13px;font-weight:600" }, ad.headline || "Ad " + (j + 1)), tag,
         h("button", { class: "chip", type: "button", onclick: () => openMediaPicker(setMedia) }, "Choose video")));
     }));
+    // upload videos right here; each new video goes to the next ad that has none
+    const upMsg = h("span", { class: "small", "aria-live": "polite" });
+    const upIn = h("input", { type: "file", multiple: true, accept: "video/mp4,video/quicktime", class: "sr", id: "tt-up" });
+    upIn.addEventListener("change", async () => {
+      const files = [...upIn.files]; if (!files.length) return;
+      for (const [i, f] of files.entries()) {
+        upMsg.textContent = "Uploading video " + (i + 1) + " of " + files.length + "…";
+        try {
+          const it = await uploadMedia(f);
+          const free = setters.find((x) => !media[x.key]);
+          if (it && it.id && free) free.set(it);
+        } catch (e) { upMsg.textContent = e.message; upIn.value = ""; return; }
+      }
+      upIn.value = ""; upMsg.textContent = "Uploaded and placed on the ads. Change any with \u201cChoose video\u201d.";
+    });
+    const upBar = h("div", { style: "display:flex;gap:10px;flex-wrap:wrap;align-items:center" },
+      h("label", { for: "tt-up", class: "btn btn-primary" }, "Upload videos"), upIn, upMsg);
     const box = h("div", { style: "display:flex;flex-direction:column;gap:10px" });
     const btn = h("button", { class: "btn btn-primary", type: "button" }, "Create in TikTok (switched off)");
     btn.addEventListener("click", async () => {
@@ -2121,7 +2139,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       h("label", { class: "f", for: "tt-url" }, "Page the ads open (ProAds adds its TikTok tracking tags)", landing),
       h("div", { class: "grid2" }, h("label", { class: "f" }, "Pixel", pixelSel), h("label", { class: "f" }, "Optimise for", eventSel)),
       h("p", { class: "sub", style: "margin:0;font-size:13px" }, "Every TikTok ad is a vertical video (9:16, 9–30 seconds works best). Choose one per ad; the line under each says what the AI suggests filming."),
-      h("div", { style: "display:flex;gap:14px;flex-wrap:wrap" }, cards), btn, box);
+      upBar, h("div", { style: "display:flex;gap:14px;flex-wrap:wrap" }, cards), btn, box);
   }
 
   function tiktokLaunchCard(launch) {
