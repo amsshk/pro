@@ -1447,11 +1447,47 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
               h("td", {}, fmt.format(a.customers)), h("td", {}, m(a.paid)), h("td", {}, h("b", {}, m(a.kept))), h("td", {}, fmt.format(a.refunded_orders))))))),
           ...(r.total.untagged ? [h("p", { class: "small", style: "margin:6px 0 0" }, fmt.format(r.total.untagged) + " came from TikTok without the ad tags (an ad without the link above): ProAds knows it was TikTok but not which ad.")] : []));
       }).catch(() => salesBox.replaceChildren(h("p", { class: "small", style: "margin:0" }, "Couldn't load TikTok sales right now.")));
+      // ---- TikTok ad account (ProAds' own approved TikTok app) ----
+      const ta = (status.connections && status.connections.tiktok_ads) || { connected: false };
+      const taOut = h("div", {});
+      const qp = new URLSearchParams(location.hash.split("?")[1] || "");
+      if (qp.get("tiktok") === "connected" && !tiktokCard.toasted) { tiktokCard.toasted = true; toast("TikTok connected. Reading your ad results…"); }
+      const taErr = qp.get("tiktok") === "error" ? errorCard(qp.get("message") || "TikTok connection failed.") : null;
+      let taPart = null;
+      if (ta.available && !ta.connected) {
+        taPart = h("div", { style: "display:flex;flex-direction:column;gap:6px" },
+          h("p", { class: "small", style: "margin:0" }, "Connect the TikTok ad account so ProAds reads each ad's spend and results by itself (and, with your approval, can pause ads)."),
+          h("button", { class: "btn btn-primary", type: "button", style: "align-self:flex-start", onclick: async (e) => {
+            e.target.disabled = true;
+            try { const r = await api("/tiktok/connect/" + cid(), { method: "POST" }); location.href = r.url; }
+            catch (err) { e.target.disabled = false; if (err.message !== "signed out") taOut.replaceChildren(errorCard(err.message)); }
+          } }, "Connect TikTok ad account"), taOut);
+      } else if (ta.connected) {
+        const pick = !ta.advertiser_id && ta.advertisers.length > 1 ? h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" },
+          ...ta.advertisers.map((a) => h("button", { class: "btn btn-ghost", type: "button", onclick: async (e) => {
+            e.target.disabled = true;
+            try { await api("/tiktok/" + cid() + "/advertiser", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ advertiser_id: a.id }) });
+              status = await api("/status/" + cid()); route(); }
+            catch (err) { e.target.disabled = false; if (err.message !== "signed out") toast(err.message); } } }, a.name + " · " + a.id))) : null;
+        const chosen = (ta.advertisers || []).find((a) => a.id === ta.advertiser_id);
+        taPart = h("div", { class: ta.status === "error" || ta.status === "expired" ? "result err" : "result", style: "flex-direction:column;align-items:stretch;gap:8px" },
+          h("div", { class: "between" }, h("b", {}, "TikTok ad account: " + (chosen ? chosen.name + " · " + chosen.id : "choose one below")),
+            h("button", { class: "btn btn-ghost", type: "button", onclick: async () => {
+              try { const r = await api("/tiktok/" + cid() + "/disconnect", { method: "POST" }); status = await api("/status/" + cid()); toast(r.note); route(); }
+              catch (err) { if (err.message !== "signed out") toast(err.message); } } }, "Disconnect")),
+          ta.message ? h("span", { style: "font-size:13px" }, ta.message + (ta.last_sync ? " · " + when(ta.last_sync) : "")) : null,
+          ta.status === "expired" ? h("button", { class: "btn btn-primary", type: "button", style: "align-self:flex-start", onclick: async () => {
+            try { const r = await api("/tiktok/connect/" + cid(), { method: "POST" }); location.href = r.url; } catch (err) { toast(err.message); } } }, "Connect again") : null,
+          pick);
+      }
       // ---- spend per ad via Windsor.ai, next to verified paid orders ----
       const ws = (status.connections && status.connections.windsor) || { connected: false };
       const wsOut = h("div", {});
       let wsPart;
-      if (!ws.connected) {
+      if (ta.connected && !ws.connected) {
+        wsPart = null;
+        loadResults();
+      } else if (!ws.connected) {
         const keyIn = h("input", { type: "password", autocomplete: "off", spellcheck: "false", placeholder: "Windsor.ai API key", "aria-label": "Windsor.ai API key", style: "flex:1;min-width:220px" });
         const wsBtn = h("button", { class: "btn btn-ghost", type: "submit" }, "Read TikTok spend");
         wsPart = h("div", { style: "display:flex;flex-direction:column;gap:6px" },
@@ -1469,6 +1505,9 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
           h("button", { class: "btn btn-ghost", type: "button", onclick: async () => {
             try { const r = await api("/connect/" + cid() + "/windsor/disconnect", { method: "POST" }); status = await api("/status/" + cid()); toast(r.note); route(); }
             catch (err) { if (err.message !== "signed out") toast(err.message); } } }, "Disconnect Windsor"));
+        loadResults();
+      }
+      function loadResults() {
         api("/tiktok/" + cid() + "/results?days=30").then((r) => {
           const m = (v) => v == null ? "—" : r.currency + " " + fmt.format(Math.round(v));
           if (!r.ads.length) return;
@@ -1487,7 +1526,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       const adsPart = h("div", { style: "display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:10px" },
         h("b", { style: "font-size:14px" }, "Which TikTok ads bring buyers"),
         h("p", { class: "sub", style: "margin:0" }, "Make a tracking link for your ads. Then ProAds shows, per TikTok ad, how many orders were paid and how much money you kept after refunds: not clicks, not checkouts."),
-        linkForm, linkOut, wsPart, salesBox);
+        taErr, taPart, linkForm, linkOut, wsPart, salesBox);
       return h("section", { class: "card", style: "display:flex;flex-direction:column;gap:10px" },
         h("div", { class: "between" }, h("h2", {}, "TikTok"), h("span", { class: "badge b-neutral" }, "Sends real sales to TikTok")),
         adsPart,

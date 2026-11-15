@@ -43,7 +43,7 @@ from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
-from . import growth, mailer, shopify_app, tiktok, whatsapp, windsor
+from . import growth, mailer, shopify_app, tiktok, tiktok_api, whatsapp, windsor
 from .identity import hash_phone
 from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
@@ -165,6 +165,8 @@ class App:
         self.tiktok_http = None                # set in tests
         self.windsor = windsor.WindsorStore(self.store.db)
         self.windsor_http = None               # set in tests
+        self.tiktok_ads = tiktok_api.TikTokAdsStore(self.store.db)
+        self.tiktok_api_http = None            # set in tests
         self.stripe_http = None
         self.media = media.MediaStore(self.store.db)
         self.media_http = None
@@ -873,6 +875,131 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         with state.lock:
             state.windsor.remove(client_id)
         return {"ok": True, "note": "ProAds deleted the Windsor key and the TikTok spend it had read."}
+
+    # ---------- TikTok Marketing API: connect the ad account, read spend per ad ----------
+    def tt_http():
+        if state.tiktok_api_http is not None:
+            return state.tiktok_api_http
+        import requests
+        return requests
+
+    def tt_back(result: str, message: str = ""):
+        q = urlencode({"tiktok": result, **({"message": message} if message else {})})
+        return redirect("/app#/upload?" + q)
+
+    @flask.post("/tiktok/connect/<client_id>")
+    def tiktok_ads_connect(client_id):
+        """Returns TikTok's approval page. Only works in the browser that asked (see bound())."""
+        state.require_key(client_id)
+        if not tiktok_api.available():
+            abort(503, "Connecting TikTok ad accounts isn't switched on yet (TIKTOK_APP_ID and TIKTOK_APP_SECRET).")
+        nonce = secrets.token_urlsafe(24)
+        with state.lock:
+            state.store.put_oauth_state(nonce, client_id, "tiktok", time.time())
+        return bound({"url": tiktok_api.authorize_url(nonce, public_url() + "/tiktok/callback")}, nonce)
+
+    @flask.get("/tiktok/callback")
+    def tiktok_ads_callback():
+        st_arg = request.args.get("state", "")
+        code = request.args.get("auth_code") or request.args.get("code") or ""
+        if not code:
+            return tt_back("error", "TikTok connection was cancelled.")
+        if not same_browser(st_arg):
+            return tt_back("error", "Please start connecting TikTok from ProAds, in this same browser.")
+        with state.lock:
+            found = state.store.pop_oauth_state(st_arg)
+        if not found or found[1] != "tiktok" or time.time() - found[2] > tiktok_api.STATE_TTL:
+            return tt_back("error", "This connect link expired. Please start again.")
+        client_id = found[0]
+        if not state.known(client_id) or not tiktok_api.available():
+            return tt_back("error", "Unknown ProAds account.")
+        try:
+            tok = tiktok_api.exchange_code(tt_http(), code)
+            advs = tiktok_api.advertisers(tt_http(), tok["access_token"], tok["advertiser_ids"])
+        except Exception as e:
+            log.warning("tiktok connect failed for %s: %s", client_id, e)
+            return tt_back("error", "TikTok did not finish the connection. Please try again.")
+        if not advs:
+            return tt_back("error", "No TikTok ad account was shared. Connect again and tick your ad account.")
+        with state.lock:
+            state.tiktok_ads.save(client_id, shopify_app.encrypt(tok["access_token"]),
+                                  shopify_app.encrypt(tok["refresh_token"]) if tok["refresh_token"] else "", tok["expires_at"], advs)
+        log.info("%s connected TikTok (%d ad accounts)", client_id, len(advs))
+        if len(advs) == 1:
+            threading.Thread(target=lambda: tiktok_ads_sync(client_id, 90), daemon=True).start() \
+                if state.tiktok_api_http is None else tiktok_ads_sync(client_id, 90)
+        return tt_back("connected")
+
+    def tt_token(client_id: str, row: dict) -> str:
+        """The access token, renewed first if TikTok gave one that expires soon."""
+        if row["refresh_enc"] and row["expires_at"] and row["expires_at"] - time.time() < 3600:
+            t = tiktok_api.refresh(tt_http(), shopify_app.decrypt(row["refresh_enc"]))
+            with state.lock:
+                state.tiktok_ads.tokens(client_id, shopify_app.encrypt(t["access_token"]),
+                                        shopify_app.encrypt(t["refresh_token"]) if t["refresh_token"] else None, t["expires_at"])
+            return t["access_token"]
+        return shopify_app.decrypt(row["token_enc"])
+
+    def tiktok_ads_sync(client_id: str, days: int = 7) -> dict:
+        with state.lock:
+            row = state.tiktok_ads.get(client_id)
+        if not row or not row["advertiser_id"]:
+            return {"skipped": "no ad account chosen"}
+        frm, to = windsor.window(days)
+        try:
+            token = tt_token(client_id, row)
+            rows = tiktok_api.report(tt_http(), token, row["advertiser_id"], frm, to)
+        except tiktok_api.TikTokAPIError as e:
+            expired = e.code in tiktok_api.TOKEN_CODES
+            with state.lock:
+                state.tiktok_ads.result(client_id, "expired" if expired else "error",
+                                        "TikTok ended ProAds' access. Connect the TikTok ad account again." if expired else str(e))
+            return {"error": str(e)}
+        except Exception as e:
+            with state.lock:
+                state.tiktok_ads.result(client_id, "error", f"Couldn't reach TikTok ({type(e).__name__}). ProAds will try again.")
+            return {"error": type(e).__name__}
+        for r in rows:
+            r.update({"account_id": row["advertiser_id"], "currency": row["currency"] or ""})
+        with state.lock:
+            state.windsor.put(client_id, rows)
+            ads = len({r["ad_id"] for r in rows})
+            state.tiktok_ads.result(client_id, "ok", f"Read spend for {ads} ad(s) from {frm} to {to}." if rows else
+                                    f"Connected. No ad spend between {frm} and {to}.")
+        return {"rows": len(rows)}
+    state.tiktok_ads_sync = tiktok_ads_sync
+
+    def tiktok_ads_sync_all() -> None:
+        with state.lock:
+            ids = state.tiktok_ads.all()
+        for cid in ids:
+            with state.lock:
+                row = state.tiktok_ads.get(cid)
+            if row and row["last_sync"] and time.time() - row["last_sync"] < 3600:
+                continue
+            try:
+                tiktok_ads_sync(cid, 7)
+            except Exception:
+                log.exception("TikTok sync failed for %s", cid)
+    state.tiktok_ads_sync_all = tiktok_ads_sync_all
+
+    @flask.post("/tiktok/<client_id>/advertiser")
+    def tiktok_ads_choose(client_id):
+        state.require_key(client_id)
+        adv = str((request.get_json(silent=True) or {}).get("advertiser_id") or "")
+        with state.lock:
+            if not state.tiktok_ads.choose(client_id, adv):
+                abort(400, "Pick one of the ad accounts you shared with ProAds.")
+        res = tiktok_ads_sync(client_id, 90)
+        with state.lock:
+            return {"ok": not res.get("error"), **tiktok_api.TikTokAdsStore.public(state.tiktok_ads.get(client_id))}
+
+    @flask.post("/tiktok/<client_id>/disconnect")
+    def tiktok_ads_disconnect(client_id):
+        state.require_key(client_id)
+        with state.lock:
+            state.tiktok_ads.remove(client_id)
+        return {"ok": True, "note": "ProAds deleted its TikTok access. You can also remove ProAds in TikTok: Settings > Authorizations."}
 
     @flask.get("/tiktok/<client_id>/results")
     def tiktok_results(client_id):
@@ -3101,6 +3228,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 "shopify_app": shop_info,
                 "tiktok": state.tiktok.public(client_id),
                 "windsor": windsor.WindsorStore.public(state.windsor.get(client_id)),
+                "tiktok_ads": tiktok_api.TikTokAdsStore.public(state.tiktok_ads.get(client_id)),
                 "stripe": {"configured": bool(cfg.get("stripe_webhook_secret")) or bool(state.stripe_links.get(client_id)),
                            **payments.get("stripe", {})},
                 "stripe_api": stripe_sync.StripeLinks.public(state.stripe_links.get(client_id)),
@@ -4615,7 +4743,7 @@ def _start_worker(state: App, every: int) -> None:
                     state.enforce_ads_trials()
             except Exception:
                 log.exception("ad test check failed")
-            for job in ("sync_all_launch_status", "tiktok_push_all", "windsor_sync_all", "retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees"):
+            for job in ("sync_all_launch_status", "tiktok_push_all", "windsor_sync_all", "tiktok_ads_sync_all", "retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees"):
                 try:
                     if getattr(state, job, None):
                         getattr(state, job)()
