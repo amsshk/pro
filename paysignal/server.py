@@ -2579,19 +2579,24 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     def media_similar(client_id, item_id):
         """An AI image made to look like the original. It stays unusable until the owner confirms it's accurate."""
         state.require_key(client_id)
-        if not state.ai.available:
-            abort(503, "AI image generation isn't set up (MODEL_API_KEY).")
+        ai = state.ai or MetaAI()
+        if not ai.api_key:
+            abort(503, "Making AI pictures needs Meta's AI (MODEL_API_KEY); the backup AI can write but not draw. "
+                       "Use Enhance to make the photo bigger and sharper instead.")
         with state.lock:
             it, blob = state.media.get(client_id, item_id), state.media.blob(client_id, item_id)
         if not it or not blob:
             abort(404, "Picture not found.")
         try:
-            desc = state.ai.describe_image(media.to_jpeg(blob, 1024), it.get("title") or "")
+            desc = ai.describe_image(media.to_jpeg(blob, 1024), it.get("title") or "")
             prompt = ("Professional advertising photo, sharp, well lit, high resolution. Recreate faithfully, same subject, "
                       "same colours and details, no extra text or logos: " + desc)
-            img = state.ai.generate_image(prompt)
+            img = ai.generate_image(prompt)
         except PermissionError as e:
-            abort(402 if "billing" in str(e).lower() else 503, str(e))
+            msg = ("Meta's AI is blocked by the billing problem on the Meta Model API account, so it can't make pictures right now. "
+                   "Use Enhance instead, or fix billing at dev.meta.ai.") if "billing" in str(e).lower() or "restrict" in str(e).lower() \
+                else "Meta's AI refused to make the picture. Use Enhance instead."
+            abort(402 if "billing" in str(e).lower() else 503, msg)
         except Exception as e:
             log.warning("similar image for %s/%s failed: %s", client_id, item_id, e)
             abort(502, "The AI couldn't make a similar image right now. Try enhancing the photo instead.")

@@ -112,6 +112,7 @@ def client(app):
 
 class FakeAI:
     available = True
+    api_key = "test-key"
 
     def describe_image(self, jpg, ctx=""):
         return "a pink box of hydra facial kit on white"
@@ -313,3 +314,16 @@ def test_discover_finds_shopify_product_videos():
     vids = [f for f in found if f["kind"] == "video"]
     assert vids[0]["url"] == "https://cdn.shopify.com/videos/oud-1280.mp4" and vids[0]["title"] == "Royal Oud"
     assert vids[0]["poster"] == "https://cdn.shopify.com/oud-cover.jpg"
+
+
+def test_similar_without_meta_key_says_why_instead_of_crashing(client, monkeypatch):
+    state, c, H = client
+    monkeypatch.delenv("MODEL_API_KEY", raising=False)
+    state.ai = None
+    w = site()
+    state.media_http = w
+    state.media_resolver = PUBLIC
+    c.post("/media/glow-clinic/scan", headers=H)
+    iid = c.get("/media/glow-clinic", headers=H).json["items"][0]["id"]
+    r = c.post(f"/media/glow-clinic/{iid}/similar", headers=H)
+    assert r.status_code == 503 and "Enhance" in r.json["error"]
