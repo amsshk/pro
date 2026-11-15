@@ -2154,13 +2154,19 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     const autoFill = (pull) => (pull ? api("/media/" + cid() + "/tiktok", { method: "POST" })
         .then((x) => { pullNote = x.found ? "" : "Your TikTok ad account has no videos in its library (boosted posts aren't stored there). "; })
         .catch((e) => { pullNote = "Couldn't read your TikTok videos: " + e.message + ". "; }) : Promise.resolve())
-      .then(() => api("/media/" + cid())).then((d) => {
+      .then(() => api("/media/" + cid()))
+      .then((d) => d.items.some((x) => x.kind === "video") || !pull ? d :          // none yet: look on the website too
+        (upMsg.textContent = "Looking for videos on your website…",
+         api("/media/" + cid() + "/scan", { method: "POST" }).catch(() => null).then(() => api("/media/" + cid()))))
+      .then((d) => {
+        upMsg.textContent = "";
         const vids = d.items.filter((x) => x.kind === "video" && x.usable && !x.needs_approval)
           .sort((a, b) => (a.source === "tiktok" ? 0 : 1) - (b.source === "tiktok" ? 0 : 1));
         const used = new Set(Object.values(media));
         const free = vids.filter((v) => !used.has("media:" + v.id));
         setters.filter((x) => !media[x.key]).forEach((x, i) => { if (free[i]) x.set(free[i]); });
-        if (!vids.length) upMsg.textContent = pullNote + "Upload the videos with \u201cUpload videos\u201d.";
+        if (!vids.length) upMsg.textContent = pullNote + "No videos on your website either. Upload them with \u201cUpload videos\u201d.";
+        else if (setters.some((x) => !media[x.key])) upMsg.textContent = "Found " + vids.length + " video(s); the rest of the ads still need one.";
       }).catch(() => {});
     autoFill(true);
     const box = h("div", { style: "display:flex;flex-direction:column;gap:10px" });

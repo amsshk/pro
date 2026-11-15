@@ -24,7 +24,8 @@ from urllib.parse import urljoin, urlparse
 
 MAX_HTML = 3_000_000
 MAX_IMAGE = 12_000_000
-MAX_CANDIDATES = 40
+MAX_CANDIDATES = 60
+MAX_PRODUCT_PAGES = 15        # product pages read for videos per scan (keeps the scan quick)
 MIN_SIDE_OK = 600          # Meta's feed minimum is about 600 px; 1080 is ideal
 GOOD_SIDE = 1080
 TINY = 200
@@ -79,6 +80,7 @@ class _Page(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.metas, self.imgs, self.videos, self.ld, self._ld = [], [], [], [], None
+        self.video_metas: list[str] = []
         self.title = ""
         self._t = False
 
@@ -87,6 +89,9 @@ class _Page(HTMLParser):
         if tag == "meta" and (a.get("property") or a.get("name") or "").lower() in ("og:image", "og:image:url",
                                                                                      "og:image:secure_url", "twitter:image"):
             self.metas.append(a.get("content") or "")
+        elif tag == "meta" and (a.get("property") or a.get("name") or "").lower() in ("og:video", "og:video:url", "og:video:secure_url") \
+                and str(a.get("content") or "").lower().split("?")[0].endswith((".mp4", ".mov", ".m4v")):
+            self.video_metas.append(a.get("content") or "")
         elif tag == "img":
             src = a.get("src") or a.get("data-src") or a.get("data-original") or ""
             best = _srcset_best(a.get("srcset") or a.get("data-srcset") or "")
@@ -195,13 +200,34 @@ def discover(http, site: str, resolver: Callable = socket.getaddrinfo) -> list[d
                       "price": kw.get("price", ""), "poster": urljoin(final, kw["poster"]) if kw.get("poster") else ""})
 
     # online shops publish their product list: the most useful photos of all
+    handles: list[tuple[str, str]] = []
     for path, parse in (("/products.json?limit=50", _shopify), ("/wp-json/wc/store/v1/products?per_page=50", _woo)):
         try:
             body, ct, _ = safe_get(http, root + path, MAX_HTML, resolver)
-            for p in parse(json.loads(body)):
+            data = json.loads(body)
+            for p in parse(data):
                 add(p["url"], "product", title=p["title"], price=p["price"])
-        except (MediaError, ValueError, KeyError, TypeError):
+            if parse is _shopify:
+                handles = [(str(p.get("handle") or ""), str(p.get("title") or "")[:120]) for p in data.get("products") or [] if p.get("handle")]
+        except (MediaError, ValueError, KeyError, TypeError, AttributeError):
             continue
+    # Shopify product videos (what TikTok ads need): each product's own .js lists its media, videos included
+    for handle, title in handles[:MAX_PRODUCT_PAGES]:
+        try:
+            body, _, _ = safe_get(http, f"{root}/products/{handle}.js", MAX_HTML, resolver)
+            for m in json.loads(body).get("media") or []:
+                if m.get("media_type") != "video":
+                    continue
+                mp4 = [x for x in m.get("sources") or [] if (x.get("format") == "mp4" or str(x.get("mime_type", "")).endswith("mp4")) and x.get("url")]
+                if not mp4:
+                    continue
+                best = sorted(mp4, key=lambda x: abs(int(x.get("height") or 0) - 1280))[0]   # closest to 720x1280
+                poster = (m.get("preview_image") or {}).get("src") or ""
+                add(best["url"], "product video", kind="video", title=title, poster=poster)
+        except (MediaError, ValueError, KeyError, TypeError, AttributeError):
+            continue
+    for v in page.video_metas:
+        add(v, "share video", kind="video", title=page.title.strip()[:120])
     for p in _ld_products(page.ld):
         add(p["url"], "product", title=p["title"], price=p["price"])
     for m in page.metas:

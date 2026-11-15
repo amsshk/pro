@@ -295,3 +295,21 @@ def test_uploaded_video_bytes_go_to_meta_as_a_file():
     data = pub._video({"video_bytes": b"VIDEO"}, "ad 1", {"headline": "H"}, {"type": "LEARN_MORE"})
     assert data["video_id"] == "v9" and data["image_url"] == "https://x/p.jpg"
     assert http.posts[0][2]["source"][1] == b"VIDEO"
+
+
+def test_discover_finds_shopify_product_videos():
+    w = site()
+    w.pages["https://glow.ae/products.json?limit=50"] = Resp(json.dumps({"products": [
+        {"title": "Royal Oud", "handle": "royal-oud", "variants": [{"price": "350.00"}], "images": [{"src": "https://cdn.shopify.com/oud.jpg"}]}]}).encode(),
+        ctype="application/json")
+    w.pages["https://glow.ae/products/royal-oud.js"] = Resp(json.dumps({"media": [
+        {"media_type": "image", "src": "https://cdn.shopify.com/oud.jpg"},
+        {"media_type": "video", "preview_image": {"src": "https://cdn.shopify.com/oud-cover.jpg"}, "sources": [
+            {"format": "m3u8", "url": "https://cdn.shopify.com/v/oud.m3u8"},
+            {"format": "mp4", "height": 480, "url": "https://cdn.shopify.com/videos/oud-480.mp4"},
+            {"format": "mp4", "height": 1280, "url": "https://cdn.shopify.com/videos/oud-1280.mp4"}]},
+        {"media_type": "external_video", "host": "youtube"}]}).encode(), ctype="application/json")
+    found = media.discover(w, "glow.ae", PUBLIC)
+    vids = [f for f in found if f["kind"] == "video"]
+    assert vids[0]["url"] == "https://cdn.shopify.com/videos/oud-1280.mp4" and vids[0]["title"] == "Royal Oud"
+    assert vids[0]["poster"] == "https://cdn.shopify.com/oud-cover.jpg"
