@@ -889,6 +889,23 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         q = urlencode({"tiktok": result, **({"message": message} if message else {})})
         return redirect("/app#/upload?" + q)
 
+    @flask.post("/account/<client_id>/website")
+    def account_website(client_id):
+        """The shop's own website: where ads send people and what the AI reads about the business."""
+        state.require_key(client_id)
+        w = str((request.get_json(silent=True) or {}).get("website") or "").strip()
+        if w and not re.match(r"^https?://", w):
+            w = "https://" + w
+        if w and not re.match(r"^https://[a-z0-9.-]+\.[a-z]{2,}(/.*)?$", w, re.I):
+            abort(400, "Enter the shop's website, like https://yourshop.com.")
+        if re.search(r"(instagram|tiktok|facebook)\.com|wa\.me", w, re.I):
+            abort(400, "Use the shop's own website here (where people buy), not a social profile.")
+        if state.accounts.get(client_id) is None:
+            abort(400, "This business's website is set in the server settings.")
+        with state.lock:
+            state.accounts.set_website(client_id, w)
+        return {"ok": True, "website": w}
+
     @flask.post("/tiktok/connect/<client_id>")
     def tiktok_ads_connect(client_id):
         """Returns TikTok's approval page. Only works in the browser that asked (see bound())."""

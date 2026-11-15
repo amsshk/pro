@@ -1332,7 +1332,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     const stripeCard = () => {
       const sa = (status.connections && status.connections.stripe_api) || { connected: false };
       const out = h("div", {});
-      const keyIn = h("input", { type: "password", autocomplete: "off", spellcheck: "false", placeholder: "rk_live_…", "aria-label": "Stripe restricted key", style: "flex:1;min-width:220px" });
+      const keyIn = h("input", { type: "password", autocomplete: "new-password", name: "proads-secret-" + Math.random().toString(36).slice(2), "data-lpignore": "true", "data-1p-ignore": "true", spellcheck: "false", placeholder: "rk_live_…", "aria-label": "Stripe restricted key", style: "flex:1;min-width:220px" });
       const go = h("button", { class: "btn btn-primary", type: "submit" }, sa.connected ? "Replace key" : "Connect Stripe");
       const form = h("form", { style: "display:flex;gap:8px;flex-wrap:wrap", onsubmit: async (e) => {
         e.preventDefault(); go.disabled = true; out.replaceChildren(h("p", { class: "sub", style: "margin:0" }, "Checking the key and reading your payments… this can take a minute."));
@@ -1362,14 +1362,29 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("p", { class: "small", style: "margin:0" }, "Never paste your secret key (sk_…): ProAds refuses it, because it can move money. The restricted key is stored encrypted and can only read."),
         off);
     };
+    const websiteCard = () => {
+      if (status.admin) return null;
+      const w = h("input", { value: status.website || "", placeholder: "https://yourshop.com", "aria-label": "Your website", style: "flex:1;min-width:220px", autocomplete: "url" });
+      const msgW = h("span", { class: "small" }, /instagram|tiktok|facebook/i.test(status.website || "") ? "This is a social profile: put the shop's own website, where people buy." : "Where your ads send people, and what ProAds reads to learn your products.");
+      const saveW = h("button", { class: "btn btn-ghost", type: "submit" }, "Save");
+      return h("section", { class: "card", style: "display:flex;flex-direction:column;gap:8px" },
+        h("h2", {}, "Your website"), msgW,
+        h("form", { style: "display:flex;gap:8px;flex-wrap:wrap", onsubmit: async (e) => {
+          e.preventDefault(); saveW.disabled = true;
+          try { const r = await api("/account/" + cid() + "/website", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ website: w.value }) });
+            status = await api("/status/" + cid()); msgW.textContent = "Saved: " + (r.website || "removed"); }
+          catch (err) { if (err.message !== "signed out") msgW.textContent = err.message; }
+          saveW.disabled = false;
+        } }, w, saveW));
+    };
     const tiktokCard = () => {
       const tt = (status.connections && status.connections.tiktok) || { connected: false, pixels: [] };
       const pixels = tt.pixels || [];
       const out = h("div", {});
       const reload = async (note) => { status = await api("/status/" + cid()); if (note) toast(note); route(); };
       const nameIn = h("input", { autocomplete: "off", placeholder: "Name, e.g. Verified sales", "aria-label": "Pixel name" });
-      const pixIn = h("input", { autocomplete: "off", spellcheck: "false", placeholder: "Pixel ID, e.g. C4ABC123DEF456", "aria-label": "TikTok Pixel ID" });
-      const tokIn = h("input", { type: "password", autocomplete: "off", spellcheck: "false", placeholder: "Events API access token", "aria-label": "TikTok Events API access token" });
+      const pixIn = h("input", { autocomplete: "off", name: "tt-pixel-" + Math.random().toString(36).slice(2), "data-lpignore": "true", "data-1p-ignore": "true", spellcheck: "false", placeholder: "Pixel ID, e.g. C4ABC123DEF456", "aria-label": "TikTok Pixel ID" });
+      const tokIn = h("input", { type: "password", autocomplete: "new-password", name: "proads-secret-" + Math.random().toString(36).slice(2), "data-lpignore": "true", "data-1p-ignore": "true", spellcheck: "false", placeholder: "Events API access token", "aria-label": "TikTok Events API access token" });
       const testIn = h("input", { autocomplete: "off", spellcheck: "false", placeholder: "Test event code (optional, e.g. TEST12345)", "aria-label": "TikTok test event code" });
       const go = h("button", { class: "btn btn-primary", type: "submit", style: "align-self:flex-start" }, pixels.length ? "Add Pixel and use it" : "Connect TikTok");
       const form = h("form", { style: "display:flex;flex-direction:column;gap:8px", onsubmit: async (e) => {
@@ -1492,7 +1507,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         wsPart = null;
         loadResults();
       } else if (!ws.connected) {
-        const keyIn = h("input", { type: "password", autocomplete: "off", spellcheck: "false", placeholder: "Windsor.ai API key", "aria-label": "Windsor.ai API key", style: "flex:1;min-width:220px" });
+        const keyIn = h("input", { type: "password", autocomplete: "new-password", name: "proads-secret-" + Math.random().toString(36).slice(2), "data-lpignore": "true", "data-1p-ignore": "true", spellcheck: "false", placeholder: "Windsor.ai API key", "aria-label": "Windsor.ai API key", style: "flex:1;min-width:220px" });
         const wsBtn = h("button", { class: "btn btn-ghost", type: "submit" }, "Read TikTok spend");
         wsPart = h("div", { style: "display:flex;flex-direction:column;gap:6px" },
           h("p", { class: "small", style: "margin:0" }, "Already use Windsor.ai with TikTok? Paste its API key and ProAds reads each ad's spend (read-only), so you see the real cost per paid order. Without it, ProAds shows sales only."),
@@ -1560,6 +1575,8 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     };
     function drawChosen() {
       const out = [];
+      const wc = websiteCard();
+      if (wc) out.push(wc);
       const meta = has("instagram") || has("facebook") ? metaCard(params) : null;
       if (meta) out.push(meta);
       for (const [k] of SOCIAL) if (has(k) && (!["instagram", "facebook"].includes(k) || !meta)) out.push(k === "tiktok" ? tiktokCard() : socialCard(k));

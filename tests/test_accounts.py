@@ -198,3 +198,12 @@ def test_delete_account_erases_every_table(app):
         cols = [x[1] for x in db.execute(f'PRAGMA table_info("{t}")')]
         if "client_id" in cols and t != "proads_revenue":
             assert db.execute(f'SELECT COUNT(*) FROM "{t}" WHERE client_id=?', (a["client_id"],)).fetchone()[0] == 0, t
+
+
+def test_owner_can_fix_the_website(app):
+    c = app.test_client()
+    a = c.post("/auth/signup", json=GOOD).json
+    hd = {"X-API-Key": a["token"]}
+    assert c.post(f"/account/{a['client_id']}/website", json={"website": "instagram.com/bynawi.ae"}, headers=hd).status_code == 400
+    r = c.post(f"/account/{a['client_id']}/website", json={"website": "bynawi.com"}, headers=hd).json
+    assert r["website"] == "https://bynawi.com" and c.get(f"/status/{a['client_id']}", headers=hd).json["website"] == "https://bynawi.com"

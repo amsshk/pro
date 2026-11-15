@@ -281,6 +281,10 @@ class AccountStore:
     # ProAds' own invoices to this business: kept for tax/accounting law (they hold no customer data of the business)
     KEEP_ON_DELETE = {"proads_revenue"}
 
+    def set_website(self, client_id: str, website: str) -> None:
+        self.db.execute("UPDATE accounts SET website=? WHERE client_id=?", ((website or "").strip()[:200] or None, client_id))
+        self.db.commit()
+
     def delete_everything(self, client_id: str) -> dict:
         """Erase an account and every record that belongs to it: every table with a client_id column, found at
         run time, so a table added later can't be forgotten. Media files go with their media items."""
