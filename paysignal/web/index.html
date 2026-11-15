@@ -1476,6 +1476,10 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
               try { const r = await api("/tiktok/" + cid() + "/disconnect", { method: "POST" }); status = await api("/status/" + cid()); toast(r.note); route(); }
               catch (err) { if (err.message !== "signed out") toast(err.message); } } }, "Disconnect")),
           ta.message ? h("span", { style: "font-size:13px" }, ta.message + (ta.last_sync ? " · " + when(ta.last_sync) : "")) : null,
+          ta.advertiser_id ? h("button", { class: "btn btn-ghost", type: "button", style: "align-self:flex-start", onclick: async (e) => {
+            e.target.disabled = true; e.target.textContent = "Reading TikTok…";
+            try { await api("/tiktok/" + cid() + "/sync", { method: "POST" }); status = await api("/status/" + cid()); route(); }
+            catch (err) { e.target.disabled = false; e.target.textContent = "Refresh now"; if (err.message !== "signed out") toast(err.message); } } }, "Refresh now") : null,
           ta.status === "expired" ? h("button", { class: "btn btn-primary", type: "button", style: "align-self:flex-start", onclick: async () => {
             try { const r = await api("/tiktok/connect/" + cid(), { method: "POST" }); location.href = r.url; } catch (err) { toast(err.message); } } }, "Connect again") : null,
           pick);

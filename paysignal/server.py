@@ -994,6 +994,14 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         with state.lock:
             return {"ok": not res.get("error"), **tiktok_api.TikTokAdsStore.public(state.tiktok_ads.get(client_id))}
 
+    @flask.post("/tiktok/<client_id>/sync")
+    def tiktok_ads_sync_now(client_id):
+        """Read the last 90 days again now."""
+        state.require_key(client_id)
+        res = tiktok_ads_sync(client_id, 90)
+        with state.lock:
+            return {"ok": not res.get("error"), **tiktok_api.TikTokAdsStore.public(state.tiktok_ads.get(client_id))}
+
     @flask.post("/tiktok/<client_id>/disconnect")
     def tiktok_ads_disconnect(client_id):
         state.require_key(client_id)

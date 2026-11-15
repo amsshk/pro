@@ -99,7 +99,7 @@ def advertisers(http, token: str, ids: list[str]) -> list[dict]:
             for a in rows or []]
 
 
-MAX_SPAN_DAYS = 30          # TikTok: "max time span is 30 days when use stat_time_day"
+MAX_SPAN_DAYS = 28          # TikTok: "max time span is 30 days when use stat_time_day" (kept under it)
 
 
 def report(http, token: str, advertiser_id: str, start: str, end: str) -> list[dict]:
