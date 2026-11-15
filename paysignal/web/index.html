@@ -1876,7 +1876,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   }
   function mediaThumb(it, style) {
     if (it.kind === "video") {
-      if (String(it.url || "").startsWith("tiktok-video:")) {
+      if (/^tiktok-(video|post):/.test(String(it.url || ""))) {
         const img = h("img", { alt: it.title || "TikTok video", src: it.poster || null, referrerpolicy: "no-referrer", style: style + ";object-fit:cover;background:#111" });
         return img;
       }
@@ -1959,6 +1959,10 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       ttLib.disabled = true; msg.textContent = "Reading the videos in your TikTok ad account…";
       try { const r = await post("/media/" + cid() + "/tiktok"); msg.textContent = r.found ? "Added " + r.added + " new TikTok videos (" + r.found + " in your ad account). They can be used for TikTok ads." : "Your TikTok ad account has no videos yet. Upload them with Upload photos or videos."; draw(); }
       catch (e) { msg.textContent = e.message; } ttLib.disabled = false; } }, "From my TikTok ad account");
+    const ttPosts = h("button", { class: "btn btn-ghost", type: "button", onclick: async () => {
+      ttPosts.disabled = true; msg.textContent = "Reading your TikTok posts…";
+      try { const r = await post("/media/" + cid() + "/tiktok-posts"); msg.textContent = r.found ? "Added " + r.added + " of your TikTok posts (" + r.found + " found). They run as Spark Ads: the real post, with its likes and comments." : r.why; draw(); }
+      catch (e) { msg.textContent = e.message; } ttPosts.disabled = false; } }, "From my TikTok posts");
     const up = h("input", { type: "file", multiple: true, accept: "image/jpeg,image/png,image/webp,video/mp4,video/quicktime", class: "sr", id: "media-up" });
     up.addEventListener("change", async () => {
       const files = [...up.files]; if (!files.length) return;
@@ -1971,7 +1975,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     const panel = h("div", { class: "card", role: "dialog", "aria-modal": "true", "aria-label": "Choose a photo or video",
       style: "max-width:980px;width:100%;max-height:88vh;overflow:auto;display:flex;flex-direction:column;gap:12px" },
       h("div", { class: "between" }, h("h2", {}, "Choose a photo or video"), h("button", { class: "btn btn-ghost", type: "button", onclick: close, "aria-label": "Close" }, "Close")),
-      h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, scan, social, ttLib, h("label", { for: "media-up", class: "btn btn-ghost" }, "Upload photos or videos"), up),
+      h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, scan, social, ttPosts, ttLib, h("label", { for: "media-up", class: "btn btn-ghost" }, "Upload photos or videos"), up),
       msg,
       h("p", { class: "small", style: "margin:0" }, "Enhance makes a small photo bigger and sharper without changing it. Make similar (AI) creates a new picture that looks like yours: compare it with the original and confirm it's accurate before it can be used."),
       grid);
@@ -2151,9 +2155,10 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       h("label", { for: "tt-up", class: "btn btn-primary" }, "Upload videos"), upIn, upMsg);
     // fill empty ads with the business's videos straight away (TikTok ad library first, then uploads)
     let pullNote = "";
-    const autoFill = (pull) => (pull ? api("/media/" + cid() + "/tiktok", { method: "POST" })
-        .then((x) => { pullNote = x.found ? "" : "Your TikTok ad account has no videos in its library (boosted posts aren't stored there). "; })
-        .catch((e) => { pullNote = "Couldn't read your TikTok videos: " + e.message + ". "; }) : Promise.resolve())
+    const autoFill = (pull) => (pull ? api("/media/" + cid() + "/tiktok-posts", { method: "POST" })
+        .then((x) => { pullNote = x.found ? "" : (x.why || "") + " "; })
+        .catch((e) => { pullNote = "Couldn't read your TikTok posts: " + e.message + ". "; })
+        .then(() => api("/media/" + cid() + "/tiktok", { method: "POST" }).catch(() => null)) : Promise.resolve())
       .then(() => api("/media/" + cid()))
       .then((d) => d.items.some((x) => x.kind === "video") || !pull ? d :          // none yet: look on the website too
         (upMsg.textContent = "Looking for videos on your website…",
@@ -2161,7 +2166,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       .then((d) => {
         upMsg.textContent = "";
         const vids = d.items.filter((x) => x.kind === "video" && x.usable && !x.needs_approval)
-          .sort((a, b) => (a.source === "tiktok" ? 0 : 1) - (b.source === "tiktok" ? 0 : 1));
+          .sort((a, b) => (String(a.url).startsWith("tiktok-post:") ? 0 : a.source === "tiktok" ? 1 : 2) - (String(b.url).startsWith("tiktok-post:") ? 0 : b.source === "tiktok" ? 1 : 2));
         const used = new Set(Object.values(media));
         const free = vids.filter((v) => !used.has("media:" + v.id));
         setters.filter((x) => !media[x.key]).forEach((x, i) => { if (free[i]) x.set(free[i]); });

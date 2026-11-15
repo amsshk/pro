@@ -2203,7 +2203,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         resolved = resolve_media(client_id, media_map)
         videos = {}
         for k, v in resolved.items():
-            if isinstance(v, dict) and v.get("tiktok_video_id"):
+            if isinstance(v, dict) and v.get("tiktok_spark"):
+                videos[k] = {"spark": v["tiktok_spark"]}
+            elif isinstance(v, dict) and v.get("tiktok_video_id"):
                 videos[k] = {"video_id": v["tiktok_video_id"]}
             elif isinstance(v, dict) and v.get("video_bytes"):
                 videos[k] = {"data": v["video_bytes"]}
@@ -2651,6 +2653,30 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                     added += 1
         return {"added": added, "found": len(vids)}
 
+    @flask.post("/media/<client_id>/tiktok-posts")
+    def media_tiktok_posts(client_id):
+        """The business's own TikTok posts (if its TikTok account is linked to the ad account): usable as Spark Ads."""
+        state.require_key(client_id)
+        row = tiktok_ads_ready(client_id)
+        if not row:
+            abort(400, "Connect the TikTok ad account first (Connect & upload > TikTok).")
+        try:
+            posts, problems = tiktok_api.tiktok_posts(tt_http(), tt_token(client_id, row), row["advertiser_id"])
+        except tiktok_api.TikTokAPIError as e:
+            posts, problems = [], [str(e)]
+        added = 0
+        with state.lock:
+            for p_ in posts:
+                if state.media.add(client_id, {"source": "tiktok", "origin": "TikTok post" + (" · @" + p_["account"] if p_["account"] else ""),
+                                               "kind": "video", "quality": "video", "ai": "none",
+                                               "url": "tiktok-post:" + ":".join((p_["identity_type"], p_["identity_id"], p_["bc_id"], p_["item_id"])),
+                                               "title": p_["text"] or "TikTok post", "poster": p_["cover"]}, None):
+                    added += 1
+        why = "" if posts else ("TikTok didn't let ProAds read the posts: " + "; ".join(dict.fromkeys(problems))[:400] +
+                                ". Link Bynawi's TikTok account to the Business Center (Business Center > Accounts > TikTok accounts) "
+                                "and allow it for this ad account, or we apply for the TikTok Accounts permission.")
+        return {"added": added, "found": len(posts), "why": why}
+
     @flask.post("/media/<client_id>/social")
     def media_social(client_id):
         """Photos and videos from the client's own Facebook Page and Instagram posts."""
@@ -2755,6 +2781,10 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 if it["kind"] == "video" and str(it.get("url") or "").startswith("tiktok-video:"):
                     out[k] = {"tiktok_video_id": it["url"].split(":", 1)[1]}
                     continue
+                if it["kind"] == "video" and str(it.get("url") or "").startswith("tiktok-post:"):
+                    t, iid, bc, item = it["url"].split(":", 1)[1].split(":", 3)
+                    out[k] = {"tiktok_spark": {"identity_type": t, "identity_id": iid, "bc_id": bc, "item_id": item}}
+                    continue
                 if it["kind"] == "video":
                     thumb = None
                     if it.get("poster"):
@@ -2787,7 +2817,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             landing = "https://" + landing
         landing = landing.replace("http://", "https://", 1) if landing.startswith("http://") else landing
         images = resolve_media(client_id, images)
-        if any(isinstance(v, dict) and v.get("tiktok_video_id") for v in images.values()):
+        if any(isinstance(v, dict) and (v.get("tiktok_video_id") or v.get("tiktok_spark")) for v in images.values()):
             abort(400, "A video from the TikTok ad account can only be used for TikTok ads. Upload the video file, or pick another.")
         mode = body.get("placements") or "automatic"
         if mode not in meta_ads.PLACEMENTS:

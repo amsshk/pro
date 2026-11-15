@@ -341,9 +341,18 @@ def publish(http, token: str, advertiser_id: str, plan: dict, videos: dict, land
                 v = videos.get(f"{i}-{j}")
                 if not v:
                     raise TikTokAPIError(f"Ad {j + 1} in '{body['adgroup_name']}' has no video. TikTok ads need a video: choose or upload one.")
+                cta = str(ad.get("call_to_action") or "SHOP_NOW").upper()
+                if v.get("spark"):                       # the business's own TikTok post, promoted as it is
+                    sp = v["spark"]
+                    c = {"ad_name": str(ad.get("headline") or f"Ad {j + 1}")[:500], "identity_type": sp["identity_type"],
+                         "identity_id": sp["identity_id"], "ad_format": "SINGLE_VIDEO", "tiktok_item_id": sp["item_id"],
+                         "call_to_action": cta if cta in CTAS else "SHOP_NOW", "landing_page_url": landing_url}
+                    if sp.get("bc_id"):
+                        c["identity_authorized_bc_id"] = sp["bc_id"]
+                    creatives.append(c)
+                    continue
                 vid = v.get("video_id") or upload_video(http, token, advertiser_id, ad.get("headline") or "ad", v.get("data"), v.get("url"))
                 cover = video_cover(http, token, advertiser_id, vid)
-                cta = str(ad.get("call_to_action") or "SHOP_NOW").upper()
                 creatives.append({"ad_name": str(ad.get("headline") or f"Ad {j + 1}")[:500], "identity_type": "CUSTOMIZED_USER",
                                   "identity_id": ident, "ad_format": "SINGLE_VIDEO", "video_id": vid, "image_ids": [cover],
                                   "ad_text": str(ad.get("primary_text") or "")[:100], "call_to_action": cta if cta in CTAS else "SHOP_NOW",
@@ -403,3 +412,44 @@ def library_videos(http, token: str, advertiser_id: str, limit: int = 100) -> li
             break
         page += 1
     return out[:limit]
+
+
+# ---------- the business's own TikTok posts (Spark Ads: the real post is promoted, with its likes and comments) ----------
+POST_IDENTITIES = ("BC_AUTH_TT", "TT_USER", "AUTH_CODE")
+
+
+def tiktok_posts(http, token: str, advertiser_id: str, limit: int = 60) -> tuple[list[dict], list[str]]:
+    """Posts of the TikTok accounts this ad account may promote. Returns (posts, problems)."""
+    posts, problems, idents = [], [], []
+    for t in POST_IDENTITIES:
+        try:
+            d = _get(http, token, "identity/get", {"advertiser_id": advertiser_id, "identity_type": t}, "reading the TikTok accounts")
+            idents += [dict(i, identity_type=i.get("identity_type") or t) for i in d.get("identity_list") or d.get("list") or []]
+        except TikTokAPIError as e:
+            problems.append(str(e))
+    if not idents:
+        return [], problems or ["No TikTok account is linked to this ad account."]
+    for ident in idents:
+        params = {"advertiser_id": advertiser_id, "identity_type": ident["identity_type"], "identity_id": ident.get("identity_id"), "count": 20}
+        if ident.get("identity_authorized_bc_id"):
+            params["identity_authorized_bc_id"] = ident["identity_authorized_bc_id"]
+        cursor = None
+        for _ in range(4):
+            if cursor:
+                params["cursor"] = cursor
+            try:
+                d = _get(http, token, "identity/video/get", params, "reading the TikTok posts")
+            except TikTokAPIError as e:
+                problems.append(str(e))
+                break
+            for v in d.get("video_list") or d.get("list") or []:
+                info = v.get("video_info") or {}
+                if v.get("item_id"):
+                    posts.append({"item_id": str(v["item_id"]), "identity_type": ident["identity_type"],
+                                  "identity_id": str(ident.get("identity_id") or ""), "bc_id": str(ident.get("identity_authorized_bc_id") or ""),
+                                  "account": ident.get("display_name") or "", "text": (v.get("text") or "")[:120],
+                                  "cover": info.get("poster_url") or info.get("cover_url") or v.get("cover_url") or ""})
+            cursor = d.get("cursor")
+            if not d.get("has_more") or not cursor or len(posts) >= limit:
+                break
+    return posts[:limit], problems

@@ -208,3 +208,51 @@ def test_tiktok_library_videos_reused_without_upload(app):
     assert "file/video/ad/upload" not in paths
     cr = [b for _, p, b, _ in st.tiktok_api_http.calls if p == "ad/create"][0]["creatives"]
     assert [x["video_id"] for x in cr] == ["v_lib1", "v_lib2"]
+
+
+def test_own_tiktok_posts_become_spark_ads(app):
+    st = app.extensions["paysignal"]
+
+    class Posts(Publishing):
+        def get(self, url, params=None, headers=None, timeout=None):
+            if "identity/get" in url:
+                if params["identity_type"] == "BC_AUTH_TT":
+                    return R({"code": 0, "data": {"identity_list": [{"identity_id": "tt1", "identity_type": "BC_AUTH_TT",
+                                                                     "identity_authorized_bc_id": "7651694019151560725", "display_name": "bynawi.ae"}]}})
+                return R({"code": 40001, "message": "no permission"})
+            if "identity/video/get" in url:
+                assert params["identity_authorized_bc_id"] == "7651694019151560725"
+                return R({"code": 0, "data": {"has_more": False, "video_list": [
+                    {"item_id": "7300000000000000001", "text": "Royal oud unboxing", "video_info": {"poster_url": "https://p16.tiktokcdn.com/a.jpg"}},
+                    {"item_id": "7300000000000000002", "text": "Gift set", "video_info": {"poster_url": "https://p16.tiktokcdn.com/b.jpg"}}]}})
+            return super().get(url, params=params, headers=headers, timeout=timeout)
+    st.tiktok_api_http = Posts()
+    c = app.test_client()
+    connect(c)
+    c.post("/tiktok/shop/advertiser", json={"advertiser_id": "7651683849232695297"}, headers=H)
+    r = c.post("/media/shop/tiktok-posts", headers=H).json
+    assert r["found"] == 2 and r["added"] == 2 and r["why"] == ""
+    ids = [it["id"] for it in st.media.list("shop") if str(it["url"]).startswith("tiktok-post:")]
+    body = {"plan": PLAN, "media": {"0-0": f"media:{ids[0]}", "0-1": f"media:{ids[1]}"}, "landing_url": "bynawi.com",
+            "pixel_id": "777", "event": "add_to_cart"}
+    assert c.post("/campaign/shop/publish-tiktok", json=body, headers=H).status_code == 200
+    cr = [b for _, p, b, _ in st.tiktok_api_http.calls if p == "ad/create"][0]["creatives"]
+    assert cr[0]["identity_type"] == "BC_AUTH_TT" and cr[0]["tiktok_item_id"] == "7300000000000000001"
+    assert cr[0]["identity_authorized_bc_id"] == "7651694019151560725" and "video_id" not in cr[0]
+    assert not any(p in ("file/video/ad/upload", "file/image/ad/upload") for _, p, _, _ in st.tiktok_api_http.calls)
+
+
+def test_posts_refused_explains_how_to_fix(app):
+    st = app.extensions["paysignal"]
+
+    class NoPosts(Publishing):
+        def get(self, url, params=None, headers=None, timeout=None):
+            if "identity/get" in url:
+                return R({"code": 40001, "message": "permission denied"})
+            return super().get(url, params=params, headers=headers, timeout=timeout)
+    st.tiktok_api_http = NoPosts()
+    c = app.test_client()
+    connect(c)
+    c.post("/tiktok/shop/advertiser", json={"advertiser_id": "7651683849232695297"}, headers=H)
+    r = c.post("/media/shop/tiktok-posts", headers=H).json
+    assert r["found"] == 0 and "permission denied" in r["why"] and "Business Center" in r["why"]
