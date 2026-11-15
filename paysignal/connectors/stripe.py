@@ -24,14 +24,15 @@ def _major(amount: int, currency: str) -> float:
 def verify_signature(payload: bytes, sig_header: str, secret: str, tolerance: int = 300) -> bool:
     """Check the Stripe-Signature header so nobody can fake payments."""
     try:
-        parts = dict(p.split("=", 1) for p in sig_header.split(","))
-        ts, sig = parts["t"], parts["v1"]
-    except (KeyError, ValueError):
-        return False
-    if abs(time.time() - int(ts)) > tolerance:
+        pairs = [p.split("=", 1) for p in sig_header.split(",")]
+        ts = next(v for k, v in pairs if k.strip() == "t")
+        sigs = [v for k, v in pairs if k.strip() == "v1"]      # several while a secret is being rolled
+        if not sigs or abs(time.time() - int(ts)) > tolerance:
+            return False
+    except (StopIteration, ValueError):
         return False
     expected = hmac.new(secret.encode(), f"{ts}.".encode() + payload, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, sig)
+    return any(hmac.compare_digest(expected, s) for s in sigs)
 
 
 def parse_stripe_event(event: dict, client_id: str) -> list[Payment]:
