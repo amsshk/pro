@@ -37,6 +37,11 @@ class FakeTikTok:
             return R({"code": 0, "data": {"list": [{"advertiser_id": 7651683849232695297, "name": "Bynawi0615", "currency": "AED"},
                                                    {"advertiser_id": 111, "name": "Other", "currency": "USD"}]}})
         if "report/integrated/get" in url:
+            from datetime import date
+            span = (date.fromisoformat(params["end_date"]) - date.fromisoformat(params["start_date"])).days + 1
+            if span > 30:
+                return R({"code": 40002, "message": "max time span is 30 days when use stat_time_day"})
+            self.spans = getattr(self, "spans", []) + [span]
             if self.fail_report:
                 return R({"code": self.fail_report, "message": "Access token expired"})
             d = (datetime.now(timezone.utc) - timedelta(days=1)).date().isoformat()
@@ -74,6 +79,7 @@ def test_connect_choose_account_and_read_spend(app):
     assert r["advertiser_id"] == "7651683849232695297" and r["currency"] == "AED" and "1 ad(s)" in r["message"]
     res = c.get("/tiktok/shop/results", headers=H).json
     assert res["ads"][0]["spend"] == 88.5 and res["ads"][0]["campaign"] == "Sales"
+    assert len(app.extensions["paysignal"].tiktok_api_http.spans) == 4      # 91 days asked in 30-day pieces
     assert c.post("/tiktok/shop/advertiser", json={"advertiser_id": "999"}, headers=H).status_code == 400
 
 

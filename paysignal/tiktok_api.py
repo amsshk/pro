@@ -99,8 +99,22 @@ def advertisers(http, token: str, ids: list[str]) -> list[dict]:
             for a in rows or []]
 
 
+MAX_SPAN_DAYS = 30          # TikTok: "max time span is 30 days when use stat_time_day"
+
+
 def report(http, token: str, advertiser_id: str, start: str, end: str) -> list[dict]:
-    """Daily spend, impressions and clicks per ad (with campaign / ad group names). Pages through everything."""
+    """Daily spend, impressions and clicks per ad (with campaign / ad group names), in 30-day pieces."""
+    from datetime import date, timedelta
+    a, b = date.fromisoformat(start), date.fromisoformat(end)
+    out = []
+    while a <= b:
+        piece_end = min(b, a + timedelta(days=MAX_SPAN_DAYS - 1))
+        out += _report_piece(http, token, advertiser_id, a.isoformat(), piece_end.isoformat())
+        a = piece_end + timedelta(days=1)
+    return out
+
+
+def _report_piece(http, token: str, advertiser_id: str, start: str, end: str) -> list[dict]:
     out, page = [], 1
     while True:
         d = _get(http, token, "report/integrated/get", {
