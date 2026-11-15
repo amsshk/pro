@@ -61,6 +61,34 @@ from .store import PaymentStore
 from .models import LineItem, Payment
 
 log = logging.getLogger("paysignal")
+
+_SECRET_IN_TEXT = re.compile(r"((?:access_token|api_key|client_secret|token|key|code|appsecret_proof|password)=)[^&\s'\"]+", re.I)
+
+
+def redact(text: str) -> str:
+    """Tokens that ride in URLs (Graph API ?access_token=, Windsor ?api_key=) never reach logs or error messages."""
+    return _SECRET_IN_TEXT.sub(r"\1***", text or "")
+
+
+class _RedactSecrets(logging.Filter):
+    def filter(self, record):
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        clean = redact(msg)
+        if record.exc_info and record.exc_info[1] is not None:
+            exc = record.exc_info[1]
+            clean += "\n" + redact("".join(__import__("traceback").format_exception(type(exc), exc, exc.__traceback__)))
+            record.exc_info = None
+            record.exc_text = None
+        if clean != msg or "\n" in clean:
+            record.msg, record.args = clean, ()
+        return True
+
+
+for _name in ("paysignal", "proads", "werkzeug", "urllib3", "requests"):
+    logging.getLogger(_name).addFilter(_RedactSecrets())
 RETRAIN_SECONDS = 24 * 3600
 WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
 _DUMMY_HASH = hash_password("not-a-real-password")
@@ -294,17 +322,19 @@ class App:
     def require_key(self, client_id: str) -> None:
         """Accepts the business's access key (server settings) or a sign-in session token."""
         cfg = self.config(client_id)
+        given = request.headers.get("X-API-Key", "")
+        expected = cfg.get("api_key", "")
+        # a valid key or sign-in always works: someone spamming wrong keys can't lock the real owner out
+        if given and self.accounts.session_client(given) == client_id:
+            return
+        if expected and given and hmac.compare_digest(expected, given):
+            return
         lock_key = f"key:{client_id}"
         wait = self.login_limiter.locked_for(lock_key)
         if wait:
             abort(429, f"Too many wrong attempts. Try again in {wait // 60 + 1} minutes.")
-        given = request.headers.get("X-API-Key", "")
-        expected = cfg.get("api_key", "")
-        if expected and hmac.compare_digest(expected, given):
-            return
-        if given and self.accounts.session_client(given) == client_id:
-            return
-        self.login_limiter.fail(lock_key)
+        if given:
+            self.login_limiter.fail(lock_key)
         abort(401, "bad or missing X-API-Key")
 
     def ingest(self, client_id: str, payments) -> dict:
@@ -539,6 +569,19 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             request.max_content_length = VIDEO_MAX + 1024
     flask.extensions["paysignal"] = state
     _clear_admin_example_data(state)
+
+    @flask.after_request
+    def _security_headers(resp):
+        """Every response: no MIME sniffing, no framing, HTTPS-only once the visit is on HTTPS."""
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        resp.headers.setdefault("X-Frame-Options", "DENY")
+        resp.headers.setdefault("Referrer-Policy", "no-referrer")
+        resp.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+        if request.is_secure or request.headers.get("X-Forwarded-Proto", "") == "https":
+            resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        if request.path.startswith(("/auth/", "/status/", "/admin/", "/connect/")):
+            resp.headers.setdefault("Cache-Control", "no-store")
+        return resp
 
     @flask.get("/health")
     def health():
@@ -3386,9 +3429,15 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         """One landing page load, counted per day and campaign only: no cookies, no IP, nothing about the person."""
         body = request.get_json(silent=True) or {}
         clean = lambda k: re.sub(r"[^a-z0-9_.\-]", "", str(body.get(k) or "").lower())[:80]
+        day = datetime.now(timezone.utc).date().isoformat()
+        camp, src, med = clean("utm_campaign"), clean("utm_source"), clean("utm_medium")
         with state.lock:
-            state.funnel.visit(datetime.now(timezone.utc).date().isoformat(), clean("utm_campaign"), clean("utm_source"),
-                               clean("utm_medium"))
+            # anyone can call this: cap the distinct rows per day so junk can't grow the database without limit
+            n = state.funnel.db.execute("SELECT COUNT(*) FROM landing_visits WHERE day=?", (day,)).fetchone()[0]
+            if n >= 300 and not state.funnel.db.execute(
+                    "SELECT 1 FROM landing_visits WHERE day=? AND campaign=? AND source=? AND medium=?", (day, camp, src, med)).fetchone():
+                camp, src, med = "(other)", "(other)", "(other)"
+            state.funnel.visit(day, camp, src, med)
         return ("", 204)
 
     def meta_rows(client_id: str, launches: list, since: str, until: str) -> dict:
@@ -4098,6 +4147,20 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         q = urlencode({"meta": result, **({"message": message} if message else {})})
         return redirect("/app#/upload?" + q)
 
+    OAUTH_COOKIE = "proads_oauth"
+
+    def bound(body: dict, nonce: str):
+        """The connect link only works in the browser that asked for it: otherwise someone could send an owner
+        their own ProAds connect link and get the owner's Facebook or Shopify attached to the sender's account."""
+        resp = jsonify(body)
+        secure = request.is_secure or request.headers.get("X-Forwarded-Proto", "") == "https"
+        resp.set_cookie(OAUTH_COOKIE, nonce, max_age=1800, httponly=True, secure=secure, samesite="Lax", path="/")
+        return resp
+
+    def same_browser(state_arg: str) -> bool:
+        got = request.cookies.get(OAUTH_COOKIE, "")
+        return bool(got and state_arg and hmac.compare_digest(got, state_arg))
+
     @flask.post("/meta/connect/<client_id>")
     def meta_connect_start(client_id):
         """Returns Facebook's approval page. The browser goes there next."""
@@ -4107,12 +4170,14 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         nonce = secrets.token_urlsafe(24)
         with state.lock:
             state.store.put_oauth_state(nonce, client_id, "meta", time.time())
-        return {"url": meta_connect.authorize_url(nonce, public_url() + "/meta/callback")}
+        return bound({"url": meta_connect.authorize_url(nonce, public_url() + "/meta/callback")}, nonce)
 
     @flask.get("/meta/callback")
     def meta_callback():
         if request.args.get("error"):
             return meta_back("error", "Facebook connection was cancelled.")
+        if not same_browser(request.args.get("state", "")):
+            return meta_back("error", "Please start connecting Facebook from ProAds, in this same browser.")
         with state.lock:
             found = state.store.pop_oauth_state(request.args.get("state", ""))
         if not found or found[1] != "meta" or time.time() - found[2] > meta_connect.STATE_TTL:
@@ -4277,7 +4342,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         nonce = secrets.token_urlsafe(24)
         with state.lock:
             state.store.put_oauth_state(nonce, client_id, shop, time.time())
-        return {"url": shopify_app.authorize_url(shop, nonce, public_url() + "/shopify/callback")}
+        return bound({"url": shopify_app.authorize_url(shop, nonce, public_url() + "/shopify/callback")}, nonce)
 
     @flask.get("/shopify/callback")
     def shopify_callback():
@@ -4289,6 +4354,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if not shopify_app.available() or not shopify_app.verify_callback(args, s["client_secret"]):
             log.warning("shopify callback rejected: bad signature")
             return back("error", "Shopify's reply could not be verified. Please try again.")
+        if not same_browser(args.get("state", "")):
+            return back("error", "Please start connecting Shopify from ProAds, in this same browser.")
         with state.lock:
             found = state.store.pop_oauth_state(args.get("state", ""))
         shop = shopify_app.normalize_shop(args.get("shop", ""))
@@ -4502,7 +4569,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             return jsonify({"error": e.description}), e.code
         ref = secrets.token_hex(3)
         log.exception("unexpected error %s on %s", ref, request.path)
-        return jsonify({"error": f"Something broke on our side ({type(e).__name__}: {str(e)[:160]}). Ref {ref}"}), 500
+        return jsonify({"error": f"Something broke on our side ({type(e).__name__}: {redact(str(e))[:160]}). Ref {ref}"}), 500
 
     if start_worker if start_worker is not None else os.environ.get("PAYSIGNAL_WORKER", "1") == "1":
         state.instant_meta = True

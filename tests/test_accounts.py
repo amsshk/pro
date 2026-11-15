@@ -114,7 +114,8 @@ def test_access_key_guessing_is_locked(app):
     c = app.test_client()
     for _ in range(5):
         assert c.get("/status/pro", headers={"X-API-Key": "guess"}).status_code == 401
-    assert c.get("/status/pro", headers={"X-API-Key": "A7medooh"}).status_code == 429
+    assert c.get("/status/pro", headers={"X-API-Key": "guess2"}).status_code == 429      # guessing stops
+    assert c.get("/status/pro", headers={"X-API-Key": "A7medooh"}).status_code == 200    # the owner isn't locked out
 
 
 def test_one_account_cannot_read_another(app):
@@ -178,3 +179,22 @@ def test_delete_account_removes_everything(app):
 def test_settings_business_cannot_self_delete(app):
     c = app.test_client()
     assert c.post("/account/delete/pro", json={"password": "A7medooh"}, headers={"X-API-Key": "A7medooh"}).status_code == 400
+
+
+def test_delete_account_erases_every_table(app):
+    import sqlite3
+    c = app.test_client()
+    a = c.post("/auth/signup", json=GOOD).json
+    st = None
+    for f in app.view_functions.values():
+        for cell in (getattr(f, "__closure__", None) or ()):
+            if type(cell.cell_contents).__name__ == "App":
+                st = cell.cell_contents
+    st.tiktok.save(a["client_id"], "C4ABC123DEF456", "enc", None)
+    st.windsor.save(a["client_id"], "enc", None)
+    st.accounts.delete_everything(a["client_id"])
+    db = st.store.db
+    for (t,) in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall():
+        cols = [x[1] for x in db.execute(f'PRAGMA table_info("{t}")')]
+        if "client_id" in cols and t != "proads_revenue":
+            assert db.execute(f'SELECT COUNT(*) FROM "{t}" WHERE client_id=?', (a["client_id"],)).fetchone()[0] == 0, t

@@ -278,15 +278,26 @@ class AccountStore:
                               (token_hash(token),)).fetchone()
         return row[0] if row and row[1] > time.time() else None
 
+    # ProAds' own invoices to this business: kept for tax/accounting law (they hold no customer data of the business)
+    KEEP_ON_DELETE = {"proads_revenue"}
+
     def delete_everything(self, client_id: str) -> dict:
-        """Erase an account and every record that belongs to it."""
+        """Erase an account and every record that belongs to it: every table with a client_id column, found at
+        run time, so a table added later can't be forgotten. Media files go with their media items."""
         counts = {}
-        for table in ("payments", "posts", "promo_codes", "shopify_shops", "oauth_states", "wa_chats",
-                      "wa_conversions", "ad_launches", "campaign_drafts", "meta_connections", "billing", "billing_fees", "billing_fee_pending", "billing_fee_held", "spend_ledger", "spend_sync", "fee_periods", "unit_economics", "unpaid_orders", "capi_log", "signal_settings", "experiments", "social_identities", "stripe_keys", "sessions", "password_resets", "accounts"):
-            try:
-                counts[table] = self.db.execute(f"DELETE FROM {table} WHERE client_id=?", (client_id,)).rowcount
-            except Exception:                       # table not created yet
-                counts[table] = 0
+        try:
+            counts["media_blobs"] = self.db.execute(
+                "DELETE FROM media_blobs WHERE item_id IN (SELECT id FROM media_items WHERE client_id=?)", (client_id,)).rowcount
+        except Exception:                           # media tables not created yet
+            counts["media_blobs"] = 0
+        tables = [r[0] for r in self.db.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+        for table in tables:
+            if table in self.KEEP_ON_DELETE or table == "accounts":
+                continue
+            cols = [c[1] for c in self.db.execute(f'PRAGMA table_info("{table}")')]
+            if "client_id" in cols:
+                counts[table] = self.db.execute(f'DELETE FROM "{table}" WHERE client_id=?', (client_id,)).rowcount
+        counts["accounts"] = self.db.execute("DELETE FROM accounts WHERE client_id=?", (client_id,)).rowcount
         self.db.commit()
         return counts
 

@@ -146,3 +146,13 @@ def test_finds_pages_and_ad_accounts_owned_by_a_business_portfolio():
     found = meta_connect.discover(OnlyBusiness(), "tok")
     assert [p["id"] for p in found["pages"]] == ["p9"] and found["pages"][0]["instagram_id"] == "ig9"
     assert [a["id"] for a in found["ad_accounts"]] == ["act_9"]
+
+
+def test_connect_link_only_works_in_the_browser_that_asked(app):
+    c = app.test_client()
+    tok = c.post("/auth/signup", json=ACCT).json["token"]
+    url = c.post("/meta/connect/glow-clinic", headers={"X-API-Key": tok}).json["url"]
+    state = parse_qs(urlparse(url).query)["state"][0]
+    victim = app.test_client()                     # someone else's browser, sent the link
+    r = victim.get("/meta/callback", query_string={"code": "good", "state": state})
+    assert "same browser" in r.headers["Location"].replace("+", " ") and app.extensions["paysignal"].meta_conns.get("glow-clinic") is None
