@@ -2184,7 +2184,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         resolved = resolve_media(client_id, media_map)
         videos = {}
         for k, v in resolved.items():
-            if isinstance(v, dict) and v.get("video_bytes"):
+            if isinstance(v, dict) and v.get("tiktok_video_id"):
+                videos[k] = {"video_id": v["tiktok_video_id"]}
+            elif isinstance(v, dict) and v.get("video_bytes"):
                 videos[k] = {"data": v["video_bytes"]}
             elif isinstance(v, dict) and v.get("video_url"):
                 videos[k] = {"url": v["video_url"]}
@@ -2604,6 +2606,27 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             state.media.hide(client_id, item_id)
         return {"ok": True}
 
+    @flask.post("/media/<client_id>/tiktok")
+    def media_tiktok(client_id):
+        """Videos already in the business's TikTok ad account, added to its media library (for TikTok ads)."""
+        state.require_key(client_id)
+        row = tiktok_ads_ready(client_id)
+        if not row:
+            abort(400, "Connect the TikTok ad account first (Connect & upload > TikTok).")
+        try:
+            vids = tiktok_api.library_videos(tt_http(), tt_token(client_id, row), row["advertiser_id"])
+        except tiktok_api.TikTokAPIError as e:
+            abort(502, str(e))
+        added = 0
+        with state.lock:
+            for v in vids:
+                if state.media.add(client_id, {"source": "tiktok", "origin": "TikTok ad account", "kind": "video",
+                                               "url": "tiktok-video:" + v["video_id"], "title": (v["name"] or "TikTok video")[:120],
+                                               "poster": v["cover"], "width": v["width"], "height": v["height"],
+                                               "quality": "video", "ai": "none"}, None):
+                    added += 1
+        return {"added": added, "found": len(vids)}
+
     @flask.post("/media/<client_id>/social")
     def media_social(client_id):
         """Photos and videos from the client's own Facebook Page and Instagram posts."""
@@ -2705,6 +2728,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 if it["kind"] == "video" and blob:                 # an uploaded file: Meta gets the bytes directly
                     out[k] = {"video_bytes": blob, "name": it.get("title") or "video"}
                     continue
+                if it["kind"] == "video" and str(it.get("url") or "").startswith("tiktok-video:"):
+                    out[k] = {"tiktok_video_id": it["url"].split(":", 1)[1]}
+                    continue
                 if it["kind"] == "video":
                     thumb = None
                     if it.get("poster"):
@@ -2737,6 +2763,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             landing = "https://" + landing
         landing = landing.replace("http://", "https://", 1) if landing.startswith("http://") else landing
         images = resolve_media(client_id, images)
+        if any(isinstance(v, dict) and v.get("tiktok_video_id") for v in images.values()):
+            abort(400, "A video from the TikTok ad account can only be used for TikTok ads. Upload the video file, or pick another.")
         mode = body.get("placements") or "automatic"
         if mode not in meta_ads.PLACEMENTS:
             abort(400, "Unknown placement choice.")

@@ -1859,6 +1859,10 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   }
   function mediaThumb(it, style) {
     if (it.kind === "video") {
+      if (String(it.url || "").startsWith("tiktok-video:")) {
+        const img = h("img", { alt: it.title || "TikTok video", src: it.poster || null, referrerpolicy: "no-referrer", style: style + ";object-fit:cover;background:#111" });
+        return img;
+      }
       const uploaded = it.source === "upload";
       const v = h("video", { src: uploaded ? null : it.url, poster: it.poster || null, muted: true, playsinline: true, preload: "metadata", style: style + ";background:#111" });
       v.muted = true;
@@ -1881,7 +1885,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     if (!isVideo && file.size > 10 * 1024 * 1024) throw new Error(file.name + " is larger than 10 MB.");
     return api("/media/" + cid() + (isVideo ? "/upload-video" : "/upload") + "?title=" + title, { method: "POST", body: file });
   }
-  const SRC_NAME = { website: "Your website", facebook: "Facebook post", instagram: "Instagram post", upload: "Your upload", enhanced: "Enhanced", generated: "AI-generated" };
+  const SRC_NAME = { website: "Your website", facebook: "Facebook post", instagram: "Instagram post", tiktok: "TikTok ad account", upload: "Your upload", enhanced: "Enhanced", generated: "AI-generated" };
   function openMediaPicker(onPick) {
     const post = (url, body) => api(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
     const grid = h("div", { style: "display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px" });
@@ -1934,6 +1938,10 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       social.disabled = true; msg.textContent = "Reading your Facebook and Instagram posts…";
       try { const r = await post("/media/" + cid() + "/social"); msg.textContent = "Added " + r.added + " from your posts." + (r.problems && r.problems.length ? " " + r.problems.join(" ") : ""); draw(); }
       catch (e) { msg.textContent = e.message; } social.disabled = false; } }, "From my Facebook & Instagram posts");
+    const ttLib = h("button", { class: "btn btn-ghost", type: "button", onclick: async () => {
+      ttLib.disabled = true; msg.textContent = "Reading the videos in your TikTok ad account…";
+      try { const r = await post("/media/" + cid() + "/tiktok"); msg.textContent = r.found ? "Added " + r.added + " new TikTok videos (" + r.found + " in your ad account). They can be used for TikTok ads." : "Your TikTok ad account has no videos yet. Upload them with Upload photos or videos."; draw(); }
+      catch (e) { msg.textContent = e.message; } ttLib.disabled = false; } }, "From my TikTok ad account");
     const up = h("input", { type: "file", multiple: true, accept: "image/jpeg,image/png,image/webp,video/mp4,video/quicktime", class: "sr", id: "media-up" });
     up.addEventListener("change", async () => {
       const files = [...up.files]; if (!files.length) return;
@@ -1946,7 +1954,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     const panel = h("div", { class: "card", role: "dialog", "aria-modal": "true", "aria-label": "Choose a photo or video",
       style: "max-width:980px;width:100%;max-height:88vh;overflow:auto;display:flex;flex-direction:column;gap:12px" },
       h("div", { class: "between" }, h("h2", {}, "Choose a photo or video"), h("button", { class: "btn btn-ghost", type: "button", onclick: close, "aria-label": "Close" }, "Close")),
-      h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, scan, social, h("label", { for: "media-up", class: "btn btn-ghost" }, "Upload photos or videos"), up),
+      h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, scan, social, ttLib, h("label", { for: "media-up", class: "btn btn-ghost" }, "Upload photos or videos"), up),
       msg,
       h("p", { class: "small", style: "margin:0" }, "Enhance makes a small photo bigger and sharper without changing it. Make similar (AI) creates a new picture that looks like yours: compare it with the original and confirm it's accurate before it can be used."),
       grid);

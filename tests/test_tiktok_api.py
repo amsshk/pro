@@ -181,3 +181,30 @@ def test_tiktok_budget_minimum_checked_before_ai(app, monkeypatch):
     monkeypatch.setattr(billing, "fx_rate", lambda a, b, http=None: 3.6725)
     r = app.test_client().post("/campaign/shop", json={"daily_budget": 10, "platform": "tiktok"}, headers=H)
     assert r.status_code == 400 and "minimum" in r.json["error"]
+
+
+def test_tiktok_library_videos_reused_without_upload(app):
+    st = app.extensions["paysignal"]
+
+    class Lib(Publishing):
+        def get(self, url, params=None, headers=None, timeout=None):
+            if "file/video/ad/search" in url:
+                return R({"code": 0, "data": {"page_info": {"total_page": 1}, "list": [
+                    {"video_id": "v_lib1", "file_name": "oud.mp4", "video_cover_url": "https://p16.tiktokcdn.com/c1.jpg", "width": 720, "height": 1280},
+                    {"video_id": "v_lib2", "file_name": "gift.mp4", "video_cover_url": "https://p16.tiktokcdn.com/c2.jpg"}]}})
+            return super().get(url, params=params, headers=headers, timeout=timeout)
+    st.tiktok_api_http = Lib()
+    c = app.test_client()
+    connect(c)
+    c.post("/tiktok/shop/advertiser", json={"advertiser_id": "7651683849232695297"}, headers=H)
+    r = c.post("/media/shop/tiktok", headers=H).json
+    assert r == {"added": 2, "found": 2}
+    assert c.post("/media/shop/tiktok", headers=H).json["added"] == 0           # no duplicates
+    ids = [it["id"] for it in st.media.list("shop") if it["source"] == "tiktok"]
+    body = {"plan": PLAN, "media": {"0-0": f"media:{ids[0]}", "0-1": f"media:{ids[1]}"}, "landing_url": "bynawi.com",
+            "pixel_id": "777", "event": "add_to_cart"}
+    assert c.post("/campaign/shop/publish-tiktok", json=body, headers=H).status_code == 200
+    paths = [p for _, p, _, _ in st.tiktok_api_http.calls]
+    assert "file/video/ad/upload" not in paths
+    cr = [b for _, p, b, _ in st.tiktok_api_http.calls if p == "ad/create"][0]["creatives"]
+    assert [x["video_id"] for x in cr] == ["v_lib1", "v_lib2"]

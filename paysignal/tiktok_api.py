@@ -338,7 +338,7 @@ def publish(http, token: str, advertiser_id: str, plan: dict, videos: dict, land
                 v = videos.get(f"{i}-{j}")
                 if not v:
                     raise TikTokAPIError(f"Ad {j + 1} in '{body['adgroup_name']}' has no video. TikTok ads need a video: choose or upload one.")
-                vid = upload_video(http, token, advertiser_id, ad.get("headline") or "ad", v.get("data"), v.get("url"))
+                vid = v.get("video_id") or upload_video(http, token, advertiser_id, ad.get("headline") or "ad", v.get("data"), v.get("url"))
                 cover = video_cover(http, token, advertiser_id, vid)
                 cta = str(ad.get("call_to_action") or "SHOP_NOW").upper()
                 creatives.append({"ad_name": str(ad.get("headline") or f"Ad {j + 1}")[:500], "identity_type": "CUSTOMIZED_USER",
@@ -382,3 +382,21 @@ class TikTokLaunchStore:
     def set_status(self, client_id: str, campaign_id: str, status: str) -> None:
         self.db.execute("UPDATE tiktok_launches SET status=? WHERE client_id=? AND campaign_id=?", (status, client_id, campaign_id))
         self.db.commit()
+
+
+def library_videos(http, token: str, advertiser_id: str, limit: int = 100) -> list[dict]:
+    """Videos already in the business's TikTok ad account (from past ads): reusable as-is, no re-upload."""
+    out, page = [], 1
+    while len(out) < limit:
+        d = _get(http, token, "file/video/ad/search", {"advertiser_id": advertiser_id, "page": page, "page_size": 50},
+                 "reading the TikTok video library")
+        for v in d.get("list") or []:
+            if v.get("video_id"):
+                out.append({"video_id": str(v["video_id"]), "name": v.get("file_name") or "", "cover": v.get("video_cover_url") or v.get("poster_url") or "",
+                            "preview": v.get("preview_url") or "", "width": v.get("width"), "height": v.get("height"),
+                            "duration": v.get("duration")})
+        info = d.get("page_info") or {}
+        if page >= int(info.get("total_page") or 1):
+            break
+        page += 1
+    return out[:limit]
