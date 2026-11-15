@@ -129,6 +129,7 @@ h2{margin:0;font-family:var(--head);font-size:20px;font-weight:600}
 .fstep.hot{border-left-color:var(--loss-txt)}
 .b-measured{color:var(--win-txt);background:var(--win-bg)}
 .b-est{color:var(--amber-txt);background:var(--amber-chip)}
+.b-risk{background:#FDECEC;color:#B42318}
 .b-neutral{color:#4A4A4A;background:var(--line)}
 .actions{margin:0;padding:0;list-style:none;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
 .actions li{display:flex;gap:14px;padding:16px;border-radius:12px;background:var(--violet-card);line-height:1.5}
@@ -1446,10 +1447,47 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
               h("td", {}, fmt.format(a.customers)), h("td", {}, m(a.paid)), h("td", {}, h("b", {}, m(a.kept))), h("td", {}, fmt.format(a.refunded_orders))))))),
           ...(r.total.untagged ? [h("p", { class: "small", style: "margin:6px 0 0" }, fmt.format(r.total.untagged) + " came from TikTok without the ad tags (an ad without the link above): ProAds knows it was TikTok but not which ad.")] : []));
       }).catch(() => salesBox.replaceChildren(h("p", { class: "small", style: "margin:0" }, "Couldn't load TikTok sales right now.")));
+      // ---- spend per ad via Windsor.ai, next to verified paid orders ----
+      const ws = (status.connections && status.connections.windsor) || { connected: false };
+      const wsOut = h("div", {});
+      let wsPart;
+      if (!ws.connected) {
+        const keyIn = h("input", { type: "password", autocomplete: "off", spellcheck: "false", placeholder: "Windsor.ai API key", "aria-label": "Windsor.ai API key", style: "flex:1;min-width:220px" });
+        const wsBtn = h("button", { class: "btn btn-ghost", type: "submit" }, "Read TikTok spend");
+        wsPart = h("div", { style: "display:flex;flex-direction:column;gap:6px" },
+          h("p", { class: "small", style: "margin:0" }, "Already use Windsor.ai with TikTok? Paste its API key and ProAds reads each ad's spend (read-only), so you see the real cost per paid order. Without it, ProAds shows sales only."),
+          h("form", { style: "display:flex;gap:8px;flex-wrap:wrap", onsubmit: async (e) => {
+            e.preventDefault(); wsBtn.disabled = true; wsOut.replaceChildren(h("p", { class: "small", style: "margin:0" }, "Reading 90 days of TikTok spend from Windsor…"));
+            try { const r = await api("/connect/" + cid() + "/windsor", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ api_key: keyIn.value }) });
+              keyIn.value = ""; status = await api("/status/" + cid()); toast(r.message || "Connected"); route(); }
+            catch (err) { if (err.message !== "signed out") wsOut.replaceChildren(errorCard(err.message)); }
+            wsBtn.disabled = false;
+          } }, keyIn, wsBtn), wsOut);
+      } else {
+        wsPart = h("div", { class: ws.status === "error" ? "result err" : "result", style: "justify-content:space-between;flex-wrap:wrap;gap:8px" },
+          h("span", { style: "font-size:13px" }, "Windsor.ai: " + (ws.message || "connected") + (ws.last_sync ? " · " + when(ws.last_sync) : "")),
+          h("button", { class: "btn btn-ghost", type: "button", onclick: async () => {
+            try { const r = await api("/connect/" + cid() + "/windsor/disconnect", { method: "POST" }); status = await api("/status/" + cid()); toast(r.note); route(); }
+            catch (err) { if (err.message !== "signed out") toast(err.message); } } }, "Disconnect Windsor"));
+        api("/tiktok/" + cid() + "/results?days=30").then((r) => {
+          const m = (v) => v == null ? "—" : r.currency + " " + fmt.format(Math.round(v));
+          if (!r.ads.length) return;
+          const vb = (a) => a.verdict ? h("span", { class: "badge " + ({ profitable: "b-measured", losing: "b-risk", likely_losing: "b-est", break_even: "b-neutral" }[a.verdict.verdict] || "b-neutral"), title: a.verdict.action }, a.verdict.label) : h("span", { class: "small" }, "—");
+          salesBox.replaceChildren(
+            h("p", { style: "margin:0 0 6px;font-size:14px" }, "Last 30 days: ", h("b", {}, m(r.total.spend)), " spent on TikTok · ", h("b", {}, fmt.format(r.total.kept_orders) + " paid orders"), " kept · ", h("b", {}, m(r.total.kept)), " kept after refunds"),
+            h("div", { class: "scroll" }, h("table", {},
+              h("thead", {}, h("tr", {}, ["Campaign", "Ad", "Spend", "Clicks", "Paid orders", "Kept", "Cost per paid order", "Verdict"].map((c) => h("th", {}, c)))),
+              h("tbody", {}, r.ads.map((a) => h("tr", {}, h("td", {}, a.campaign), h("td", {}, (a.ad_name || "") + " · " + a.ad_id), h("td", {}, m(a.spend)),
+                h("td", {}, fmt.format(a.clicks)), h("td", {}, fmt.format(a.kept_orders)), h("td", {}, m(a.kept)), h("td", {}, h("b", {}, m(a.cost_per_order))), h("td", {}, vb(a))))))),
+            ...(r.campaigns.some((c) => c.promote && c.spend > 0) ? [h("p", { class: "small", style: "margin:6px 0 0" }, "\u201cpromote_\u201d campaigns are boosts from the TikTok app: they optimise for views or clicks, can't use the ProAds link, and so their sales can't be matched to them. Put that budget into a Sales campaign with the link above.")] : []),
+            ...(!r.has_sales ? [h("p", { class: "small", style: "margin:6px 0 0" }, "ProAds can't see this business's sales yet, so paid orders show 0 for every ad. Connect the store (Shopify, Stripe or an orders upload) to see which ads really bring buyers.")] :
+              r.economics ? [] : [h("p", { class: "small", style: "margin:6px 0 0" }, "For scale / keep / stop verdicts, fill in your numbers (price, costs) on the Profit engine page.")]));
+        }).catch(() => {});
+      }
       const adsPart = h("div", { style: "display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:10px" },
         h("b", { style: "font-size:14px" }, "Which TikTok ads bring buyers"),
         h("p", { class: "sub", style: "margin:0" }, "Make a tracking link for your ads. Then ProAds shows, per TikTok ad, how many orders were paid and how much money you kept after refunds: not clicks, not checkouts."),
-        linkForm, linkOut, salesBox);
+        linkForm, linkOut, wsPart, salesBox);
       return h("section", { class: "card", style: "display:flex;flex-direction:column;gap:10px" },
         h("div", { class: "between" }, h("h2", {}, "TikTok"), h("span", { class: "badge b-neutral" }, "Sends real sales to TikTok")),
         adsPart,

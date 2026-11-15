@@ -43,7 +43,7 @@ from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
-from . import growth, mailer, shopify_app, tiktok, whatsapp
+from . import growth, mailer, shopify_app, tiktok, whatsapp, windsor
 from .identity import hash_phone
 from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
@@ -135,6 +135,8 @@ class App:
         self.stripe_links = stripe_sync.StripeLinks(self.store.db)
         self.tiktok = tiktok.TikTokStore(self.store.db)
         self.tiktok_http = None                # set in tests
+        self.windsor = windsor.WindsorStore(self.store.db)
+        self.windsor_http = None               # set in tests
         self.stripe_http = None
         self.media = media.MediaStore(self.store.db)
         self.media_http = None
@@ -752,6 +754,139 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         res["days"] = days
         res["currency"] = state.config(client_id).get("currency") or "AED"
         return res
+
+    # ---------- TikTok spend via Windsor.ai, next to verified sales per ad ----------
+    def windsor_http():
+        if state.windsor_http is not None:
+            return state.windsor_http
+        import requests
+        return requests
+
+    def windsor_sync(client_id: str, days: int = 7) -> dict:
+        with state.lock:
+            row = state.windsor.get(client_id)
+        if not row:
+            return {"skipped": "not connected"}
+        frm, to = windsor.window(days)
+        try:
+            rows = windsor.fetch(windsor_http(), shopify_app.decrypt(row["key_enc"]), frm, to, row["accounts"])
+        except windsor.WindsorError as e:
+            with state.lock:
+                state.windsor.result(client_id, False, str(e))
+            return {"error": str(e)}
+        with state.lock:
+            state.windsor.put(client_id, rows)
+            n = state.windsor.db.execute("SELECT COUNT(*) FROM tiktok_spend WHERE client_id=?", (client_id,)).fetchone()[0]
+            ads = len({r["ad_id"] for r in rows})
+            state.windsor.result(client_id, True, f"Read TikTok spend for {ads} ad(s) from {frm} to {to}." if rows else
+                                 "Connected, but Windsor has no TikTok ad spend for these dates. Check the TikTok account is connected in Windsor.", n)
+        return {"rows": len(rows)}
+    state.windsor_sync = windsor_sync
+
+    def windsor_sync_all() -> None:
+        with state.lock:
+            ids = state.windsor.all()
+        for cid in ids:
+            with state.lock:
+                row = state.windsor.get(cid)
+            if row and row["last_sync"] and time.time() - row["last_sync"] < windsor.SYNC_EVERY:
+                continue
+            try:
+                windsor_sync(cid, 7)                  # recent days get revised by TikTok: re-read a week each time
+            except Exception:
+                log.exception("Windsor sync failed for %s", cid)
+    state.windsor_sync_all = windsor_sync_all
+
+    @flask.post("/connect/<client_id>/windsor")
+    def windsor_connect(client_id):
+        """Windsor.ai API key (read-only use). Checked against Windsor, then 90 days of TikTok spend are read."""
+        state.require_key(client_id)
+        body = request.get_json(silent=True) or {}
+        key = re.sub(r"\s+", "", str(body.get("api_key") or ""))
+        accounts = re.sub(r"[^0-9,]", "", str(body.get("accounts") or "")) or None
+        if len(key) < 16:
+            abort(400, "Paste the Windsor.ai API key (in Windsor.ai: your account page, or the API section of any connector).")
+        try:
+            frm, to = windsor.window(windsor.HISTORY_DAYS)
+            rows = windsor.fetch(windsor_http(), key, frm, to, accounts)
+        except windsor.WindsorError as e:
+            abort(400, str(e))
+        try:
+            enc = shopify_app.encrypt(key)
+        except shopify_app.ShopifyError:
+            abort(503, "ProAds can't store keys safely yet (PROADS_SECRET_KEY is missing on the server).")
+        with state.lock:
+            state.windsor.save(client_id, enc, accounts)
+            state.windsor.put(client_id, rows)
+            ads = len({r["ad_id"] for r in rows})
+            state.windsor.result(client_id, True, f"Read TikTok spend for {ads} ad(s), last {windsor.HISTORY_DAYS} days." if rows else
+                                 "Connected, but Windsor has no TikTok ad spend in the last 90 days. Check the TikTok account is connected in Windsor.", len(rows))
+            out = windsor.WindsorStore.public(state.windsor.get(client_id))
+        return {"ok": True, **out}
+
+    @flask.post("/connect/<client_id>/windsor/disconnect")
+    def windsor_disconnect(client_id):
+        state.require_key(client_id)
+        with state.lock:
+            state.windsor.remove(client_id)
+        return {"ok": True, "note": "ProAds deleted the Windsor key and the TikTok spend it had read."}
+
+    @flask.get("/tiktok/<client_id>/results")
+    def tiktok_results(client_id):
+        """Per TikTok ad: spend (Windsor) next to verified paid orders and money kept (ProAds), with a verdict."""
+        state.require_key(client_id)
+        days = max(1, min(int(request.args.get("days", "30") or 30), 365))
+        since = datetime.now(timezone.utc) - timedelta(days=days)
+        cur = (state.config(client_id).get("currency") or "AED").upper()
+        with state.lock:
+            spend = state.windsor.spend_by_ad(client_id, since.date().isoformat())
+            sales = tiktok.sales_by_ad(state.store.purchases(client_id),
+                                       lambda p: state.store.refunded_amount(client_id, p.external_id), since)
+            link = windsor.WindsorStore.public(state.windsor.get(client_id))
+        econ = economics_for(client_id)
+        with state.lock:                               # no sales reaching ProAds = no verdicts (0 orders would look like losing)
+            has_sales = any(p.occurred_at >= since for p in state.store.purchases(client_id))
+        if not has_sales:
+            econ = None
+        by_ad = {a["ad_id"]: a for a in sales["ads"] if a["ad_id"]}
+        rates: dict = {}
+        ads, campaigns = [], {}
+        for s_ in spend:
+            src = (s_["currency"] or cur).upper()
+            if src not in rates:
+                try:
+                    rates[src] = billing.fx_rate(src, cur)
+                except Exception:
+                    rates[src] = None
+            rate = rates[src]
+            sp = round(s_["spend"] * rate, 2) if rate else None
+            got = by_ad.pop(s_["ad_id"], None) or {}
+            orders = int(got.get("orders", 0))
+            kept_orders = orders - int(got.get("refunded_orders", 0))
+            kept = float(got.get("kept", 0.0))
+            item = {"ad_id": s_["ad_id"], "ad_name": s_["ad_name"], "campaign": s_["campaign"], "ad_group": s_["ad_group"],
+                    "spend": sp, "impressions": s_["impressions"], "clicks": s_["clicks"], "orders": orders,
+                    "kept_orders": kept_orders, "kept": round(kept, 2),
+                    "cost_per_order": round(sp / kept_orders, 2) if sp and kept_orders else None,
+                    "return": round(kept / sp, 2) if sp else None}
+            if econ and sp is not None and sp > 0:
+                item["verdict"] = engines.verdict(sp, kept_orders, econ["target_cpa"], econ["break_even_cpa"])
+            ads.append(item)
+            c = campaigns.setdefault(s_["campaign_id"] or s_["campaign"], {"campaign": s_["campaign"], "spend": 0.0, "kept_orders": 0, "kept": 0.0})
+            c["spend"] += sp or 0
+            c["kept_orders"] += kept_orders
+            c["kept"] += kept
+        for c in campaigns.values():
+            c["spend"], c["kept"] = round(c["spend"], 2), round(c["kept"], 2)
+            c["promote"] = c["campaign"].lower().startswith("promote_")
+        ads.sort(key=lambda a: -(a["spend"] or 0))
+        orphan = [a for a in by_ad.values()]                       # tagged sales whose ad had no spend in Windsor
+        total_spend = round(sum(a["spend"] or 0 for a in ads), 2)
+        return {"days": days, "currency": cur, "windsor": link, "economics": bool(econ), "has_sales": has_sales, "ads": ads,
+                "campaigns": sorted(campaigns.values(), key=lambda c: -c["spend"]),
+                "total": {"spend": total_spend, "kept_orders": sum(a["kept_orders"] for a in ads),
+                          "kept": round(sum(a["kept"] for a in ads), 2),
+                          "untagged_orders": sales["total"]["untagged"], "other_orders": sum(a["orders"] for a in orphan)}}
 
     @flask.post("/connect/<client_id>/tiktok/test")
     def tiktok_test(client_id):
@@ -2885,6 +3020,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                             **payments.get("shopify", {})},
                 "shopify_app": shop_info,
                 "tiktok": state.tiktok.public(client_id),
+                "windsor": windsor.WindsorStore.public(state.windsor.get(client_id)),
                 "stripe": {"configured": bool(cfg.get("stripe_webhook_secret")) or bool(state.stripe_links.get(client_id)),
                            **payments.get("stripe", {})},
                 "stripe_api": stripe_sync.StripeLinks.public(state.stripe_links.get(client_id)),
@@ -4375,7 +4511,7 @@ def _start_worker(state: App, every: int) -> None:
                     state.enforce_ads_trials()
             except Exception:
                 log.exception("ad test check failed")
-            for job in ("sync_all_launch_status", "tiktok_push_all", "retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees"):
+            for job in ("sync_all_launch_status", "tiktok_push_all", "windsor_sync_all", "retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees"):
                 try:
                     if getattr(state, job, None):
                         getattr(state, job)()
