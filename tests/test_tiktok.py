@@ -218,3 +218,16 @@ def test_tracking_link_and_sales_per_ad(app):
     top = r["ads"][0]
     assert top["ad_id"] == "1873948404761793" and top["orders"] == 2 and top["kept"] == 120.0 and top["refunded_orders"] == 1
     assert r["total"]["orders"] == 3 and r["total"]["untagged"] == 1
+
+
+def test_shopify_order_keeps_tiktok_ids_saved_by_the_theme_snippet():
+    import inspect
+    from paysignal.connectors import shopify as sc
+    fn = next(f for n, f in inspect.getmembers(sc, inspect.isfunction) if "topic" in inspect.signature(f).parameters)
+    body = {"id": 55, "total_price": "250.00", "currency": "AED", "created_at": "2026-11-15T10:00:00Z", "email": "a@b.ae",
+            "landing_site": "/products/oud?utm_source=tiktok&utm_content=1873948404761793",
+            "note_attributes": [{"name": "ttclid", "value": "E.C.P.abc"}, {"name": "_ttp", "value": "ttp123"}], "line_items": []}
+    args = {"topic": "orders/paid", "body": body, "client_id": "shop"}
+    params = inspect.signature(fn).parameters
+    p = fn(**{k: v for k, v in args.items() if k in params}, **({"costs": {}} if "costs" in params else {}))[0]
+    assert p.ttclid == "E.C.P.abc" and p.ttp == "ttp123" and p.utm_content == "1873948404761793"

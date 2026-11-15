@@ -44,6 +44,12 @@ def _person(order: dict, customer: dict) -> dict:
             "ttp": notes.get("_ttp") or notes.get("ttp") or None}
 
 
+def _note_ttclid(order: dict) -> str | None:
+    """TikTok click ID saved on the order by the ProAds theme snippet (when the landing link lost it)."""
+    notes = {n.get("name"): n.get("value") for n in order.get("note_attributes") or []}
+    return notes.get("ttclid") or notes.get("_ttclid") or None
+
+
 def _ts(value: str | None) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00")) if value else datetime.now().astimezone()
 
@@ -67,7 +73,8 @@ def parse_shopify_webhook(topic: str, body: dict, client_id: str,
             phone=body.get("phone") or customer.get("phone"),
             customer_id=str(customer["id"]) if customer.get("id") else None,
             discount=float(body.get("total_discounts", 0) or 0), items=items,
-            promo_code=(codes[0].get("code") if codes else None), **track, **_person(body, customer),
+            promo_code=(codes[0].get("code") if codes else None),
+            **{**track, "ttclid": track.get("ttclid") or _note_ttclid(body)}, **_person(body, customer),
         )]
 
     if topic == "refunds/create":
