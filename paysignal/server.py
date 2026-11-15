@@ -731,6 +731,28 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             out["message"] = "Connected. ProAds is sending your recent sales to TikTok now: refresh in a minute to see the result."
         return {"ok": not res.get("error"), **out}
 
+    @flask.get("/tiktok/<client_id>/link")
+    def tiktok_link(client_id):
+        """The ad's website URL with TikTok's click tags, so each sale shows the exact campaign and ad."""
+        state.require_key(client_id)
+        try:
+            return {"url": tiktok.tracking_url(request.args.get("url", ""))}
+        except ValueError as e:
+            abort(400, str(e))
+
+    @flask.get("/tiktok/<client_id>/sales")
+    def tiktok_sales(client_id):
+        """Verified sales that came from TikTok ads, per campaign and ad (refunds taken off)."""
+        state.require_key(client_id)
+        days = max(1, min(int(request.args.get("days", "30") or 30), 365))
+        since = datetime.now(timezone.utc) - timedelta(days=days)
+        with state.lock:
+            ps = state.store.purchases(client_id)
+            res = tiktok.sales_by_ad(ps, lambda p: state.store.refunded_amount(client_id, p.external_id), since)
+        res["days"] = days
+        res["currency"] = state.config(client_id).get("currency") or "AED"
+        return res
+
     @flask.post("/connect/<client_id>/tiktok/test")
     def tiktok_test(client_id):
         """One sample Purchase to the active Pixel's Test events (needs the code from TikTok's Test events tab), to

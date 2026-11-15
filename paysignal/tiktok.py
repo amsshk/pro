@@ -320,3 +320,62 @@ def from_growth(meta_event: dict, ctx: Optional[dict], account: dict) -> Optiona
     if ctx.get("url"):
         ev["page"] = {"url": ctx["url"]}
     return ev if has_match_key(ev) else None
+
+
+# ---------- which TikTok ad brought which paying customer (works before any API approval) ----------
+SOURCES = ("tiktok", "tt", "tik tok", "tiktok ads", "tiktok_ads")
+# TikTok fills these in for every click (its "URL parameters" macros). Ad IDs, because ad names are often repeated.
+MACROS = {"utm_source": "tiktok", "utm_medium": "paid", "utm_campaign": "__CAMPAIGN_NAME__",
+          "utm_term": "__AID__", "utm_content": "__CID__"}
+
+
+def tracking_url(url: str) -> str:
+    """The shop's page + TikTok's click tags. TikTok adds its own ttclid on top by itself."""
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+    u = (url or "").strip()
+    if not re.match(r"^https?://", u, re.I):
+        u = "https://" + u
+    p = urlsplit(u)
+    if not p.netloc or "." not in p.netloc:
+        raise ValueError("Enter the page the ad should open, like https://yourshop.com or a product page.")
+    q = [(k, v) for k, v in parse_qsl(p.query, keep_blank_values=True) if k not in MACROS]
+    query = urlencode(q + list(MACROS.items()), safe="_")
+    return urlunsplit((p.scheme, p.netloc, p.path or "/", query, ""))
+
+
+def from_tiktok(p: Payment) -> bool:
+    return bool(p.ttclid) or (p.utm_source or "").strip().lower() in SOURCES
+
+
+def sales_by_ad(payments: list[Payment], refunded, since: Optional[datetime] = None) -> dict:
+    """Verified sales from TikTok ads, per campaign and ad: orders, money paid, money kept after refunds."""
+    rows: dict = {}
+    total = {"orders": 0, "paid": 0.0, "kept": 0.0, "refunded_orders": 0, "untagged": 0}
+    for p in payments:
+        if p.kind != "purchase" or (since and p.occurred_at < since) or not from_tiktok(p):
+            continue
+        back = min(refunded(p), p.amount)
+        tagged = bool(p.utm_campaign or p.utm_content)
+        key = (p.utm_campaign or "", p.utm_content or "")
+        r = rows.setdefault(key, {"campaign": p.utm_campaign or "TikTok (ad not tagged)", "ad_id": p.utm_content or "",
+                                  "orders": 0, "paid": 0.0, "kept": 0.0, "refunded_orders": 0, "currency": p.currency,
+                                  "customers": set()})
+        r["orders"] += 1
+        r["paid"] += p.amount
+        r["kept"] += p.amount - back
+        r["refunded_orders"] += back >= p.amount - 0.005
+        if p.email or p.customer_id:
+            r["customers"].add((p.email or "").lower() or p.customer_id)
+        total["orders"] += 1
+        total["paid"] += p.amount
+        total["kept"] += p.amount - back
+        total["refunded_orders"] += back >= p.amount - 0.005
+        total["untagged"] += not tagged
+    out = []
+    for r in rows.values():
+        r["customers"] = len(r["customers"])
+        r["paid"], r["kept"] = round(r["paid"], 2), round(r["kept"], 2)
+        out.append(r)
+    out.sort(key=lambda r: -r["kept"])
+    total["paid"], total["kept"] = round(total["paid"], 2), round(total["kept"], 2)
+    return {"ads": out, "total": total}

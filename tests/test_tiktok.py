@@ -197,3 +197,24 @@ def test_test_event_goes_with_the_code(app):
     r = c.post("/connect/shop/tiktok/test", json={"test_event_code": " TEST123 "}, headers=H)
     body = http.calls[-1][1]
     assert r.status_code == 200 and body["test_event_code"] == "TEST123" and body["data"][0]["event"] == "Purchase"
+
+
+def test_tracking_link_and_sales_per_ad(app):
+    from urllib.parse import parse_qs, urlsplit
+    st = state_of(app)
+    c = app.test_client()
+    url = c.get("/tiktok/shop/link?url=bynawi.com/products/oud?ref=x&utm_source=old", headers=H).json["url"]
+    q = parse_qs(urlsplit(url).query)
+    assert url.startswith("https://bynawi.com/products/oud?") and q["ref"] == ["x"] and q["utm_source"] == ["tiktok"]
+    assert q["utm_campaign"] == ["__CAMPAIGN_NAME__"] and q["utm_content"] == ["__CID__"]
+    assert c.get("/tiktok/shop/link?url=nope", headers=H).status_code == 400
+    st.store.add(pay(1, utm_source="tiktok", utm_campaign="Sales", utm_content="1873948404761793", email="a@b.co"))
+    st.store.add(pay(2, utm_source="tiktok", utm_campaign="Sales", utm_content="1873948404761793", email="c@b.co"))
+    st.store.add(pay(3, ttclid="E.C.x", email="d@b.co"))                      # TikTok, but untagged
+    st.store.add(pay(4, utm_source="instagram", email="e@b.co"))             # not TikTok
+    st.store.add(Payment(client_id="shop", source="stripe", external_id="r2", kind="refund", amount=120.0, currency="AED",
+                         occurred_at=datetime.now(timezone.utc), refund_of="ch_2"))
+    r = c.get("/tiktok/shop/sales", headers=H).json
+    top = r["ads"][0]
+    assert top["ad_id"] == "1873948404761793" and top["orders"] == 2 and top["kept"] == 120.0 and top["refunded_orders"] == 1
+    assert r["total"]["orders"] == 3 and r["total"]["untagged"] == 1

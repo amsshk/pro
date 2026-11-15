@@ -1417,8 +1417,43 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
           testBox,
           h("div", { style: "display:flex;gap:8px" }, rm));
       };
+      // ---- tracking link: every sale shows the exact TikTok campaign and ad ----
+      const urlIn = h("input", { autocomplete: "off", spellcheck: "false", placeholder: "The page the ad opens, e.g. https://yourshop.com", "aria-label": "Ad landing page", style: "flex:1;min-width:220px" });
+      const linkOut = h("div", {});
+      const linkBtn = h("button", { class: "btn btn-ghost", type: "submit" }, "Make TikTok link");
+      const linkForm = h("form", { style: "display:flex;gap:8px;flex-wrap:wrap", onsubmit: async (e) => {
+        e.preventDefault(); linkBtn.disabled = true;
+        try {
+          const r = await api("/tiktok/" + cid() + "/link?url=" + encodeURIComponent(urlIn.value));
+          const box = h("input", { readonly: true, value: r.url, "aria-label": "TikTok tracking link", style: "flex:1;min-width:220px;font-family:monospace;font-size:12px" });
+          const copy = h("button", { class: "btn btn-primary", type: "button", onclick: () => { try { navigator.clipboard.writeText(r.url); toast("Copied"); } catch (er) { box.select(); } } }, "Copy");
+          linkOut.replaceChildren(h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, box, copy),
+            h("p", { class: "small", style: "margin:6px 0 0" }, "Paste it as the Website URL of every ad in TikTok Ads Manager. TikTok fills in the campaign and ad by itself on each click, and adds its click ID, so each sale is matched to the exact ad."));
+        } catch (err) { if (err.message !== "signed out") linkOut.replaceChildren(errorCard(err.message)); }
+        linkBtn.disabled = false;
+      } }, urlIn, linkBtn);
+      const salesBox = h("div", {}, h("p", { class: "small", style: "margin:0" }, "Loading…"));
+      api("/tiktok/" + cid() + "/sales?days=30").then((r) => {
+        const cur = r.currency || "AED";
+        const m = (v) => cur + " " + fmt.format(Math.round(v));
+        if (!r.ads.length) { salesBox.replaceChildren(h("p", { class: "small", style: "margin:0" }, "No sales from TikTok ads in the last 30 days yet. Use the link above in your ads, and sales that come from them will show here, per ad.")); return; }
+        salesBox.replaceChildren(
+          h("p", { style: "margin:0 0 6px;font-size:14px" }, h("b", {}, fmt.format(r.total.orders) + " orders"), " from TikTok ads in the last 30 days · ", h("b", {}, m(r.total.kept)), " kept after refunds" +
+            (r.total.refunded_orders ? " (" + fmt.format(r.total.refunded_orders) + " refunded)" : "")),
+          h("div", { class: "scroll" }, h("table", {},
+            h("thead", {}, h("tr", {}, ["Campaign", "Ad ID", "Orders", "Customers", "Paid", "Kept", "Refunded"].map((c) => h("th", {}, c)))),
+            h("tbody", {}, r.ads.map((a) => h("tr", {}, h("td", {}, a.campaign), h("td", {}, a.ad_id || "—"), h("td", {}, fmt.format(a.orders)),
+              h("td", {}, fmt.format(a.customers)), h("td", {}, m(a.paid)), h("td", {}, h("b", {}, m(a.kept))), h("td", {}, fmt.format(a.refunded_orders))))))),
+          ...(r.total.untagged ? [h("p", { class: "small", style: "margin:6px 0 0" }, fmt.format(r.total.untagged) + " came from TikTok without the ad tags (an ad without the link above): ProAds knows it was TikTok but not which ad.")] : []));
+      }).catch(() => salesBox.replaceChildren(h("p", { class: "small", style: "margin:0" }, "Couldn't load TikTok sales right now.")));
+      const adsPart = h("div", { style: "display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:10px" },
+        h("b", { style: "font-size:14px" }, "Which TikTok ads bring buyers"),
+        h("p", { class: "sub", style: "margin:0" }, "Make a tracking link for your ads. Then ProAds shows, per TikTok ad, how many orders were paid and how much money you kept after refunds: not clicks, not checkouts."),
+        linkForm, linkOut, salesBox);
       return h("section", { class: "card", style: "display:flex;flex-direction:column;gap:10px" },
         h("div", { class: "between" }, h("h2", {}, "TikTok"), h("span", { class: "badge b-neutral" }, "Sends real sales to TikTok")),
+        adsPart,
+        h("b", { style: "font-size:14px;border-top:1px solid var(--line);padding-top:10px" }, "Send your sales to TikTok"),
         h("p", { class: "sub", style: "margin:0" }, "Every real, paid sale goes to TikTok as a Purchase, valued the same way as on Meta (what was paid, or your profit if you chose that), so TikTok ads learn who actually buys, not who watches. Customer details are hashed, never sent raw. TikTok has no refund event, so ProAds never sends a sale that was already refunded, sends partly refunded ones at what you kept, and if your refunds run high it waits 48 hours before sending each sale."),
         pixels.length ? h("div", { style: "display:flex;flex-direction:column;gap:8px" }, pixels.map(row)) : null,
         pixels.length > 1 || (pixels.length && !tt.connected) ? h("p", { class: "small", style: "margin:0" },
