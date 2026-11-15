@@ -219,7 +219,17 @@ COUNTRY_IDS = {"AE": "290557", "SA": "102358", "KW": "285570", "QA": "289688", "
                "EG": "357994", "JO": "248816", "LB": "272103", "MA": "2542007", "US": "6252001", "GB": "2635167",
                "DE": "2921044", "FR": "3017382", "IN": "1269750", "PK": "1168579", "TH": "1605651", "TR": "298795"}
 EVENTS = {"add_to_cart": "ON_WEB_CART", "checkout": "INITIATE_ORDER", "purchase": "SHOPPING"}
-CTAS = ("SHOP_NOW", "ORDER_NOW", "LEARN_MORE", "BUY_NOW", "GET_QUOTE", "SIGN_UP", "CONTACT_US", "BOOK_NOW", "APPLY_NOW")
+# exactly the buttons TikTok accepts (from its own error message); anything else falls back to SHOP_NOW
+CTAS = ("SHOP_NOW", "ORDER_NOW", "PREORDER_NOW", "LEARN_MORE", "SIGN_UP", "SUBSCRIBE", "BOOK_NOW", "APPLY_NOW",
+        "GET_QUOTE", "CONTACT_US", "CALL_NOW", "SEND_MESSAGE", "VISIT_STORE", "READ_MORE", "VIEW_NOW", "WATCH_NOW",
+        "CHECK_AVAILABILITY", "INTERESTED", "DOWNLOAD_NOW", "INSTALL_NOW", "GET_TICKETS_NOW", "VIEW_PROFILE")
+CTA_ALIASES = {"BUY_NOW": "SHOP_NOW", "BUY": "SHOP_NOW", "GET_OFFER": "SHOP_NOW", "SHOP": "SHOP_NOW", "ORDER": "ORDER_NOW"}
+
+
+def cta(value) -> str:
+    v = str(value or "").upper().replace(" ", "_")
+    v = CTA_ALIASES.get(v, v)
+    return v if v in CTAS else "SHOP_NOW"
 AGE_GROUPS = ("AGE_18_24", "AGE_25_34", "AGE_35_44", "AGE_45_54", "AGE_55_100")
 MIN_ADGROUP_DAILY_USD = 20.0            # TikTok's minimum daily budget per ad group
 
@@ -341,12 +351,12 @@ def publish(http, token: str, advertiser_id: str, plan: dict, videos: dict, land
                 v = videos.get(f"{i}-{j}")
                 if not v:
                     raise TikTokAPIError(f"Ad {j + 1} in '{body['adgroup_name']}' has no video. TikTok ads need a video: choose or upload one.")
-                cta = str(ad.get("call_to_action") or "SHOP_NOW").upper()
+                button = cta(ad.get("call_to_action"))
                 if v.get("spark"):                       # the business's own TikTok post, promoted as it is
                     sp = v["spark"]
                     c = {"ad_name": str(ad.get("headline") or f"Ad {j + 1}")[:500], "identity_type": sp["identity_type"],
                          "identity_id": sp["identity_id"], "ad_format": "SINGLE_VIDEO", "tiktok_item_id": sp["item_id"],
-                         "call_to_action": cta if cta in CTAS else "SHOP_NOW", "landing_page_url": landing_url}
+                         "call_to_action": button, "landing_page_url": landing_url}
                     if sp.get("bc_id"):
                         c["identity_authorized_bc_id"] = sp["bc_id"]
                     creatives.append(c)
@@ -355,7 +365,7 @@ def publish(http, token: str, advertiser_id: str, plan: dict, videos: dict, land
                 cover = video_cover(http, token, advertiser_id, vid)
                 creatives.append({"ad_name": str(ad.get("headline") or f"Ad {j + 1}")[:500], "identity_type": "CUSTOMIZED_USER",
                                   "identity_id": ident, "ad_format": "SINGLE_VIDEO", "video_id": vid, "image_ids": [cover],
-                                  "ad_text": str(ad.get("primary_text") or "")[:100], "call_to_action": cta if cta in CTAS else "SHOP_NOW",
+                                  "ad_text": str(ad.get("primary_text") or "")[:100], "call_to_action": button,
                                   "landing_page_url": landing_url})
             a = _post(http, token, "ad/create", {"advertiser_id": advertiser_id, "adgroup_id": gid, "creatives": creatives},
                       f"creating the ads in ad group {i + 1}")

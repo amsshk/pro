@@ -95,7 +95,7 @@ SYSTEM_TIKTOK = (
     "- TikTok ads are short vertical videos. For each ad give: hook = what is said or shown in the first 2 seconds "
     "(max 40 characters, used as the ad name), primary_text = the caption under the video (max 100 characters, "
     "no hashtag spam, at most 2 hashtags), video_brief = what the video should show (for the business to film or "
-    "to pick from its videos), call_to_action one of: SHOP_NOW, ORDER_NOW, LEARN_MORE, BUY_NOW.\n"
+    "to pick from its videos), call_to_action one of: SHOP_NOW, ORDER_NOW, LEARN_MORE.\n"
     "- Native TikTok style: people, hands, real use, unboxing, before/after, a reason to buy now. No TV-ad tone.\n"
     "- Optimisation event: 'purchase' if the business has about 25+ verified purchases a week, otherwise "
     "'add_to_cart' (TikTok needs enough events to learn). Say which and why in rationale.\n"
@@ -208,7 +208,7 @@ def tidy_tiktok(plan: dict) -> dict:
         s["placements"] = "TikTok"
         for ad in s.get("ads") or []:
             cta = str(ad.get("call_to_action") or "").upper().replace(" ", "_")
-            ad["call_to_action"] = cta if cta in ("SHOP_NOW", "ORDER_NOW", "LEARN_MORE", "BUY_NOW") else "SHOP_NOW"
+            ad["call_to_action"] = {"BUY_NOW": "SHOP_NOW"}.get(cta, cta) if cta in ("SHOP_NOW", "ORDER_NOW", "LEARN_MORE", "BUY_NOW") else "SHOP_NOW"
             ad["format"] = "video"
             ad["headline"] = str(ad.get("headline") or ad.get("hook") or "")[:40]
             ad["primary_text"] = str(ad.get("primary_text") or "")[:100]
