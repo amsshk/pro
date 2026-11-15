@@ -74,3 +74,9 @@ def test_landing_has_languages_and_country_comes_from_cloudflare(make):
     assert c.get("/public-config", headers={"CF-IPCountry": "ae"}).json["country"] == "AE"
     assert c.get("/public-config", headers={"CF-IPCountry": "XX"}).json["country"] == ""
     assert c.get("/public-config").json["country"] == ""
+
+
+def test_google_site_verification_tag(make, monkeypatch):
+    monkeypatch.setenv("GOOGLE_SITE_VERIFICATION", 'google-site-verification=abc_DEF-123"><script>')
+    page = make().get("/").data.decode()
+    assert '<meta name="google-site-verification" content="abc_DEF-123script">' in page

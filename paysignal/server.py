@@ -2529,7 +2529,16 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     @flask.get("/")
     def landing():
         """Public page: what ProAds does, and free sign-up."""
-        return page("landing.html", referrer="strict-origin-when-cross-origin")
+        code = re.sub(r"[^A-Za-z0-9_\-]", "", os.environ.get("GOOGLE_SITE_VERIFICATION", "").replace("google-site-verification=", ""))
+        if not code:
+            return page("landing.html", referrer="strict-origin-when-cross-origin")
+        # Google Search Console "HTML tag" ownership check
+        html = open(os.path.join(WEB_DIR, "landing.html"), encoding="utf-8").read().replace(
+            "<head>", f'<head>\n<meta name="google-site-verification" content="{code}">', 1)
+        resp = flask.response_class(html, mimetype="text/html")
+        resp.headers.update({"Cache-Control": "no-cache", "X-Frame-Options": "DENY", "X-Content-Type-Options": "nosniff",
+                             "Referrer-Policy": "strict-origin-when-cross-origin"})
+        return resp
 
     @flask.get("/app")
     def web_app():
