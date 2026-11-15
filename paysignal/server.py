@@ -2596,12 +2596,40 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     def privacy():
         return page("privacy.html", referrer="strict-origin-when-cross-origin")
 
+    @flask.get("/terms")
+    def terms():
+        return page("terms.html", referrer="strict-origin-when-cross-origin")
+
+    @flask.get("/security")
+    def security_page():
+        return page("security.html", referrer="strict-origin-when-cross-origin")
+
+    @flask.get("/about")
+    def about():
+        return page("about.html", referrer="strict-origin-when-cross-origin")
+
+    @flask.get("/.well-known/security.txt")
+    def security_txt():
+        email = company()["email"]
+        body = (f"Contact: mailto:{email}\n" if email else "") + \
+            f"Expires: {time.strftime('%Y-12-31T00:00:00Z', time.gmtime(time.time() + 300 * 86400))}\n" \
+            "Preferred-Languages: en, ar\nPolicy: https://" + request.host + "/security\n"
+        return flask.response_class(body, mimetype="text/plain")
+
+    def company() -> dict:
+        """Who runs ProAds, from the server settings (shown on About, Terms, Security and the footer)."""
+        e = lambda k, d="": os.environ.get(k, d).strip()
+        return {"name": e("PROADS_COMPANY_NAME", "EzDevSoft"), "legal_name": e("PROADS_COMPANY_LEGAL_NAME", e("PROADS_COMPANY_NAME", "EzDevSoft")),
+                "trade_license": e("PROADS_TRADE_LICENSE"), "address": e("PROADS_COMPANY_ADDRESS"),
+                "email": e("PROADS_CONTACT_EMAIL"), "phone": e("PROADS_COMPANY_PHONE"),
+                "website": e("PROADS_COMPANY_WEBSITE", "https://ezdevsoft.net"), "city": e("PROADS_COMPANY_CITY", "Abu Dhabi, UAE")}
+
     @flask.get("/public-config")
     def public_config():
         """Values the public pages need: the Pixel ID (public by nature) and contact email."""
         # Cloudflare (in front of the site) says which country the visitor is in: the page picks its language from it
         country = (request.headers.get("CF-IPCountry") or "").strip().upper()
-        return {"pixel_id": growth.pixel_id(), "tiktok_pixel": tiktok.proads_settings()["pixel"], "contact": os.environ.get("PROADS_CONTACT_EMAIL", ""),
+        return {"pixel_id": growth.pixel_id(), "tiktok_pixel": tiktok.proads_settings()["pixel"], "company": company(), "contact": os.environ.get("PROADS_CONTACT_EMAIL", ""),
                 "sign_in": social.configured(),
                 "country": country if len(country) == 2 and country.isalpha() and country not in ("XX", "T1") else ""}
 

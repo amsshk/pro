@@ -80,3 +80,16 @@ def test_google_site_verification_tag(make, monkeypatch):
     monkeypatch.setenv("GOOGLE_SITE_VERIFICATION", 'google-site-verification=abc_DEF-123"><script>')
     page = make().get("/").data.decode()
     assert '<meta name="google-site-verification" content="abc_DEF-123script">' in page
+
+
+def test_trust_pages_and_company_details(make, monkeypatch):
+    monkeypatch.setenv("PROADS_COMPANY_LEGAL_NAME", "EzDevSoft Technology and Solutions")
+    monkeypatch.setenv("PROADS_CONTACT_EMAIL", "support@ezdevsoft.net")
+    c = make()
+    for path, words in (("/about", "About ProAds"), ("/terms", "Terms of service"), ("/security", "Security at ProAds")):
+        r = c.get(path)
+        assert r.status_code == 200 and words in r.data.decode()
+    co = c.get("/public-config").json["company"]
+    assert co["legal_name"] == "EzDevSoft Technology and Solutions" and co["email"] == "support@ezdevsoft.net"
+    assert "mailto:support@ezdevsoft.net" in c.get("/.well-known/security.txt").data.decode()
+    assert 'href="/terms"' in c.get("/").data.decode()

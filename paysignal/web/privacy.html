@@ -27,6 +27,9 @@ ul{padding-left:20px}
 
   <p>ProAds helps businesses see which posts and ads bring paying customers. This page explains what data we handle, why, and the choices you have.</p>
 
+  <h2>Who we are</h2>
+  <p>ProAds is made and run by <span data-co="legal_name">EzDevSoft</span>, United Arab Emirates<span data-co-row>, trade licence <span data-co="trade_license"></span></span>. Contact: <a data-co="email" href="#">see the About page</a>. Our <a href="/terms">terms of service</a> and <a href="/security">security page</a> explain the rest.</p>
+
   <h2>What we collect</h2>
   <ul>
     <li><b>Your account:</b> business name, email, a scrambled (hashed) version of your password, and optionally your phone, website and currency.</li>
@@ -82,6 +85,18 @@ fetch("/public-config").then((r) => r.json()).then((c) => {
   const a = document.createElement("a");
   a.href = "mailto:" + c.contact; a.textContent = c.contact;
   p.replaceChildren("For any privacy request, email ", a, ".");
+}).catch(() => {});
+</script>
+<script>
+"use strict";
+fetch("/public-config").then((r) => r.json()).then((cfg) => {
+  const c = cfg.company || {};
+  document.querySelectorAll("[data-co]").forEach((el) => {
+    const v = c[el.getAttribute("data-co")];
+    if (v) { el.textContent = v; if (el.tagName === "A" && v.includes("@")) el.href = "mailto:" + v; }
+    else if (el.closest("[data-co-row]")) el.closest("[data-co-row]").hidden = true;
+    else if (el.tagName === "A") el.href = "/about";
+  });
 }).catch(() => {});
 </script>
 </body>
