@@ -2123,11 +2123,22 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     });
     const upBar = h("div", { style: "display:flex;gap:10px;flex-wrap:wrap;align-items:center" },
       h("label", { for: "tt-up", class: "btn btn-primary" }, "Upload videos"), upIn, upMsg);
+    // fill empty ads with the business's videos straight away (TikTok ad library first, then uploads)
+    const autoFill = (pull) => (pull ? api("/media/" + cid() + "/tiktok", { method: "POST" }).catch(() => null) : Promise.resolve())
+      .then(() => api("/media/" + cid())).then((d) => {
+        const vids = d.items.filter((x) => x.kind === "video" && x.usable && !x.needs_approval)
+          .sort((a, b) => (a.source === "tiktok" ? 0 : 1) - (b.source === "tiktok" ? 0 : 1));
+        const used = new Set(Object.values(media));
+        const free = vids.filter((v) => !used.has("media:" + v.id));
+        setters.filter((x) => !media[x.key]).forEach((x, i) => { if (free[i]) x.set(free[i]); });
+        if (!vids.length) upMsg.textContent = "No videos yet: upload them, or add the ones from your TikTok ad account with Choose video.";
+      }).catch(() => {});
+    autoFill(true);
     const box = h("div", { style: "display:flex;flex-direction:column;gap:10px" });
     const btn = h("button", { class: "btn btn-primary", type: "button" }, "Create in TikTok (switched off)");
     btn.addEventListener("click", async () => {
       const missing = cards.length - Object.keys(media).length;
-      if (missing > 0) { box.replaceChildren(errorCard("Choose a video for every ad (" + missing + " missing). Upload them with \u201cUpload photos or videos\u201d above.")); return; }
+      if (missing > 0) { box.replaceChildren(errorCard("Choose a video for every ad (" + missing + " missing): click \u201cChoose video\u201d under each ad (then \u201cFrom my TikTok ad account\u201d), or \u201cUpload videos\u201d.")); return; }
       if (!pixelSel.value) { box.replaceChildren(errorCard("Choose the Pixel.")); return; }
       btn.disabled = true; box.replaceChildren(loading("Uploading the videos and creating the campaign in TikTok. This can take a few minutes…"));
       try {
