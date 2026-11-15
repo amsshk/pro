@@ -1594,6 +1594,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
           ? connRow("Shopify", "Connected through the Shopify app above · " + when(c.shopify), true, null)
           : connRow("Shopify", c.shopify.configured ? when(c.shopify) : (c.shopify_app.available ? "Advanced: add this address as a webhook in Shopify instead of the button above" : "Add this address as a webhook for orders/paid and refunds/create"), c.shopify.configured, status.webhooks.shopify)) : null,
         has("stripe") ? connRow("Stripe", c.stripe.configured ? when(c.stripe) : "Add this address as a webhook for charge.succeeded and charge.refunded", c.stripe.configured, status.webhooks.stripe) : null,
+        c.stripe_api && c.stripe_api.connected ? connRow("Stripe (read-only key)", c.stripe_api.status === "error" ? (c.stripe_api.message || "Not reading") : fmt.format(c.stripe_api.imported || 0) + " payments and refunds in, checked every few minutes", c.stripe_api.status !== "error", null) : null,
         c.tiktok && c.tiktok.connected ? connRow("TikTok Events API", c.tiktok.status === "error" ? (c.tiktok.message || "Not sending") : fmt.format(c.tiktok.sent || 0) + " sales sent" + (c.tiktok.test_mode ? " (test mode)" : ""), c.tiktok.status !== "error", null) : null,
         connRow("Meta Conversions API", c.meta_capi.live ? "Sending real profit, not checkout totals" : c.meta_capi.configured ? "Practice mode: nothing is sent yet" : "Connect Facebook & Instagram above and pick your Pixel", c.meta_capi.live, null),
       ].filter(Boolean));
