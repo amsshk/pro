@@ -155,3 +155,54 @@ def counter_campaign(ai: MetaAI, ads: list[dict], context: dict, daily_budget: f
         plan["currency"] = currency
     return {"plan": plan, "insights": out.get("insights") or {}, "problems": problems, "model": reply.model,
             "landing_url": landing_url, "cost_usd": reply.cost_usd, "status": "draft - review before launching"}
+
+
+# ---------------------------------------------------------------- Win their customers (conquest plan)
+CONQUEST_SYSTEM = (
+    "You are a senior performance marketer in the GCC. A business wants to win customers that its competitors' ads "
+    "have already made curious. You get the competitor names, optionally some of their live ads, and this business's "
+    "own sales facts. Build a practical plan, honest and within platform rules:\n"
+    "- edges: what THIS business can truthfully offer that buyers may not get from the competitors. Use only the "
+    "facts given (products, prices, average order, repeat rate); never invent prices, discounts, awards or results.\n"
+    "- search_keywords: searches people type when comparing or doubting a competitor (e.g. '<brand> alternative', "
+    "'<brand> review', 'perfume like <brand>'), for TikTok Search ads and Google Search. Bidding on these searches is "
+    "allowed; the ad TEXT must never contain the competitor's name or trademark.\n"
+    "- tiktok_targeting: hashtags, interest categories and creator categories to target on TikTok.\n"
+    "- meta_interests: interests on Meta (well-known brand or category interests are fine for targeting).\n"
+    "- scripts: exactly 3 short TikTok video scripts (15-30 s) that win the comparison without naming or showing the "
+    "competitor, their logo or packaging; compare scent types, buying experience or value honestly; no claims about "
+    "the competitor's product; no fake reviews or staged 'customer' testimonials.\n"
+    "- creator_brief: how to work with local creators whose audiences follow the competitors (who to pick, what to "
+    "send, what to ask for, that each creator gets their own tracking link, and that paid posts must be disclosed as "
+    "ads under UAE rules).\n"
+    "- watch_out: 3-5 rules that keep the ad accounts safe.\n"
+    "Plain English, short. Reply with only JSON: {\"edges\": [{\"edge\": str, \"proof\": str}], "
+    "\"search_keywords\": [{\"keyword\": str, \"platform\": \"TikTok Search\"|\"Google\"|\"Both\", \"why\": str}], "
+    "\"tiktok_targeting\": {\"hashtags\": [str], \"interests\": [str], \"creator_categories\": [str]}, "
+    "\"meta_interests\": [str], \"scripts\": [{\"title\": str, \"hook\": str, \"script\": str, \"on_screen_text\": str, "
+    "\"cta\": str}], \"creator_brief\": {\"who\": str, \"send\": str, \"ask\": str, \"deliverables\": [str], "
+    "\"rules\": [str]}, \"watch_out\": [str]}"
+)
+
+
+def library_links(name: str, country: str = "AE") -> dict:
+    from urllib.parse import quote
+    q = quote(name.strip())
+    return {"name": name.strip(),
+            "meta": f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country={country}&q={q}&search_type=keyword_unordered",
+            "tiktok": "https://library.tiktok.com/ads"}
+
+
+def conquest_plan(ai: MetaAI, names: list[str], facts: dict, ads: Optional[list[dict]] = None, notes: str = "") -> dict:
+    comp = [{k: a.get(k) for k in ("page", "headline", "text", "days_running")} for a in (ads or [])][:20]
+    reply = ai.chat("campaign_builder", [
+        {"role": "developer", "content": CONQUEST_SYSTEM},
+        {"role": "user", "content": json.dumps({"competitors": names, "notes": notes, "business": facts,
+                                                "competitor_ads": comp}, ensure_ascii=False, default=str)}],
+        max_completion_tokens=8000)
+    try:
+        out = _extract_json(reply.text)
+    except (json.JSONDecodeError, CampaignError) as e:
+        raise CampaignError(f"could not read the plan the model returned: {e}") from e
+    out["scripts"] = (out.get("scripts") or [])[:3]
+    return {"plan": out, "model": reply.model, "cost_usd": reply.cost_usd}

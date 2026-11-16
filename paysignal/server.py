@@ -345,7 +345,8 @@ class App:
         expected = cfg.get("api_key", "")
         # a valid key or sign-in always works: someone spamming wrong keys can't lock the real owner out
         if given and self.accounts.session_client(given) == client_id:
-            if request.method not in ("GET", "HEAD", "OPTIONS") and self.accounts.session_viewer(given):
+            if request.method not in ("GET", "HEAD", "OPTIONS") and self.accounts.session_viewer(given) and \
+                    request.path not in (f"/competitors/{client_id}/scan", f"/competitors/{client_id}/conquest"):
                 abort(403, "You're viewing this business as admin, so it's view only. Switch back to your account to make changes.")
             return
         if expected and given and hmac.compare_digest(expected, given):
@@ -2471,8 +2472,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
 
     # ---------------- Competitor X-ray (Premium) ----------------
     def require_premium(client_id):
-        if is_admin(client_id):
-            return
+        if is_admin(client_id) or state.accounts.session_viewer(request.headers.get("X-API-Key", "")):
+            return                                       # ProAds' own account, or the admin looking at a business
         with state.lock:
             tier = state.billing.tier(client_id)
         if tier != "premium":
@@ -2536,6 +2537,41 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             if ads is None:
                 abort(502, str(err))
         return {"ads": ads, "summary": competitors.summarize(ads)}
+
+    @flask.post("/competitors/<client_id>/conquest")
+    def competitors_conquest(client_id):
+        """Win the customers competitors' ads warm up: keywords, targeting, honest comparison scripts and a creator
+        brief, built from the business's own sales facts. Nothing is published; it's a plan to use."""
+        state.require_key(client_id)
+        require_premium(client_id)
+        body = request.get_json(silent=True) or {}
+        names = [n.strip()[:60] for n in re.split(r"[,\n]", str(body.get("competitors", ""))) if n.strip()][:5]
+        if not names:
+            abort(400, "Type one or more competitor names, separated by commas.")
+        ads = [competitors.normalize_client(a) for a in body.get("ads") or [] if isinstance(a, dict)][:20]
+        cfg = state.config(client_id)
+        cur = cfg.get("currency", "AED")
+        with state.lock:
+            d = build_dashboard(state.engine(client_id), "90", currency=cur)
+        m = {x["key"]: x["value"] for x in d.get("metrics") or []}
+        facts = {"name": cfg.get("name", client_id), "website": cfg.get("website", ""), "currency": cur,
+                 "orders_90_days": m.get("orders"), "average_order": m.get("aov"), "refund_rate": d.get("refund_rate"),
+                 "returning_rate": d.get("returning_rate"),
+                 "top_products": [{"product": x["product"], "units": x["units"], "average_price": round(x["sales"] / x["units"], 2) if x["units"] else None}
+                                  for x in d.get("products") or []]}
+        if is_admin(client_id):
+            facts.update({"name": "ProAds", "website": public_base(), "product": PROADS_PRODUCT})
+        ai = need_ai()
+        try:
+            out = competitors.conquest_plan(ai, names, facts, ads, str(body.get("notes", ""))[:500])
+        except PermissionError as e:
+            abort(503, str(e))
+        except (RuntimeError, CampaignError) as e:
+            abort(502, str(e))
+        country = (str(body.get("country") or "AE").strip().upper() or "AE")[:2]
+        out["libraries"] = [competitors.library_links(n, country) for n in names]
+        out["facts"] = facts
+        return out
 
     @flask.post("/competitors/<client_id>/counter")
     def competitors_counter(client_id):

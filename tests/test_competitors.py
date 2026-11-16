@@ -140,3 +140,31 @@ def test_scan_works_without_a_test_client(monkeypatch):
         assert False
     except competitors.ScanError as e:
         assert "couldn't reach" in str(e)
+
+
+def test_win_their_customers(tmp_path):
+    from test_ai import Session, ok
+    app = app_for(tmp_path)
+    st = app.extensions["paysignal"]
+    c = app.test_client()
+    tok = c.post("/auth/signup", json={"business": "Bynawi", "email": "o@bynawi.ae", "password": "first-password-1", "terms": True}).json["token"]
+    h = {"X-API-Key": tok}
+    c.post("/upload/csv/bynawi", data="id,date,amount,currency,email\n1,2026-11-01,160,AED,a@x.ae\n2,2026-11-02,340,AED,b@x.ae\n", headers=h)
+    plan = {"edges": [{"edge": "Try before a full bottle", "proof": "Discovery Box is the top seller"}],
+            "search_keywords": [{"keyword": "rival alternative", "platform": "Both", "why": "comparing"}],
+            "tiktok_targeting": {"hashtags": ["#perfumetok"], "interests": ["Beauty"], "creator_categories": ["Beauty"]},
+            "meta_interests": ["Perfume"], "scripts": [{"title": "t", "hook": "h", "script": "s", "on_screen_text": "o", "cta": "c"}] * 4,
+            "creator_brief": {"who": "w", "send": "s", "ask": "a", "deliverables": ["1 video"], "rules": ["#ad"]}, "watch_out": ["no names"]}
+    s = Session(lambda m, b: ok(json.dumps(plan)))
+    st.ai = MetaAI(api_key="k", session=s)
+    assert c.post("/competitors/bynawi/conquest", json={"competitors": "Rival"}, headers=h).status_code == 402   # Premium
+    assert c.post("/competitors/pro/conquest", json={"competitors": ""}, headers=ADMIN).status_code == 400
+    # the admin, looking at Bynawi view-only, can build his plan (no plan needed, nothing is changed)
+    v = {"X-API-Key": c.post("/admin/pro/view-as/bynawi", headers=ADMIN).json["token"]}
+    r = c.post("/competitors/bynawi/conquest", json={"competitors": "Rival, Other Brand", "country": "AE"}, headers=v)
+    assert r.status_code == 200, r.json
+    assert len(r.json["plan"]["scripts"]) == 3 and r.json["libraries"][1]["name"] == "Other Brand"
+    assert "q=Other%20Brand" in r.json["libraries"][1]["meta"] and r.json["facts"]["orders_90_days"] == 2
+    sent = s.calls[-1]["body"]["messages"]
+    assert "never contain the competitor's name" in sent[0]["content"] and "Rival" in sent[1]["content"]
+    assert c.post("/competitors/bynawi/counter", json={"ads": [{"text": "x"}], "daily_budget": 40}, headers=v).status_code == 403

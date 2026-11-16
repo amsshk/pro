@@ -3088,6 +3088,63 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   const AD_COUNTRIES = [["AE", "United Arab Emirates"], ["SA", "Saudi Arabia"], ["KW", "Kuwait"], ["QA", "Qatar"], ["BH", "Bahrain"], ["OM", "Oman"], ["EG", "Egypt"],
     ["US", "United States"], ["GB", "United Kingdom"], ["DE", "Germany"], ["FR", "France"], ["IT", "Italy"], ["ES", "Spain"], ["NL", "Netherlands"],
     ["IN", "India"], ["PK", "Pakistan"], ["TH", "Thailand"], ["SG", "Singapore"], ["AU", "Australia"], ["CA", "Canada"], ["BR", "Brazil"], ["TR", "Turkey"], ["ZA", "South Africa"]];
+  // ---------- Win their customers (Premium): a plan to catch people competitors' ads warmed up ----------
+  function conquestCard(getAds) {
+    const names = h("input", { placeholder: "Competitor names, separated by commas", "aria-label": "Competitor names", autocomplete: "off" });
+    const notes = h("input", { placeholder: "Optional: what you want to push (e.g. Discovery Box, Tabby)", "aria-label": "Notes", autocomplete: "off" });
+    const go = h("button", { class: "btn btn-primary", type: "submit" }, "Build my plan");
+    const out = h("div", { style: "display:flex;flex-direction:column;gap:14px" });
+    const list = (title, items) => items && items.length ? h("div", {}, h("b", {}, title), h("ul", { class: "list", style: "margin:6px 0 0" }, items.map((x) => h("li", {}, x)))) : null;
+    const chips = (title, items) => items && items.length ? h("div", {}, h("b", {}, title),
+      h("div", { style: "display:flex;gap:6px;flex-wrap:wrap;margin-top:6px" }, items.map((x) => h("span", { class: "badge b-neutral" }, x)))) : null;
+    function show(r) {
+      const p = r.plan || {};
+      const asText = () => [
+        "WIN THEIR CUSTOMERS — " + (r.libraries || []).map((l) => l.name).join(", "),
+        "", "YOUR EDGES", ...(p.edges || []).map((e) => "- " + e.edge + " (" + e.proof + ")"),
+        "", "SEARCHES TO BID ON", ...(p.search_keywords || []).map((k) => "- " + k.keyword + " [" + k.platform + "]"),
+        "", "TIKTOK HASHTAGS", (p.tiktok_targeting || {}).hashtags?.join(", ") || "",
+        "TIKTOK INTERESTS", (p.tiktok_targeting || {}).interests?.join(", ") || "",
+        "META INTERESTS", (p.meta_interests || []).join(", "),
+        "", "SCRIPTS", ...(p.scripts || []).flatMap((x, i) => [(i + 1) + ". " + x.title, "Hook: " + x.hook, x.script, "On screen: " + x.on_screen_text, "CTA: " + x.cta, ""]),
+        "CREATOR BRIEF", "Who: " + ((p.creator_brief || {}).who || ""), "Send: " + ((p.creator_brief || {}).send || ""), "Ask: " + ((p.creator_brief || {}).ask || ""),
+        ...((p.creator_brief || {}).deliverables || []).map((x) => "- " + x), ...((p.creator_brief || {}).rules || []).map((x) => "- " + x),
+        "", "WATCH OUT", ...(p.watch_out || []).map((x) => "- " + x)].join("\n");
+      out.replaceChildren(
+        h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, h("button", { class: "btn btn-ghost", type: "button", onclick: () => copy(asText()) }, "Copy the whole plan")),
+        h("div", { class: "result", style: "flex-direction:column;align-items:stretch;gap:6px" }, h("b", {}, "See what they're running"),
+          ...(r.libraries || []).map((l) => h("span", { class: "small" }, l.name + ": ", h("a", { href: l.meta, target: "_blank", rel: "noopener" }, "Meta Ad Library"), " · ",
+            h("a", { href: l.tiktok, target: "_blank", rel: "noopener" }, "TikTok Ad Library"), " (search their name there)"))),
+        (p.edges || []).length ? h("div", {}, h("b", {}, "Your edges (from your own sales)"), h("ul", { class: "list", style: "margin:6px 0 0" },
+          p.edges.map((e) => h("li", {}, h("b", {}, e.edge), " — ", h("span", { class: "small" }, e.proof))))) : null,
+        (p.search_keywords || []).length ? h("div", {}, h("b", {}, "Searches to bid on"), h("p", { class: "small", style: "margin:2px 0 6px" }, "Bid on these searches; never put the competitor's name in your ad text."),
+          h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Search", "Where", "Why"].map((x) => h("th", { scope: "col" }, x)))),
+            h("tbody", {}, p.search_keywords.map((k) => h("tr", {}, h("td", {}, k.keyword), h("td", {}, k.platform), h("td", { class: "small" }, k.why))))))) : null,
+        chips("TikTok hashtags", (p.tiktok_targeting || {}).hashtags), chips("TikTok interests", (p.tiktok_targeting || {}).interests),
+        chips("TikTok creator categories", (p.tiktok_targeting || {}).creator_categories), chips("Meta interests", p.meta_interests),
+        (p.scripts || []).length ? h("div", { style: "display:flex;flex-direction:column;gap:10px" }, h("b", {}, "3 comparison videos"),
+          ...p.scripts.map((x, i) => h("div", { class: "result", style: "flex-direction:column;align-items:stretch;gap:4px" },
+            h("b", {}, (i + 1) + ". " + x.title), h("span", {}, h("b", {}, "Hook: "), x.hook), h("span", { class: "small", style: "white-space:pre-wrap" }, x.script),
+            h("span", { class: "small" }, h("b", {}, "On screen: "), x.on_screen_text), h("span", { class: "small" }, h("b", {}, "Call to action: "), x.cta)))) : null,
+        p.creator_brief ? h("div", { class: "result", style: "flex-direction:column;align-items:stretch;gap:4px" }, h("b", {}, "Creator brief"),
+          h("span", { class: "small" }, h("b", {}, "Who: "), p.creator_brief.who), h("span", { class: "small" }, h("b", {}, "Send: "), p.creator_brief.send),
+          h("span", { class: "small" }, h("b", {}, "Ask: "), p.creator_brief.ask), list("Deliverables", p.creator_brief.deliverables), list("Rules", p.creator_brief.rules),
+          h("span", { class: "small" }, "Give each creator their own link in Connect & upload → Track every new post, so ProAds shows which one brings paid orders.")) : null,
+        list("Keep your ad accounts safe", p.watch_out));
+    }
+    return h("section", { class: "card", "aria-labelledby": "wc-h", style: "background: var(--violet-card); border-color: var(--violet-edge)" },
+      h("h2", { id: "wc-h" }, "Win their customers"),
+      h("p", { class: "sub", style: "margin:0" }, "Your competitors pay to make people curious. This plan catches those people when they compare: the searches to bid on, who to target on TikTok and Meta, 3 honest comparison videos and a creator brief, built from what really sells for you. Never their name, logo or claims in your ads."),
+      h("form", { style: "display:flex;flex-direction:column;gap:8px", onsubmit: async (e) => {
+        e.preventDefault(); if (!names.value.trim()) { toast("Type at least one competitor name"); return; }
+        go.disabled = true; out.replaceChildren(loading("Building your plan… about a minute"));
+        try { show(await api("/competitors/" + cid() + "/conquest", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ competitors: names.value, notes: notes.value, ads: (getAds && getAds()) || [] }) })); }
+        catch (er) { if (er.message !== "signed out") out.replaceChildren(errorCard(er.message)); }
+        go.disabled = false;
+      } }, names, notes, go), out);
+  }
+
   async function viewCompetitors() {
     const head = h("header", { class: "between", style: "align-items:flex-end" },
       h("div", {}, h("h1", {}, "Competitor X-ray"), h("p", { class: "sub" }, "See the ads your competitors keep paying for, then beat them with your own.")),
@@ -3095,7 +3152,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     root.replaceChildren(layout("#/competitors", [head, loading()]));
     let tier = "free";
     try { tier = (await api("/billing/" + cid())).tier || "free"; } catch (e) { if (e.message === "signed out") return; }
-    if (tier !== "premium") {
+    if (tier !== "premium" && !(status && (status.admin || status.viewer))) {
       root.replaceChildren(layout("#/competitors", [head,
         h("section", { class: "card", style: "background: var(--violet-card); border-color: var(--violet-edge)" },
           h("h2", {}, "Part of Premium"),
@@ -3103,7 +3160,8 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
             h("li", {}, "Type a competitor's name or Facebook Page: see every ad they're running right now"),
             h("li", {}, "The ads they've kept running longest come first. That's a strong hint of what works for them"),
             h("li", {}, "The AI estimates what they're doing right and wrong, then builds you an original campaign to compete"),
-            h("li", {}, "Publish it to your ad account in one click, like any other campaign")),
+            h("li", {}, "Publish it to your ad account in one click, like any other campaign"),
+            h("li", {}, h("b", {}, "Win their customers: "), "the searches to bid on, TikTok and Meta targeting, 3 honest comparison video scripts and a creator brief, built from your own sales")),
           h("a", { class: "btn btn-primary", href: "#/billing", style: "align-self:flex-start" }, "See Premium"))]));
       return;
     }
@@ -3184,7 +3242,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         out);
     }
 
-    root.replaceChildren(layout("#/competitors", [head, h("section", { class: "card" }, h("h2", {}, "Who do you want to beat?"), form), results]));
+    root.replaceChildren(layout("#/competitors", [head, conquestCard(() => found), h("section", { class: "card" }, h("h2", {}, "Who do you want to beat?"), form), results]));
   }
 
   // ---------- plan & billing ----------
