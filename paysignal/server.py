@@ -3157,6 +3157,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         country = (request.headers.get("CF-IPCountry") or "").strip().upper()
         return {"pixel_id": growth.pixel_id(), "tiktok_pixel": tiktok.proads_settings()["pixel"], "company": company(), "contact": os.environ.get("PROADS_CONTACT_EMAIL", ""),
                 "sign_in": social.configured(),
+                "google_source": news.google_source_on(),
                 "country": country if len(country) == 2 and country.isalpha() and country not in ("XX", "T1") else ""}
 
     def client_ip() -> str:

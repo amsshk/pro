@@ -15,7 +15,7 @@ def c(tmp_path, monkeypatch):
     return create_app({"pro": {"api_key": "admin-key-0123456789abc"}}, str(tmp_path / "x.db"), start_worker=False).test_client()
 
 
-def test_public_news_pages(c):
+def test_public_news_pages(c, monkeypatch):
     r = c.get("/news")
     assert r.status_code == 200 and b"ProAds News" in r.data and b'href="/news/' in r.data
     slug = re.search(rb'href="/news/([a-z0-9-]+)"', r.data).group(1).decode()
@@ -23,7 +23,9 @@ def test_public_news_pages(c):
     assert a.status_code == 200 and b"<article>" in a.data
     ld = json.loads(re.search(rb'<script type="application/ld\+json">(.*?)</script>', a.data, re.S).group(1))
     assert ld["@type"] == "NewsArticle" and ld["image"][0].endswith("/cover.png") and ld["datePublished"]
-    assert b"google.com/preferences/source?q=pro.example.net" in a.data
+    assert b'class="prefsrc"' not in a.data                        # hidden until Google lists the site
+    monkeypatch.setenv("PROADS_GOOGLE_SOURCE", "1")
+    assert b"google.com/preferences/source?q=pro.example.net" in c.get(f"/news/{slug}").data
     img = c.get(f"/news/{slug}/cover.png")
     assert img.status_code == 200 and img.data[:8] == b"\x89PNG\r\n\x1a\n"
     assert b"<rss" in c.get("/news/rss.xml").data

@@ -21,6 +21,11 @@ LOGO = os.path.join(os.path.dirname(__file__), "web", "proads-logo.png")
 PUBLISHER = "ProAds by EzDevSoft"
 
 
+def google_source_on() -> bool:
+    """Show "Add ProAds on Google" buttons only once Google lists the site as a source (set PROADS_GOOGLE_SOURCE=1)."""
+    return os.environ.get("PROADS_GOOGLE_SOURCE", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def slugify(title: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", (title or "").lower()).strip("-")
     return s[:80].strip("-") or f"post-{int(time.time())}"
@@ -192,7 +197,7 @@ def _shell(base: str, title: str, desc: str, canonical: str, body: str, head_ext
 <style>{CSS}</style>{head_extra}</head><body>
 <header class="top"><a class="brand" href="/">{LOGO_SVG}ProAds</a>
 <nav class="nav" aria-label="Main"><a class="pill" href="/news">News</a>
-<a class="prefsrc" href="https://www.google.com/preferences/source?q={e(_host(base))}" target="_blank" rel="noopener">{STAR}Add ProAds on Google</a>
+{f'<a class="prefsrc" href="https://www.google.com/preferences/source?q={e(_host(base))}" target="_blank" rel="noopener">{STAR}Add ProAds on Google</a>' if google_source_on() else ''}
 <a class="pill go" href="/#signup">Get your free audit</a></nav></header>
 {body}
 <footer>© {datetime.now(timezone.utc).year} ProAds · a product of <a href="https://ezdevsoft.net" rel="noopener">EzDevSoft</a>, UAE ·
@@ -369,6 +374,6 @@ The simplest version is a link to Google's preferences page with your domain:
 
 Google also offers a script that draws an official button. Either way, the site needs to publish fresh content regularly to be eligible. A site with only product pages has little for Top Stories to show.
 
-## Try it with ProAds
-Use the **Add ProAds on Google** button at the top of this page, then you will see ProAds articles more often in your Google results."""),
+## Eligibility takes time
+A new site, or a site that has just started publishing, may not be listed yet. Search your domain on the preferences page: if it shows "No results", keep publishing regularly and check again in a few weeks."""),
 ]
