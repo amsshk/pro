@@ -430,8 +430,8 @@ class App:
         cfg = (self.clients.get(client_id) or {}).get("whatsapp") or {}
         source_id = match["utm_content"].split(":", 1)[1]
         value = round(p.amount, 2)                     # a Purchase is what was paid (or real profit, if chosen)
-        if self.signals.value_mode(client_id) == "profit" and p.cost_of_goods() is not None:
-            value = round(self.engine(client_id).scorer.margin(p), 2)
+        if self.signals.value_mode(client_id) == "profit" and self.signals.profit_of(client_id, p) is not None:
+            value = round(self.signals.profit_of(client_id, p), 2)
         live = bool(cfg.get("live") and cfg.get("dataset_id") and cfg.get("access_token") and cfg.get("waba_id"))
         status = "too old for Meta (over 7 days)" if whatsapp.too_old_for_meta(p) else ("sending" if live else "practice mode")
         with self.lock:
@@ -528,7 +528,8 @@ class App:
             results = self.engine(client_id).push_to_meta(
                 dataset_id=meta.get("dataset_id", ""), access_token=meta.get("access_token", ""),
                 dry_run=not live, test_event_code=meta.get("test_event_code"),
-                value_mode=meta.get("value_mode") or self.signals.value_mode(client_id))
+                value_mode=meta.get("value_mode") or self.signals.value_mode(client_id),
+                profit_of=lambda p: self.signals.profit_of(client_id, p))
         with self.lock:
             self.signals.log(client_id, "live" if live else "practice", results)
         batches = [r for r in results if not r.get("report")]
@@ -687,9 +688,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             mode = (state.config(client_id).get("meta") or {}).get("value_mode") or state.signals.value_mode(client_id)
 
             def value_of(p):
-                if mode == "profit" and p.cost_of_goods() is not None:
-                    return eng.scorer.margin(p)
-                return p.amount
+                prof = state.signals.profit_of(client_id, p) if mode == "profit" else None
+                return prof if prof is not None else p.amount
             px = row["pixel_code"]
             pl = tiktok.plan(state.store.purchases(client_id), state.tiktok, client_id,
                              lambda p: state.store.refunded_amount(client_id, p.external_id), value_of, pixel_code=px)
@@ -1490,9 +1490,10 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             sent7 = state.signals.sent_purchases_since(client_id, int(time.time()) - 7 * 86400)
         with state.lock:
             mode = state.signals.value_mode(client_id)
-            costs_known = any(p.cost_of_goods() is not None for p in state.engine(client_id).store.purchases(client_id)[-200:])
+            share = state.signals.cost_share(client_id)
+            costs_known = share is not None or any(p.cost_of_goods() is not None for p in state.engine(client_id).store.purchases(client_id)[-200:])
         out = {"signals": sig, "pixel": meta.get("dataset_id") or None, "live": bool(meta.get("live")),
-               "value_mode": mode, "costs_known": costs_known,
+               "value_mode": mode, "costs_known": costs_known, "cost_share": None if share is None else round(share * 100, 1),
                "last_sale_at": int(last_sale.timestamp()) if last_sale else None, "admin": admin}
         hit = state.ads_cache.get(("learning", client_id))
         if hit and time.time() - hit[0] < 600 and not request.args.get("fresh"):
@@ -1540,12 +1541,28 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     def learning_settings(client_id):
         """What a Purchase's value means for this business: amount paid (default) or actual profit on the order."""
         state.require_key(client_id)
-        mode = (request.get_json(silent=True) or {}).get("value_mode")
-        if mode not in meta_capi.VALUE_MODES:
-            abort(400, "value_mode must be 'amount' or 'profit'")
+        body = request.get_json(silent=True) or {}
+        if "cost_share" in body:                       # "my products cost about 40% of the price"
+            raw = body.get("cost_share")
+            try:
+                pct = None if raw in (None, "") else float(raw)
+            except (TypeError, ValueError):
+                abort(400, "Enter the cost as a percentage of the price, like 40.")
+            if pct is not None and not 1 <= pct <= 95:
+                abort(400, "Enter a percentage between 1 and 95.")
+            with state.lock:
+                state.signals.set_cost_share(client_id, None if pct is None else pct / 100)
+                if pct is None and state.signals.value_mode(client_id) == "profit":
+                    state.signals.set_value_mode(client_id, "amount")
+        mode = body.get("value_mode")
+        if mode is not None:
+            if mode not in meta_capi.VALUE_MODES:
+                abort(400, "value_mode must be 'amount' or 'profit'")
+            with state.lock:
+                state.signals.set_value_mode(client_id, mode)
         with state.lock:
-            state.signals.set_value_mode(client_id, mode)
-        return {"value_mode": mode}
+            share = state.signals.cost_share(client_id)
+            return {"value_mode": state.signals.value_mode(client_id), "cost_share": None if share is None else round(share * 100, 1)}
 
     # ---------------- Buyer Quality Intelligence ----------------
     def buyer_inputs(client_id):

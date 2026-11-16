@@ -141,3 +141,35 @@ def test_value_mode_setting(tmp_path):
     assert c.post("/learning/glow/settings", json={"value_mode": "ltv"}, headers=h).status_code == 400
     assert c.post("/learning/glow/settings", json={"value_mode": "profit"}, headers=h).json["value_mode"] == "profit"
     assert c.get("/learning/glow", headers=h).json["value_mode"] == "profit"
+
+
+def test_cost_share_makes_profit_value(tmp_path):
+    import sqlite3
+    from paysignal.signals import SignalLog
+    from types import SimpleNamespace
+    log = SignalLog(sqlite3.connect(":memory:"))
+    p = SimpleNamespace(amount=200.0, cost_of_goods=lambda: None)
+    assert log.profit_of("c", p) is None
+    log.set_cost_share("c", 0.4)
+    assert log.cost_share("c") == 0.4 and log.value_mode("c") == "amount"
+    assert log.profit_of("c", p) == 120.0
+    own = SimpleNamespace(amount=200.0, cost_of_goods=lambda: 150.0)
+    assert log.profit_of("c", own) == 50.0          # the order's own item costs win
+    log.set_value_mode("c", "profit")
+    assert log.cost_share("c") == 0.4
+
+
+def test_cost_share_setting_endpoint(tmp_path):
+    app = create_app({}, str(tmp_path / "x.db"), start_worker=False)
+    c = app.test_client()
+    tok = c.post("/auth/signup", json={"business": "Glow", "email": "o@glow.ae", "password": "first-password-1", "terms": True}).json["token"]
+    h = {"X-API-Key": tok}
+    assert c.get("/learning/glow", headers=h).json["costs_known"] is False
+    assert c.post("/learning/glow/settings", json={"cost_share": "abc"}, headers=h).status_code == 400
+    assert c.post("/learning/glow/settings", json={"cost_share": 99}, headers=h).status_code == 400
+    assert c.post("/learning/glow/settings", json={"cost_share": "40"}, headers=h).json["cost_share"] == 40.0
+    d = c.get("/learning/glow", headers=h).json
+    assert d["costs_known"] is True and d["cost_share"] == 40.0
+    c.post("/learning/glow/settings", json={"value_mode": "profit"}, headers=h)
+    r = c.post("/learning/glow/settings", json={"cost_share": ""}, headers=h).json
+    assert r["cost_share"] is None and r["value_mode"] == "amount"           # no cost left: back to amount paid

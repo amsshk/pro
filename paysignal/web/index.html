@@ -2580,10 +2580,22 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
           disabled: mode === "profit" && !d.costs_known || null,
           onchange: async () => { try { await api("/learning/" + cid() + "/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value_mode: mode }) }); toast("Saved. New purchases use this from now on."); } catch (e) { if (e.message !== "signed out") toast(e.message); } } }),
         h("div", { style: "display:flex;flex-direction:column;gap:4px" }, h("b", {}, title), h("span", { class: "small" }, text)));
-      blocks.push(h("section", { class: "card" }, h("h2", {}, "What each purchase is worth to Meta"),
+      const costIn = h("input", { type: "number", min: "1", max: "95", step: "1", inputmode: "decimal", placeholder: "e.g. 40", value: d.cost_share == null ? "" : d.cost_share, style: "width:110px" });
+      const saveCost = async () => {
+        try {
+          await api("/learning/" + cid() + "/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cost_share: costIn.value.trim() }) });
+          toast(costIn.value.trim() ? "Saved. You can now pick the product-cost-adjusted value." : "Removed. Purchases use the amount paid.");
+          viewLearning();
+        } catch (e) { if (e.message !== "signed out") toast(e.message); }
+      };
+      blocks.push(h("section", { class: "card" }, h("h2", {}, "What each purchase is worth to Meta and TikTok"),
         h("div", { class: "row", style: "align-items:stretch" },
-          vm("amount", "Amount paid (recommended)", "The real price the customer paid. Your ROAS in Ads Manager stays true, and Meta learns from real money."),
-          vm("profit", "Product-cost-adjusted value", d.costs_known ? "Price minus the product costs you gave ProAds, for that order only. It is not full profit: delivery, payment fees and other costs aren't taken off. Meta then leans towards higher-margin orders; ROAS in Ads Manager will read lower." : "Needs product costs in your sales data first.")),
+          vm("amount", "Amount paid (recommended)", "The real price the customer paid (from Stripe or your shop). Your ROAS stays true, and the ad engines learn from real money."),
+          vm("profit", "Product-cost-adjusted value", d.costs_known ? "Price minus your product cost" + (d.cost_share != null ? " (" + d.cost_share + "% of the price, unless an order lists its own item costs)" : " from your sales data") + ". It is not full profit: delivery, payment fees and other costs aren't taken off. The engines then lean towards higher-margin orders; ROAS will read lower." : "Enter your product cost below first.")),
+        h("div", { class: "row", style: "align-items:center;gap:10px;flex-wrap:wrap" },
+          h("span", {}, "Your products cost you about"), costIn, h("span", {}, "% of the selling price"),
+          h("button", { class: "btn", onclick: saveCost }, "Save")),
+        h("p", { class: "small", style: "margin:0" }, "Stripe and your website only show selling prices, not what the products cost you, so ProAds asks once. Leave it empty to remove it."),
         h("p", { class: "small", style: "margin:0" }, "Predictions (expected refunds, future purchases) are never sent as a purchase's value. They stay in ProAds.")));
       if (sg.last_error) blocks.push(h("div", { class: "result err" }, h("span", {}, "Meta rejected a delivery " + ago(sg.last_error.at) + ": " + sg.last_error.message), h("span", { class: "ok" }, "ProAds retries automatically")));
       if (d.last_sale_at && sg.mode === "live" && sg.last_accepted_at && d.last_sale_at - sg.last_accepted_at > 3600 && Date.now() / 1000 - d.last_sale_at < 6 * 86400)

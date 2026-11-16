@@ -31,7 +31,27 @@ class SignalLog:
         self.db = db
         self.db.execute(self.SCHEMA)
         self.db.execute("CREATE TABLE IF NOT EXISTS signal_settings (client_id TEXT PRIMARY KEY, value_mode TEXT NOT NULL)")
+        if "cost_share" not in [c[1] for c in self.db.execute("PRAGMA table_info(signal_settings)")]:
+            self.db.execute("ALTER TABLE signal_settings ADD COLUMN cost_share REAL")
         self.db.commit()
+
+    def cost_share(self, client_id: str) -> Optional[float]:
+        """What share of the price the products cost the business (e.g. 0.4), when it gave one."""
+        r = self.db.execute("SELECT cost_share FROM signal_settings WHERE client_id=?", (client_id,)).fetchone()
+        return float(r[0]) if r and r[0] is not None else None
+
+    def set_cost_share(self, client_id: str, share: Optional[float]) -> None:
+        self.db.execute("INSERT INTO signal_settings (client_id, value_mode, cost_share) VALUES (?, 'amount', ?)"
+                        " ON CONFLICT(client_id) DO UPDATE SET cost_share=excluded.cost_share", (client_id, share))
+        self.db.commit()
+
+    def profit_of(self, client_id: str, p) -> Optional[float]:
+        """Price minus product costs for one order: the order's own item costs, else the business's cost share."""
+        cogs = p.cost_of_goods()
+        if cogs is None:
+            share = self.cost_share(client_id)
+            cogs = p.amount * share if share is not None else None
+        return None if cogs is None else max(p.amount - cogs, 0.0)
 
     def value_mode(self, client_id: str) -> str:
         r = self.db.execute("SELECT value_mode FROM signal_settings WHERE client_id=?", (client_id,)).fetchone()
