@@ -44,7 +44,7 @@ from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
-from . import export, growth, mailer, shopify_app, tiktok, tiktok_api, whatsapp, windsor
+from . import export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
 from .identity import hash_phone
 from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
@@ -167,6 +167,8 @@ class App:
         self.windsor = windsor.WindsorStore(self.store.db)
         self.windsor_http = None               # set in tests
         self.tiktok_ads = tiktok_api.TikTokAdsStore(self.store.db)
+        self.news = news.NewsStore(self.store.db)
+        self.news.seed()
         self.tiktok_api_http = None            # set in tests
         self.tiktok_launches = tiktok_api.TikTokLaunchStore(self.store.db)
         self.stripe_http = None
@@ -3013,6 +3015,120 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     @flask.get("/security")
     def security_page():
         return page("security.html", referrer="strict-origin-when-cross-origin")
+
+    # ---------------- ProAds News: public, server-rendered, for Google Top Stories / Discover ----------------
+    def html_resp(body: str, ctype: str = "text/html; charset=utf-8", cache: int = 300):
+        resp = Response(body, content_type=ctype)
+        resp.headers["Cache-Control"] = f"public, max-age={cache}"
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return resp
+
+    @flask.get("/news")
+    def news_index():
+        with state.lock:
+            posts = state.news.list()
+        return html_resp(news.index_page(public_base(), posts))
+
+    @flask.get("/news/<slug>")
+    def news_article(slug):
+        with state.lock:
+            p = state.news.get(slug)
+            more = state.news.list(limit=4)
+        if not p:
+            abort(404)
+        return html_resp(news.article_page(public_base(), p, more))
+
+    @flask.get("/news/<slug>/cover.png")
+    def news_cover(slug):
+        with state.lock:
+            p = state.news.get(slug)
+        if not p:
+            abort(404)
+        return html_resp(news.cover_png(p["title"]), "image/png", cache=86400)
+
+    @flask.get("/news/rss.xml")
+    def news_rss():
+        with state.lock:
+            posts = state.news.list()
+        return html_resp(news.rss(public_base(), posts), "application/rss+xml; charset=utf-8")
+
+    @flask.get("/sitemap.xml")
+    def sitemap_xml():
+        with state.lock:
+            posts = state.news.list()
+        return html_resp(news.sitemap(public_base(), posts), "application/xml; charset=utf-8")
+
+    @flask.get("/news-sitemap.xml")
+    def news_sitemap_xml():
+        with state.lock:
+            posts = state.news.list()
+        return html_resp(news.news_sitemap(public_base(), posts), "application/xml; charset=utf-8")
+
+    @flask.get("/robots.txt")
+    def robots_txt():
+        b = public_base()
+        return html_resp(f"User-agent: *\nAllow: /\nDisallow: /app\nDisallow: /admin/\n\nSitemap: {b}/sitemap.xml\nSitemap: {b}/news-sitemap.xml\n",
+                         "text/plain; charset=utf-8", cache=3600)
+
+    @flask.get("/proads-logo.png")
+    def proads_logo():
+        return send_from_directory(WEB_DIR, "proads-logo.png", max_age=86400)
+
+    @flask.get("/admin/<admin_id>/news")
+    def admin_news(admin_id):
+        require_admin(admin_id)
+        with state.lock:
+            return {"posts": state.news.list(published_only=False)}
+
+    @flask.post("/admin/<admin_id>/news")
+    def admin_news_save(admin_id):
+        require_admin(admin_id)
+        b = request.get_json(silent=True) or {}
+        try:
+            with state.lock:
+                p = state.news.save(str(b.get("title", "")), str(b.get("summary", "")), str(b.get("body", "")),
+                                    str(b.get("author") or "ProAds team")[:60], bool(b.get("published")),
+                                    pid=int(b["id"]) if b.get("id") else None)
+        except ValueError as e:
+            abort(400, str(e))
+        return {"post": p, "url": f"{public_base()}/news/{p['slug']}"}
+
+    @flask.post("/admin/<admin_id>/news/<int:pid>/delete")
+    def admin_news_delete(admin_id, pid):
+        require_admin(admin_id)
+        with state.lock:
+            state.news.delete(pid)
+        return {"deleted": True}
+
+    @flask.post("/admin/<admin_id>/news/draft")
+    def admin_news_draft(admin_id):
+        """AI writes a draft from a topic; it is saved unpublished so a person checks the facts first."""
+        require_admin(admin_id)
+        topic = str((request.get_json(silent=True) or {}).get("topic", "")).strip()[:300]
+        if not topic:
+            abort(400, "Write a topic, e.g. 'Why refunds confuse TikTok's algorithm'.")
+        ai = state.ai or MetaAI()
+        if not ai.available:
+            abort(400, "No AI is set up on the server.")
+        try:
+            reply = ai.chat("campaign_builder", [
+                {"role": "developer", "content": "You write short, useful news-style articles for ProAds (ads software by EzDevSoft, UAE) "
+                 "that help small online businesses with TikTok, Meta and Google ads and tracking. Plain English, short sentences, "
+                 "no hype. NEVER invent statistics, prices, quotes, customer names or results; if a number is needed, describe it "
+                 "in words or say it varies. Only state platform rules you are sure of. End with one practical takeaway. "
+                 "Format: '## ' headings, '- ' bullets, **bold**. 400-700 words. Reply only with JSON "
+                 "{\"title\": str (max 90 chars), \"summary\": str (max 170 chars), \"body\": str}."},
+                {"role": "user", "content": topic}], max_completion_tokens=4000)
+            t = reply.text
+            j = json.loads(t[t.find("{"):t.rfind("}") + 1])
+            with state.lock:
+                p = state.news.save(str(j["title"])[:110], str(j.get("summary", ""))[:200], str(j["body"]), "ProAds team", False)
+        except (KeyError, ValueError) as e:
+            abort(502, f"The AI's draft couldn't be read ({e}). Try again.")
+        except (PermissionError, RuntimeError) as e:
+            abort(502, str(e))
+        return {"post": p}
 
     @flask.get("/about")
     def about():

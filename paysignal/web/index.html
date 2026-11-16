@@ -982,6 +982,72 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   }
 
   // ---------- admin ----------
+  // ---------- ProAds News (admin): articles on pro.ezdevsoft.net/news so ProAds advertises itself on Google ----------
+  function newsCard() {
+    const card = h("section", { class: "card", "aria-labelledby": "news-h" });
+    const listBox = h("div", { style: "display:flex;flex-direction:column;gap:8px" }, loading());
+    const editor = h("div", { style: "display:contents" });
+    const base = "/admin/" + cid() + "/news";
+    const when = (t) => t ? new Date(t * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
+    function edit(p) {
+      const title = h("input", { value: p ? p.title : "", placeholder: "Headline (under 90 characters works best)", maxlength: 110, "aria-label": "Headline" });
+      const summary = h("textarea", { rows: 2, placeholder: "One-sentence summary shown on Google and under the headline", "aria-label": "Summary" }, p ? p.summary : "");
+      const body = h("textarea", { rows: 16, style: "font-family:monospace;font-size:13px", placeholder: "Article text. ## Heading, - bullet, **bold**, [link](https://...)", "aria-label": "Article" }, p ? p.body : "");
+      const out = h("div", {});
+      const save = async (publish, btn) => {
+        btn.disabled = true;
+        try {
+          const r = await api(base, { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: p ? p.id : null, title: title.value, summary: summary.value, body: body.value, published: publish }) });
+          toast(publish ? "Published" : "Saved as draft");
+          editor.replaceChildren(); load();
+          if (publish) window.open(r.url, "_blank", "noopener");
+        } catch (e) { if (e.message !== "signed out") out.replaceChildren(errorCard(e.message)); }
+        btn.disabled = false;
+      };
+      editor.replaceChildren(h("div", { class: "result", style: "flex-direction:column;align-items:stretch;gap:8px" },
+        h("b", {}, p ? "Edit article" : "New article"), title, summary, body,
+        h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" },
+          h("button", { class: "btn btn-primary", type: "button", onclick: (e) => save(true, e.currentTarget) }, p && p.published ? "Update" : "Publish"),
+          p && p.published ? null : h("button", { class: "btn btn-ghost", type: "button", onclick: (e) => save(false, e.currentTarget) }, "Save draft"),
+          h("button", { class: "btn btn-ghost", type: "button", onclick: () => editor.replaceChildren() }, "Cancel")), out));
+      title.focus();
+    }
+    async function load() {
+      try {
+        const r = await api(base);
+        listBox.replaceChildren(...(r.posts.length ? r.posts.map((p) => h("div", { class: "conn" },
+          h("div", { style: "display:flex;flex-direction:column;gap:2px;min-width:0" }, h("b", {}, p.title),
+            h("span", { class: "small" }, (p.published ? "Published " + when(p.published_at) : "Draft, not on the site") + " · /news/" + p.slug)),
+          h("div", { style: "display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end" },
+            p.published ? h("a", { class: "btn btn-ghost", href: "/news/" + p.slug, target: "_blank", rel: "noopener", style: "min-height:36px;padding:0 12px" }, "View") : null,
+            h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => edit(p) }, p.published ? "Edit" : "Check & publish"),
+            h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px;color: var(--loss-txt)", onclick: async (e) => {
+              const b = e.currentTarget; if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.textContent = "Click again to delete"; return; }
+              try { await api(base + "/" + p.id + "/delete", { method: "POST" }); load(); } catch (er) { if (er.message !== "signed out") toast(er.message); } } }, "Delete"))))
+          : [h("p", { class: "sub", style: "margin:0" }, "No articles yet.")]));
+      } catch (e) { if (e.message !== "signed out") listBox.replaceChildren(errorCard(e.message)); }
+    }
+    const topic = h("input", { placeholder: "Topic, e.g. Why refunds confuse TikTok's algorithm", "aria-label": "Article topic", style: "flex:1;min-width:220px" });
+    const draftBtn = h("button", { class: "btn btn-primary", type: "submit" }, "Write a draft with AI");
+    const draftOut = h("div", {});
+    card.append(
+      h("div", { class: "between" }, h("h2", { id: "news-h" }, "ProAds News"), h("a", { href: "/news", target: "_blank", rel: "noopener", style: "font-size:13px" }, "Open /news")),
+      h("p", { class: "sub", style: "margin:0" }, "Articles on your own site so ProAds shows up on Google, in Top Stories and AI answers. Post at least once a week; fresh, useful articles are what Google looks for. AI drafts are saved as drafts: check every fact before you publish."),
+      h("form", { style: "display:flex;gap:8px;flex-wrap:wrap", onsubmit: async (e) => {
+        e.preventDefault(); draftBtn.disabled = true; draftOut.replaceChildren(h("p", { class: "sub", style: "margin:0" }, "Writing… this takes up to a minute."));
+        try { const r = await api(base + "/draft", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ topic: topic.value }) });
+          draftOut.replaceChildren(); topic.value = ""; await load(); edit(r.post); }
+        catch (er) { if (er.message !== "signed out") draftOut.replaceChildren(errorCard(er.message)); }
+        draftBtn.disabled = false;
+      } }, topic, draftBtn),
+      draftOut,
+      h("button", { class: "btn btn-ghost", type: "button", style: "align-self:flex-start", onclick: () => edit(null) }, "Write one myself"),
+      editor, listBox);
+    load();
+    return card;
+  }
+
   async function viewAdmin() {
     if (!status || !status.admin) return viewAudit();
     const body = h("div", { style: "display:contents" }, loading("Loading accounts…"));
@@ -1033,6 +1099,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("div", { class: "kpi" }, h("span", { class: "label" }, "Connected Facebook"), h("span", { class: "num" }, fmt.format(t.with_facebook || 0)), h("span", { class: "note" }, fmt.format(t.live_campaigns || 0) + " live campaigns")),
         h("div", { class: "kpi" }, h("span", { class: "label" }, "Engine lessons"), h("span", { class: "num" }, fmt.format(t.lessons_from || 0)), h("span", { class: "note" }, "businesses it has learned from (anonymous)"))),
       linkBox,
+      newsCard(),
       addCompanyCard(),
       h("section", { class: "card", "aria-labelledby": "accts" },
         h("div", { class: "between" }, h("h2", { id: "accts" }, "Accounts"), h("span", { class: "badge " + (d.email_on ? "b-measured" : "b-neutral") }, d.email_on ? "Reset emails on" : "Reset emails off: use reset links")),
