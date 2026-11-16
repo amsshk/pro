@@ -374,6 +374,8 @@ class App:
                 if self._same_sale_elsewhere(client_id, p):
                     continue
                 match = self._wa_match(client_id, p)
+                if p.kind == "purchase" and p.payment_method and self.store.fill_payment_method(p):
+                    continue                              # known order, now with how it was paid
                 if self.store.add(p):
                     new += 1
                     if match and match.get("ctwa_clid"):

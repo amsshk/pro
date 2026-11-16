@@ -3866,6 +3866,11 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       h("div", { class: "track", role: "img", "aria-label": x.source + ": " + money0(x.sales, cur) }, h("div", { style: "width:" + Math.max(2, Math.round(100 * x.sales / maxSrc)) + "%" })))), "No sales in this period.");
     const products = listCard("Top products", (d.products || []).map((x) => h("div", { class: "hbar" }, h("span", {}, x.product, h("span", { class: "sub", style: "font-size:12px" }, " · " + fmt.format(x.units) + " sold")), h("b", {}, money0(x.sales, cur)),
       h("div", { class: "track", "aria-hidden": "true" }, h("div", { style: "width:" + Math.max(2, Math.round(100 * x.sales / maxProd)) + "%" })))), "Product names appear when your sales include them (Shopify or a product column).");
+    const pm = d.payment_methods || [], maxPm = Math.max(...pm.map((x) => x.sales), 1), pmTotal = pm.reduce((a, x) => a + x.sales, 0) || 1;
+    const methodsCard = pm.length > 1 || (pm.length === 1 && !/not given/.test(pm[0].method)) ? listCard("How customers paid", pm.map((x) => h("div", { class: "hbar" },
+      h("span", {}, x.method, h("span", { class: "sub", style: "font-size:12px" }, " · " + fmt.format(x.orders) + " order" + (x.orders === 1 ? "" : "s") + " · avg " + money0(x.average, cur))),
+      h("b", {}, money0(x.sales, cur) + " · " + Math.round(100 * x.sales / pmTotal) + "%"),
+      h("div", { class: "track", "aria-hidden": "true" }, h("div", { style: "width:" + Math.max(2, Math.round(100 * x.sales / maxPm)) + "%" })))), "") : null;
     const camps = (d.campaigns || []).length ? h("section", { class: "card" }, h("div", { class: "between" }, h("h2", {}, "Campaigns"), h("a", { href: "#/assistant", style: "font-size:13px" }, "New campaign")),
       d.campaigns.map((x) => h("div", { class: "between", style: "font-size:14px;gap:8px" }, h("span", {}, x.name || x.campaign_id),
         h("span", { class: "badge " + (x.status === "ACTIVE" ? "b-measured" : "b-neutral") }, campState(x.status))))) : null;
@@ -3911,7 +3916,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         chartHost, extra),
       ...[fcBox].filter(Boolean),
       h("div", { class: "row", style: "align-items:flex-start" },
-        h("div", { style: "flex:3 1 420px;display:flex;flex-direction:column;gap:24px;min-width:0" }, sources, products),
+        h("div", { style: "flex:3 1 420px;display:flex;flex-direction:column;gap:24px;min-width:0" }, ...[sources, methodsCard, products].filter(Boolean)),
         h("div", { style: "flex:2 1 300px;display:flex;flex-direction:column;gap:24px;min-width:0" }, guide, camps)));
     draw();
     let lastW = chartHost.clientWidth, timer = null;

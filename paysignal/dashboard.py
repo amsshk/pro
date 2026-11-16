@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from .attribution import resolve
+from .models import method_of
 from .engine import Engine
 from .identity import customer_key
 
@@ -49,6 +50,7 @@ def build_dashboard(engine: Engine, period: str = "30", now: Optional[datetime] 
     prev = {"sales": defaultdict(float), "profit": defaultdict(float), "orders": defaultdict(int)}
     totals = {"cur": defaultdict(float), "prev": defaultdict(float)}
     sources, products = defaultdict(lambda: [0.0, 0]), defaultdict(lambda: [0.0, 0])
+    methods = defaultdict(lambda: [0.0, 0])
     returning = [0, 0]
     for p in purchases:
         d = p.occurred_at.date()
@@ -73,6 +75,8 @@ def build_dashboard(engine: Engine, period: str = "30", now: Optional[datetime] 
                 f"{PLATFORM_NAMES.get(touch.platform, touch.platform.capitalize())} {'ads' if touch.kind == 'paid' else 'posts'}"
             sources[label][0] += p.amount
             sources[label][1] += 1
+            methods[method_of(p)][0] += p.amount
+            methods[method_of(p)][1] += 1
             for it in p.items:
                 products[it.name or it.sku][0] += it.unit_price * it.quantity
                 products[it.name or it.sku][1] += it.quantity
@@ -105,6 +109,9 @@ def build_dashboard(engine: Engine, period: str = "30", now: Optional[datetime] 
     }
     out["sources"] = sorted(({"source": k, "sales": round(v[0], 2), "orders": v[1]} for k, v in sources.items()),
                             key=lambda r: -r["sales"])[:6]
+    out["payment_methods"] = sorted(({"method": k, "sales": round(v[0], 2), "orders": v[1],
+                                      "average": round(v[0] / v[1], 2) if v[1] else 0} for k, v in methods.items()),
+                                    key=lambda r: -r["sales"])
     out["products"] = sorted(({"product": k, "sales": round(v[0], 2), "units": v[1]} for k, v in products.items()),
                              key=lambda r: -r["sales"])[:5]
     return out

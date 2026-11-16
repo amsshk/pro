@@ -91,3 +91,30 @@ def test_shopify_export_upload_merges_with_stripe(tmp_path):
     r = c.post("/import/bynawi", data=export, headers=h).json
     assert r["new"] == 1, r
     assert c.get("/status/bynawi", headers=h).json["totals"]["gross"] == 500.0
+
+
+def test_payment_methods_shown(tmp_path):
+    from paysignal.models import payment_method_name
+    assert payment_method_name("Stripe Card Payments") == "Card (Stripe)" and payment_method_name(["tabby_pay_later"]) == "Tabby"
+    assert payment_method_name("Cash on Delivery (COD)") == "Cash on delivery" and payment_method_name("Ziina") == "Ziina"
+    app = create_app({}, str(tmp_path / "x.db"), start_worker=False)
+    c = app.test_client()
+    H = {"X-API-Key": c.post("/auth/signup", json={"business": "Bynawi", "email": "o@bynawi.ae", "password": "first-password-1", "terms": True}).json["token"]}
+    from datetime import datetime, timedelta, timezone
+    d = lambda h: (datetime.now(timezone.utc) - timedelta(hours=h)).strftime("%Y-%m-%d %H:%M:%S +0000")
+    stripe(app, "bynawi", "ch_1", (datetime.now(timezone.utc) - timedelta(hours=50)).isoformat(), 340, "sara@x.ae")
+    head = "Name,Email,Financial Status,Paid at,Currency,Total,Lineitem quantity,Lineitem name,Lineitem price,Payment Method,Id\n"
+    export = head + (f"#1,sara@x.ae,paid,{d(50)},AED,340.00,1,N°2,340.00,Stripe Card Payments,5001\n"
+                     f"#2,ali@x.ae,paid,{d(20)},AED,850.00,1,N°3 100ML,850.00,Tabby,5002\n"
+                     f"#3,mo@x.ae,paid,{d(10)},AED,1100.00,1,N°1 100ML,1100.00,Ziina,5003\n")
+    assert c.post("/import/bynawi", data=export, headers=H).json["new"] == 2
+    pm = {x["method"]: x for x in c.get("/dashboard/bynawi?period=7", headers=H).json["payment_methods"]}
+    assert pm["Tabby"]["sales"] == 850 and pm["Ziina"]["orders"] == 1 and pm["Card (Stripe)"]["sales"] == 340
+    # webhook orders that arrived without a method get it when the export is uploaded later
+    st = app.extensions["paysignal"]
+    from paysignal.models import Payment
+    st.ingest("bynawi", [Payment(client_id="bynawi", source="shopify", external_id="5004", kind="purchase", amount=160, currency="AED",
+                                 occurred_at=datetime.now(timezone.utc) - timedelta(hours=5), email="z@x.ae")])
+    c.post("/import/bynawi", data=head + f"#4,z@x.ae,paid,{d(5)},AED,160.00,1,Discovery Box,160.00,Tabby,5004\n", headers=H)
+    pm = {x["method"]: x for x in c.get("/dashboard/bynawi?period=7", headers=H).json["payment_methods"]}
+    assert pm["Tabby"]["orders"] == 2 and "Shopify (method not given)" not in pm

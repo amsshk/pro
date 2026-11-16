@@ -11,7 +11,7 @@ import hmac
 from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 
-from ..models import LineItem, Payment
+from ..models import LineItem, Payment, payment_method_name
 
 
 def verify_hmac(payload: bytes, hmac_header: str, secret: str) -> bool:
@@ -85,6 +85,7 @@ def parse_shopify_webhook(topic: str, body: dict, client_id: str,
             customer_id=str(customer["id"]) if customer.get("id") else None,
             discount=float(body.get("total_discounts", 0) or 0), items=items,
             promo_code=(codes[0].get("code") if codes else None),
+            payment_method=payment_method_name(body.get("payment_gateway_names") or body.get("gateway")),
             **{**track, "ttclid": track.get("ttclid") or _note_ttclid(body)}, **_person(body, customer),
         )]
 

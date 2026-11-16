@@ -18,7 +18,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from .models import LineItem, Payment
+from .models import LineItem, Payment, payment_method_name
 from .organic import Post
 
 
@@ -121,6 +121,7 @@ def import_shopify_orders(text: str, client_id: str, costs: dict[str, float] | N
             currency=currency, occurred_at=when, email=_pick(r, "Email") or None,
             phone=_pick(r, "Phone", "Billing Phone", "Shipping Phone") or None,
             discount=_money(_pick(r, "Discount Amount")), promo_code=_pick(r, "Discount Code") or None,
+            payment_method=payment_method_name(_pick(r, "Payment Method", "Gateway")),
             items=o["items"],
             first_name=(_pick(r, "Billing Name") or "").split(" ")[0] or None,
             last_name=" ".join((_pick(r, "Billing Name") or "").split(" ")[1:]) or None,

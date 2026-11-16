@@ -112,6 +112,21 @@ class PaymentStore:
         self.db.commit()
         return cur.rowcount == 1
 
+    def fill_payment_method(self, p: Payment) -> bool:
+        """An order seen again with its payment method (e.g. a Shopify export after webhooks): add the method only."""
+        row = self.db.execute("SELECT data FROM payments WHERE client_id=? AND source=? AND external_id=?",
+                              (p.client_id, p.source, p.external_id)).fetchone()
+        if not row or not p.payment_method:
+            return False
+        d = json.loads(row[0])
+        if d.get("payment_method"):
+            return False
+        d["payment_method"] = p.payment_method
+        self.db.execute("UPDATE payments SET data=? WHERE client_id=? AND source=? AND external_id=?",
+                        (json.dumps(d), p.client_id, p.source, p.external_id))
+        self.db.commit()
+        return True
+
     def add_many(self, payments: list[Payment]) -> int:
         return sum(self.add(p) for p in payments)
 

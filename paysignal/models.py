@@ -57,6 +57,7 @@ class Payment:
     city: Optional[str] = None
     zip: Optional[str] = None
     country: Optional[str] = None         # two-letter code
+    payment_method: Optional[str] = None  # how the customer paid: "Card (Stripe)", "Tabby", "Ziina", ...
 
     @property
     def event_id(self) -> str:
@@ -67,3 +68,29 @@ class Payment:
         if not self.items or any(i.unit_cost is None for i in self.items):
             return None
         return sum(i.unit_cost * i.quantity for i in self.items)
+
+
+_METHODS = (("tabby", "Tabby"), ("tamara", "Tamara"), ("ziina", "Ziina"), ("postpay", "Postpay"), ("stripe", "Card (Stripe)"),
+            ("shopify_payments", "Card (Shopify Payments)"), ("shopify payments", "Card (Shopify Payments)"),
+            ("apple", "Apple Pay"), ("paypal", "PayPal"), ("checkout.com", "Card (Checkout.com)"), ("network", "Card (Network)"),
+            ("telr", "Card (Telr)"), ("payfort", "Card (Amazon Payment Services)"), ("cash", "Cash on delivery"),
+            ("cod", "Cash on delivery"), ("bank", "Bank transfer"), ("manual", "Manual"), ("gift", "Gift card"))
+
+
+def payment_method_name(raw) -> Optional[str]:
+    """One readable name for how an order was paid, from Shopify's gateway names or an export's 'Payment Method'."""
+    names = [str(x).strip() for x in (raw if isinstance(raw, (list, tuple)) else [raw]) if x and str(x).strip()]
+    if not names:
+        return None
+    low = " ".join(names).lower()
+    for key, label in _METHODS:
+        if key in low:
+            return label
+    return names[0].replace("_", " ").strip().title()[:40]
+
+
+def method_of(p) -> str:
+    """For reports: the stored method, else what the source tells (Stripe is a card payment)."""
+    if getattr(p, "payment_method", None):
+        return p.payment_method
+    return {"stripe": "Card (Stripe)", "shopify": "Shopify (method not given)"}.get(p.source, "Other / not given")

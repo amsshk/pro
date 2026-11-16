@@ -30,7 +30,7 @@ from datetime import datetime
 from typing import Iterator, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
-from .models import LineItem, Payment
+from .models import LineItem, Payment, payment_method_name
 
 log = logging.getLogger("proads.shopify")
 
@@ -145,7 +145,7 @@ def refresh_tokens(http, shop: str, refresh_token: str) -> dict:
 _MONEY = "shopMoney { amount currencyCode }"
 _VISIT = "landingPage utmParameters { source medium campaign content }"
 ORDER_FIELDS = f"""
-  id name processedAt createdAt currencyCode test cancelledAt displayFinancialStatus sourceName
+  id name processedAt createdAt currencyCode test cancelledAt displayFinancialStatus sourceName paymentGatewayNames
   totalPriceSet {{ {_MONEY} }}
   totalDiscountsSet {{ {_MONEY} }}
   discountCodes
@@ -264,7 +264,7 @@ def order_to_payments(o: dict, client_id: str, costs: dict | None = None) -> lis
         discount=_money(o.get("totalDiscountsSet")), promo_code=codes[0] if codes else None, items=items,
         utm_source=utm.get("source"), utm_medium=utm.get("medium"), utm_campaign=utm.get("campaign"),
         utm_content=utm.get("content"), fbclid=(qs.get("fbclid") or [None])[0],
-        ttclid=(qs.get("ttclid") or [None])[0],
+        ttclid=(qs.get("ttclid") or [None])[0], payment_method=payment_method_name(o.get("paymentGatewayNames")),
     )]
     for rf in o.get("refunds") or []:
         amount = _money(rf.get("totalRefundedSet"))
