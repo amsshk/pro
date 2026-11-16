@@ -77,3 +77,17 @@ def test_shopify_test_notifications_are_ignored():
     assert parse_shopify_webhook("orders/paid", {**order(5, 100, "a@b.ae"), "test": True}, "b") == []
     assert parse_shopify_webhook("refunds/create", {"id": 1, "order_id": 820982911946154508}, "b") == []
     assert len(parse_shopify_webhook("orders/paid", order(5, 100, "a@b.ae"), "b")) == 1
+
+
+def test_shopify_export_upload_merges_with_stripe(tmp_path):
+    app = create_app({}, str(tmp_path / "x.db"), start_worker=False)
+    c = app.test_client()
+    tok = c.post("/auth/signup", json={"business": "Bynawi", "email": "o@bynawi.ae", "password": "first-password-1", "terms": True}).json["token"]
+    h = {"X-API-Key": tok}
+    stripe(app, "bynawi", "ch_1", "2026-11-10T10:02:00+00:00", 340, "sara@x.ae")
+    export = ("Name,Email,Financial Status,Paid at,Currency,Total,Lineitem quantity,Lineitem name,Lineitem price,Id\n"
+              "#1001,sara@x.ae,paid,2026-11-10 14:00:00 +0400,AED,340.00,1,N°2 50ML,340.00,5001\n"     # = Stripe ch_1
+              "#1002,ali@x.ae,paid,2026-11-11 12:00:00 +0400,AED,160.00,1,Discovery Box,160.00,5002\n")  # cash on delivery
+    r = c.post("/import/bynawi", data=export, headers=h).json
+    assert r["new"] == 1, r
+    assert c.get("/status/bynawi", headers=h).json["totals"]["gross"] == 500.0
