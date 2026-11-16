@@ -184,7 +184,33 @@ def live_summary(http, token: str, advertiser_id: str, start: str, end: str) -> 
                     o["results"] += int(num(m, "conversion"))
             return sorted(out.values(), key=lambda x: (-x["results"], -x["clicks"]))[:6]
         return []
-    return {"days": days, "countries": breakdown("country_code"), "placements": breakdown("placement")}
+    # every campaign in the account (made in ProAds or in TikTok Ads Manager), with its spend in the period
+    camps = {}
+    try:
+        page = 1
+        while True:
+            d = _get(http, token, "campaign/get", {"advertiser_id": advertiser_id, "page": page, "page_size": 100}, "reading campaigns")
+            for c in d.get("list") or []:
+                cid = str(c.get("campaign_id") or "")
+                if cid:
+                    camps[cid] = {"id": cid, "name": c.get("campaign_name") or cid, "on": c.get("operation_status") == "ENABLE",
+                                  "status": c.get("secondary_status") or c.get("operation_status") or "", "spend": 0.0, "results": 0,
+                                  "promote": str(c.get("campaign_name") or "").startswith("promote_")}
+            if page >= int((d.get("page_info") or {}).get("total_page") or 1) or page >= 10:
+                break
+            page += 1
+        d = _get(http, token, "report/integrated/get", {
+            "advertiser_id": advertiser_id, "report_type": "BASIC", "data_level": "AUCTION_CAMPAIGN", "dimensions": ["campaign_id"],
+            "metrics": ["spend", "conversion"], "start_date": start, "end_date": end, "page_size": 200}, "reading campaign results")
+        for row in d.get("list") or []:
+            cid = str((row.get("dimensions") or {}).get("campaign_id") or "")
+            if cid in camps:
+                camps[cid]["spend"] = round(num(row.get("metrics") or {}, "spend"), 2)
+                camps[cid]["results"] = int(num(row.get("metrics") or {}, "conversion"))
+    except TikTokAPIError:
+        pass
+    campaigns = sorted(camps.values(), key=lambda c: (not c["on"], c["promote"], -c["spend"]))
+    return {"days": days, "countries": breakdown("country_code"), "placements": breakdown("placement"), "campaigns": campaigns}
 
 
 def set_campaign_status(http, token: str, advertiser_id: str, campaign_id: str, enable: bool) -> None:

@@ -18,6 +18,14 @@ class TT:
     def get(self, url, params, headers, timeout):
         self.calls.append(params)
         dims = json.loads(params.get("dimensions", "[]"))
+        if url.endswith("campaign/get/"):
+            return R({"code": 0, "data": {"list": [
+                {"campaign_id": 1, "campaign_name": "BYNAWI GCC Purchase Conversions", "operation_status": "ENABLE", "secondary_status": "CAMPAIGN_STATUS_ENABLE"},
+                {"campaign_id": 2, "campaign_name": "promote_1794", "operation_status": "ENABLE", "secondary_status": "CAMPAIGN_STATUS_ENABLE"},
+                {"campaign_id": 3, "campaign_name": "Old", "operation_status": "DISABLE"}], "page_info": {"total_page": 1}}})
+        if params.get("data_level") == "AUCTION_CAMPAIGN":
+            return R({"code": 0, "data": {"list": [{"dimensions": {"campaign_id": "1"}, "metrics": {"spend": "180", "conversion": "3"}},
+                                                    {"dimensions": {"campaign_id": "2"}, "metrics": {"spend": "20", "conversion": "0"}}]}})
         if params.get("report_type") == "BASIC":
             return R({"code": 0, "data": {"list": [
                 {"dimensions": {"stat_time_day": "2026-11-15 00:00:00"}, "metrics": {"spend": "120.5", "impressions": "9000", "clicks": "150", "conversion": "2"}},
@@ -50,6 +58,8 @@ def test_tiktok_live_card(tmp_path, monkeypatch):
     assert r["totals"]["spend"] == 200.0 and r["totals"]["results"] == 3 and r["totals"]["impressions"] == 15000
     assert r["truth"]["orders"] == 2 and r["truth"]["tracked"] == 1 and r["truth"]["cost_per_tracked_order"] == 200.0
     assert r["countries"][0] == {"name": "AE", "clicks": 200, "results": 3} and r["placements"][0]["name"] == "TikTok"
+    names = [c["name"] for c in r["campaigns"]]
+    assert names[0] == "BYNAWI GCC Purchase Conversions" and r["campaigns"][0]["spend"] == 180.0 and names[1] == "promote_1794"
     assert len(r["dates"]) == 7 and sum(r["series"]["results"]) in (0, 1, 2, 3)
     n = len(st.tiktok_api_http.calls)
     c.get("/ads/bynawi/tiktok?period=7", headers=h)

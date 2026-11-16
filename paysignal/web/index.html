@@ -3727,7 +3727,16 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
           return h("div", { class: "hbar" }, h("span", {}, label(x)), h("b", {}, x.results ? fmt.format(x.results) + " purchases" : fmt.format(x.clicks) + " clicks"),
             h("div", { class: "track" }, h("div", { style: "width:" + Math.max(3, Math.round(100 * val / max)) + "%" })));
         }) : h("span", { class: "sub", style: "font-size:13px" }, "Nothing yet."));
-      box.replaceChildren(head, kpis, river(stages), truth, verdict,
+      const STATUS = { CAMPAIGN_STATUS_ENABLE: "Active", CAMPAIGN_STATUS_DISABLE: "Off", CAMPAIGN_STATUS_DELETE: "Deleted",
+        CAMPAIGN_STATUS_BUDGET_EXCEED: "Budget used up", CAMPAIGN_STATUS_ADVERTISER_AUDIT: "In review", CAMPAIGN_STATUS_ADVERTISER_AUDIT_DENY: "Account not approved",
+        CAMPAIGN_STATUS_ADVERTISER_ACCOUNT_INVALID: "Account problem", CAMPAIGN_STATUS_ALL: "", ENABLE: "Active", DISABLE: "Off" };
+      const camps = (r.campaigns || []).filter((c) => c.on || c.spend > 0);
+      const campList = camps.length ? h("div", { style: "display:flex;flex-direction:column;gap:8px" }, h("b", { style: "font-size:14px" }, "Campaigns in your TikTok account"),
+        ...camps.map((c) => h("div", { class: "between", style: "gap:10px;font-size:14px;flex-wrap:wrap" },
+          h("span", { style: "min-width:0;overflow-wrap:anywhere" }, c.name),
+          h("span", { style: "display:flex;gap:8px;align-items:center" }, h("span", { class: "small" }, fmt.format(Math.round(c.spend)) + " " + cur + " · " + fmt.format(c.results) + " purchases"),
+            h("span", { class: "badge " + (c.on ? "b-measured" : "b-neutral") }, c.on ? (STATUS[c.status] || "Active") : "Off"))))) : null;
+      box.replaceChildren(head, kpis, river(stages), truth, verdict, ...(campList ? [campList] : []),
         h("div", { style: "display:flex;flex-direction:column;gap:6px" }, h("b", { style: "font-size:14px" }, "Purchases per day (TikTok)"), barsByDay(r.dates, r.series.results, r.series.spend, cur)),
         h("div", { class: "row", style: "gap:24px" },
           list("Where they're coming from", r.countries, (x) => flag(x.name) + "  " + countryName(x.name)),
