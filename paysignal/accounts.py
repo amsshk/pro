@@ -207,6 +207,9 @@ class AccountStore:
         if "pw_set" not in cols:                     # 0 = created by Google/Apple/Facebook, no password chosen yet
             self.db.execute("ALTER TABLE accounts ADD COLUMN pw_set INTEGER NOT NULL DEFAULT 1")
             self.db.commit()
+        if "viewer" not in {r[1] for r in self.db.execute("PRAGMA table_info(sessions)").fetchall()}:
+            self.db.execute("ALTER TABLE sessions ADD COLUMN viewer TEXT")   # admin looking at this business (view only)
+            self.db.commit()
 
     def has_password(self, client_id: str) -> bool:
         r = self.db.execute("SELECT pw_set FROM accounts WHERE client_id=?", (client_id,)).fetchone()
@@ -262,12 +265,15 @@ class AccountStore:
         self.db.commit()
         return cur.rowcount == 1
 
-    def new_session(self, client_id: str) -> str:
+    VIEW_SECONDS = 2 * 3600
+
+    def new_session(self, client_id: str, viewer: Optional[str] = None) -> str:
+        """A sign-in. With `viewer` (an admin's ID) it is a 2-hour, view-only look at this business."""
         token = secrets.token_urlsafe(32)
         now = time.time()
         self.db.execute("DELETE FROM sessions WHERE expires < ?", (now,))
-        self.db.execute("INSERT INTO sessions VALUES (?,?,?)",
-                        (token_hash(token), client_id, now + SESSION_DAYS * 86400))
+        self.db.execute("INSERT INTO sessions (token_hash, client_id, expires, viewer) VALUES (?,?,?,?)",
+                        (token_hash(token), client_id, now + (self.VIEW_SECONDS if viewer else SESSION_DAYS * 86400), viewer))
         self.db.commit()
         return token
 
@@ -277,6 +283,16 @@ class AccountStore:
         row = self.db.execute("SELECT client_id, expires FROM sessions WHERE token_hash=?",
                               (token_hash(token),)).fetchone()
         return row[0] if row and row[1] > time.time() else None
+
+    def session_viewer(self, token: str) -> Optional[str]:
+        """The admin behind a view-only session, else None."""
+        if not token:
+            return None
+        row = self.db.execute("SELECT viewer, expires FROM sessions WHERE token_hash=?", (token_hash(token),)).fetchone()
+        return row[0] if row and row[1] > time.time() else None
+
+    def businesses(self) -> list[tuple[str, str]]:
+        return self.db.execute("SELECT client_id, name FROM accounts ORDER BY name COLLATE NOCASE").fetchall()
 
     # ProAds' own invoices to this business: kept for tax/accounting law (they hold no customer data of the business)
     KEEP_ON_DELETE = {"proads_revenue"}

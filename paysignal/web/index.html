@@ -51,6 +51,7 @@ h2{margin:0;font-family:var(--head);font-size:20px;font-weight:600}
 .dlmenu{position:relative}.dlmenu>summary{list-style:none;cursor:pointer}.dlmenu>summary::-webkit-details-marker{display:none}
 .dlpop{position:absolute;right:0;top:calc(100% + 6px);z-index:20;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px;display:flex;flex-direction:column;gap:6px;min-width:240px;box-shadow:0 8px 24px rgba(0,0,0,.12)}
 .dlpop .btn{justify-content:flex-start;width:100%}
+.viewbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 14px;border-radius:12px;background:var(--win-bg);border:1px solid var(--win);font-size:14px}
 .card.done{padding:14px 18px;gap:0}
 .done-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .done-tick{flex:0 0 28px;height:28px;border-radius:50%;background:var(--win-bg);color:var(--win-txt);display:grid;place-items:center;font-weight:700;font-size:14px}
@@ -412,10 +413,49 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   }
   const cid = () => encodeURIComponent(session.client);
 
+  // ---------- admin: look at any registered business (view only) ----------
+  const AKEY = "proads.admin_session";
+  let adminSession = null, bizList = null;
+  try { adminSession = JSON.parse(sessionStorage.getItem(AKEY) || "null"); } catch (e) { adminSession = null; }
+  const saveSessions = () => { try { sessionStorage.setItem(SKEY, JSON.stringify(session)); if (adminSession) sessionStorage.setItem(AKEY, JSON.stringify(adminSession)); else sessionStorage.removeItem(AKEY); } catch (e) {} };
+  async function viewBusiness(clientId) {
+    const admin = adminSession || session;
+    if (adminSession && clientId === adminSession.client) return backToAdmin();
+    try {
+      const res = await fetch("/admin/" + encodeURIComponent(admin.client) + "/view-as/" + encodeURIComponent(clientId), { method: "POST", headers: { "X-API-Key": admin.key } });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || "Couldn't open that business");
+      if (adminSession && session.key !== adminSession.key) fetch("/auth/logout", { method: "POST", headers: { "X-API-Key": session.key } }).catch(() => {});
+      adminSession = admin; session = { client: d.client_id, key: d.token }; saveSessions();
+      status = await api("/status/" + cid());
+      toast("Viewing " + d.name + " (view only)");
+      go("#/home");
+    } catch (e) { if (e.message !== "signed out") toast(e.message); }
+  }
+  async function backToAdmin() {
+    if (!adminSession) return;
+    fetch("/auth/logout", { method: "POST", headers: { "X-API-Key": session.key } }).catch(() => {});
+    session = adminSession; adminSession = null; saveSessions();
+    status = await api("/status/" + cid());
+    go("#/admin");
+  }
+  function bizSwitcher() {
+    const admin = adminSession || (status && status.admin ? session : null);
+    if (!admin) return null;
+    const sel = h("select", { "aria-label": "Switch business", style: "margin-top:6px;width:100%;min-height:36px;font-size:13px", onchange: () => viewBusiness(sel.value) },
+      h("option", { value: admin.client }, "My account (admin)"));
+    const fill = () => { for (const b of bizList || []) sel.appendChild(h("option", { value: b.client_id }, b.name)); sel.value = session.client; };
+    if (bizList) fill();
+    else fetch("/admin/" + encodeURIComponent(admin.client) + "/businesses", { headers: { "X-API-Key": admin.key } })
+      .then((r) => r.ok ? r.json() : { businesses: [] }).then((d) => { bizList = d.businesses || []; fill(); }).catch(() => {});
+    return sel;
+  }
+
   function signOut(message) {
     if (session && !message) fetch("/auth/logout", { method: "POST", headers: { "X-API-Key": session.key } }).catch(() => {});
-    session = null; status = null;
-    try { sessionStorage.removeItem(SKEY); } catch (e) {}
+    if (adminSession && !message) fetch("/auth/logout", { method: "POST", headers: { "X-API-Key": adminSession.key } }).catch(() => {});
+    session = null; status = null; adminSession = null; bizList = null;
+    try { sessionStorage.removeItem(SKEY); sessionStorage.removeItem(AKEY); } catch (e) {}
     renderLogin(message);
   }
 
@@ -562,12 +602,14 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     return h("div", { class: "shell" },
       h("nav", { class: "side", "aria-label": "Main" },
         h("div", { class: "brand" }, logo(), "ProAds"),
-        h("div", { class: "biz" }, h("small", {}, "Business"), status ? status.name : session.client),
+        h("div", { class: "biz" }, h("small", {}, "Business"), status ? status.name : session.client, bizSwitcher()),
         h("div", { class: "navlinks" }, NAV.concat(status && status.admin ? [["#/admin", "Admin", "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"]] : [["#/billing", "Plan & billing", "M3 7h18v10H3zM3 11h18"]]).map(([href, label, d, tag]) =>
           h("a", { href, "aria-current": href === active ? "page" : null }, icon(d), label, tag ? h("span", { class: "navtag" }, tag) : null))),
         h("div", { class: "statusbox" }, statusRows(), themeToggle(),
           h("button", { class: "btn btn-ghost", style: "margin-top:6px", onclick: () => signOut() }, "Sign out"))),
-      h("main", {}, h("div", { class: "wrap" }, content)));
+      h("main", {}, h("div", { class: "wrap" }, status && status.viewer ? [h("div", { class: "viewbar", role: "status" },
+        h("span", {}, "You're viewing ", h("b", {}, status.name), " as admin · view only, nothing can be changed"),
+        h("button", { class: "btn btn-primary", type: "button", onclick: backToAdmin }, "Back to my account"))].concat(content) : content)));
   }
   function themeToggle() {
     const sun = "M12 4V2M12 22v-2M4 12H2M22 12h-2M5.6 5.6 4.2 4.2M19.8 19.8l-1.4-1.4M5.6 18.4l-1.4 1.4M19.8 4.2l-1.4 1.4M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z";
@@ -1008,6 +1050,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
             h("td", {}, a.campaigns ? fmt.format(a.campaigns) + (a.live_campaigns ? " (" + a.live_campaigns + " live)" : "") : "–"),
             h("td", {}, a.last_data ? when(a.last_data) : "–"),
             h("td", {}, h("div", { style: "display:flex;gap:6px;justify-content:flex-end" },
+              h("button", { class: "btn btn-primary", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => viewBusiness(a.client_id) }, "Open"),
               h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => makeLink(a) }, "Reset link"), delButton(a))))))))
           : h("p", { class: "sub", style: "margin:0" }, "No one has signed up yet. Share pro.ezdevsoft.net or start your first ad.")));
   }

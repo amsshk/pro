@@ -330,6 +330,8 @@ class App:
         expected = cfg.get("api_key", "")
         # a valid key or sign-in always works: someone spamming wrong keys can't lock the real owner out
         if given and self.accounts.session_client(given) == client_id:
+            if request.method not in ("GET", "HEAD", "OPTIONS") and self.accounts.session_viewer(given):
+                abort(403, "You're viewing this business as admin, so it's view only. Switch back to your account to make changes.")
             return
         if expected and given and hmac.compare_digest(expected, given):
             return
@@ -3438,6 +3440,28 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         log.info("admin %s added company %s (moved %s)", admin_id, cid, moved)
         return {"client_id": cid, "moved": moved, "link": reset_link(token), "expires_in_minutes": 60}
 
+    @flask.get("/admin/<admin_id>/businesses")
+    def admin_businesses(admin_id):
+        """Every registered business, for the admin's business switcher."""
+        require_admin(admin_id)
+        with state.lock:
+            rows = state.accounts.businesses()
+        return {"businesses": [{"client_id": c, "name": n} for c, n in rows if not is_admin(c)]}
+
+    @flask.post("/admin/<admin_id>/view-as/<client_id>")
+    def admin_view_as(admin_id, client_id):
+        """A 2-hour, view-only sign-in to a registered business, so the admin can look around as they see it."""
+        require_admin(admin_id)
+        if state.accounts.session_viewer(request.headers.get("X-API-Key", "")):
+            abort(403, "Switch back to your own account first.")
+        if is_admin(client_id) or not state.accounts.get(client_id):
+            abort(404, "No such business")
+        with state.lock:
+            token = state.accounts.new_session(client_id, viewer=admin_id)
+            name = state.config(client_id).get("name", client_id)
+        log.info("admin %s opened %s (view only)", admin_id, client_id)
+        return {"client_id": client_id, "name": name, "token": token}
+
     @flask.post("/admin/<admin_id>/reset-link/<client_id>")
     def admin_reset_link(admin_id, client_id):
         """A one-hour reset link the admin can send by WhatsApp when email isn't set up."""
@@ -3501,6 +3525,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             "instagram_why": "" if ig_s.get("instagram_id") or not ig_s else
                              state.instagram_lookup(client_id, ig_s).get("why", ""),
             "admin": is_admin(client_id),
+            "viewer": state.accounts.session_viewer(request.headers.get("X-API-Key", "")),
             "currency": cfg.get("currency", "AED"),
             "website": cfg.get("website", ""),
             "connections": {

@@ -130,3 +130,23 @@ def test_admin_adds_a_company_and_moves_own_data_into_it(app):
     assert d["has_data"] and d["metrics"][0]["value"] == 150
     acc = c.get("/admin/pro/accounts", headers=ADMIN).json["accounts"]
     assert acc[0]["name"] == "888 Clinic" and acc[0]["orders"] == 2
+
+
+def test_admin_views_a_business_read_only(app):
+    c = app.test_client()
+    tok = c.post("/auth/signup", json=ACCT).json["token"]
+    biz = c.get("/admin/pro/businesses", headers=ADMIN).json["businesses"]
+    assert biz == [{"client_id": "glow-clinic", "name": "Glow Clinic"}]
+    assert c.post("/admin/glow-clinic/view-as/pro", headers={"X-API-Key": tok}).status_code == 403   # owners can't
+    assert c.post("/admin/pro/view-as/nobody", headers=ADMIN).status_code == 404
+    r = c.post("/admin/pro/view-as/glow-clinic", headers=ADMIN).json
+    v = {"X-API-Key": r["token"]}
+    st = c.get("/status/glow-clinic", headers=v).json
+    assert st["viewer"] == "pro" and not st["admin"] and st["name"] == "Glow Clinic"
+    assert c.get("/dashboard/glow-clinic", headers=v).status_code == 200
+    w = c.post("/import/glow-clinic", data="id,date,amount,currency\n1,2026-10-01,100,AED\n", headers=v)
+    assert w.status_code == 403 and "view only" in w.json["error"]
+    assert c.get("/status/pro", headers=v).status_code == 401                # the view token opens only that business
+    assert c.post("/admin/glow-clinic/view-as/glow-clinic", headers=v).status_code in (403, 404)
+    assert c.get("/status/glow-clinic", headers={"X-API-Key": tok}).json["viewer"] is None
+    assert c.post("/import/glow-clinic", data="id,date,amount,currency\n1,2026-10-01,100,AED\n", headers={"X-API-Key": tok}).status_code == 200
