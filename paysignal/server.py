@@ -1473,6 +1473,66 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         state.ads_cache[(client_id, period)] = (time.time(), rep)
         return rep
 
+    PLACEMENT_NAMES = {"PLACEMENT_TIKTOK": "TikTok", "PLACEMENT_PANGLE": "Pangle", "PLACEMENT_GLOBAL_APP_BUNDLE": "Global App Bundle",
+                       "PLACEMENT_TOPBUZZ": "TopBuzz", "PLACEMENT_LEMON8": "Lemon8"}
+
+    @flask.get("/ads/<client_id>/tiktok")
+    def tiktok_ads_live(client_id):
+        """The TikTok ad account, live: spend → views → clicks → what TikTok counts → what was really paid (ProAds)."""
+        state.require_key(client_id)
+        period = request.args.get("period", "30")
+        days_n = {"today": 1, "7": 7, "30": 30, "90": 90, "365": 365}.get(period, 30)
+        with state.lock:
+            row = state.tiktok_ads.get(client_id)
+        if not row or not row["advertiser_id"]:
+            return {"connected": False}
+        hit = state.ads_cache.get((client_id, "tt", period))
+        if hit and time.time() - hit[0] < 600 and not request.args.get("fresh"):
+            return hit[1]
+        today = datetime.now(timezone.utc).date()
+        start = today - timedelta(days=days_n - 1)
+        try:
+            live = tiktok_api.live_summary(tt_http(), tt_token(client_id, row), row["advertiser_id"], start.isoformat(), today.isoformat())
+        except tiktok_api.TikTokAPIError as e:
+            return {"connected": True, "error": str(e)}
+        except Exception as e:
+            return {"connected": True, "error": f"Couldn't reach TikTok ({type(e).__name__}). Try again in a minute."}
+        dates = [(start + timedelta(days=i)).isoformat() for i in range(days_n)]
+        tot = {"spend": 0.0, "impressions": 0, "clicks": 0, "results": 0}
+        for d in live["days"].values():
+            for k in tot:
+                tot[k] += d[k]
+        cur = (row["currency"] or state.config(client_id).get("currency", "AED")).upper()
+        with state.lock:                                  # ProAds' own truth: verified paid orders in the same days
+            eng = state.engine(client_id)
+            orders = tracked = 0
+            revenue = refunds = 0.0
+            for p in eng.store.purchases(client_id):
+                if not (start <= p.occurred_at.date() <= today):
+                    continue
+                ref = eng.store.refunded_amount(client_id, p.external_id)
+                if ref >= p.amount - 0.005:
+                    continue
+                orders += 1
+                revenue += p.amount
+                refunds += ref
+                if p.ttclid or ((p.utm_source or "").lower() == "tiktok" and (p.utm_medium or "").lower() == "paid"):
+                    tracked += 1
+        out = {"connected": True, "currency": cur, "period": period, "dates": dates,
+               "totals": {**{k: (round(v, 2) if k == "spend" else v) for k, v in tot.items()},
+                          "ctr": round(tot["clicks"] / tot["impressions"], 4) if tot["impressions"] else 0,
+                          "cost_per_result": round(tot["spend"] / tot["results"], 2) if tot["results"] else None},
+               "series": {"results": [live["days"].get(d, {}).get("results", 0) for d in dates],
+                          "spend": [round(live["days"].get(d, {}).get("spend", 0), 2) for d in dates]},
+               "truth": {"orders": orders, "tracked": tracked, "revenue": round(revenue - refunds, 2),
+                         "currency": state.config(client_id).get("currency", "AED"),
+                         "cost_per_tracked_order": round(tot["spend"] / tracked, 2) if tracked and tot["spend"] else None},
+               "countries": live["countries"],
+               "placements": [{**x, "name": PLACEMENT_NAMES.get(x["name"], x["name"].replace("PLACEMENT_", "").title())} for x in live["placements"]],
+               "updated_at": int(time.time())}
+        state.ads_cache[(client_id, "tt", period)] = (time.time(), out)
+        return out
+
     # ---------------- Profit engines: Zero-Waste Budget + Ad Autopsy ----------------
     def economics_hints(client_id) -> dict:
         """Numbers ProAds already knows from the sales history, to prefill the form."""

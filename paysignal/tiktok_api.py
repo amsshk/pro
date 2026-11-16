@@ -140,6 +140,53 @@ def _report_piece(http, token: str, advertiser_id: str, start: str, end: str) ->
     return [r for r in out if r["ad_id"] and r["date"]]
 
 
+def live_summary(http, token: str, advertiser_id: str, start: str, end: str) -> dict:
+    """The whole ad account for a period: totals and per day (spend, impressions, clicks, results), plus where results
+    came from (country, placement). Breakdowns are best effort: TikTok refusing one never hides the totals."""
+    from datetime import date, timedelta
+
+    def num(m, k):
+        try:
+            return float(m.get(k) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+    days, a, b = {}, date.fromisoformat(start), date.fromisoformat(end)
+    while a <= b:
+        piece_end = min(b, a + timedelta(days=MAX_SPAN_DAYS - 1))
+        d = _get(http, token, "report/integrated/get", {
+            "advertiser_id": advertiser_id, "report_type": "BASIC", "data_level": "AUCTION_ADVERTISER",
+            "dimensions": ["advertiser_id", "stat_time_day"], "metrics": ["spend", "impressions", "clicks", "conversion"],
+            "start_date": a.isoformat(), "end_date": piece_end.isoformat(), "page_size": 1000}, "reading ad results")
+        for row in d.get("list") or []:
+            dim, m = row.get("dimensions") or {}, row.get("metrics") or {}
+            day = str(dim.get("stat_time_day") or "")[:10]
+            if day:
+                days[day] = {"spend": num(m, "spend"), "impressions": int(num(m, "impressions")), "clicks": int(num(m, "clicks")),
+                             "results": int(num(m, "conversion"))}
+        a = piece_end + timedelta(days=1)
+
+    def breakdown(dim):
+        for dims in ([dim], ["advertiser_id", dim]):
+            try:
+                d = _get(http, token, "report/integrated/get", {
+                    "advertiser_id": advertiser_id, "report_type": "AUDIENCE", "data_level": "AUCTION_ADVERTISER",
+                    "dimensions": dims, "metrics": ["spend", "clicks", "conversion"], "start_date": start, "end_date": end,
+                    "page_size": 100}, "reading where results came from")
+            except TikTokAPIError:
+                continue
+            out = {}
+            for row in d.get("list") or []:
+                name = str((row.get("dimensions") or {}).get(dim) or "").strip()
+                m = row.get("metrics") or {}
+                if name and name not in ("-", "None"):
+                    o = out.setdefault(name, {"name": name, "clicks": 0, "results": 0})
+                    o["clicks"] += int(num(m, "clicks"))
+                    o["results"] += int(num(m, "conversion"))
+            return sorted(out.values(), key=lambda x: (-x["results"], -x["clicks"]))[:6]
+        return []
+    return {"days": days, "countries": breakdown("country_code"), "placements": breakdown("placement")}
+
+
 def set_campaign_status(http, token: str, advertiser_id: str, campaign_id: str, enable: bool) -> None:
     _post(http, token, "campaign/status/update", {"advertiser_id": advertiser_id, "campaign_ids": [campaign_id],
                                                   "operation_status": "ENABLE" if enable else "DISABLE"},

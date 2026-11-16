@@ -3561,6 +3561,62 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   }
 
   async function adsSection(period) {
+    const ta = status && status.connections && status.connections.tiktok_ads;
+    if (ta && ta.connected && ta.advertiser_id) {          // TikTok account connected: its live card, plus Meta's once it has campaigns
+      const meta = await metaAdsSection(period, true);
+      return h("div", { style: "display:contents" }, tiktokAdsSection(period), meta);
+    }
+    return metaAdsSection(period, false);
+  }
+
+  function tiktokAdsSection(period) {
+    const box = h("section", { class: "card", "aria-labelledby": "tt-h" },
+      h("div", { class: "between" }, h("h2", { id: "tt-h" }, "TikTok ads performance"), h("span", { class: "badge b-neutral" }, "Live from TikTok")), loading("Reading your TikTok ad account…"));
+    (async () => {
+      let r;
+      try { r = await api("/ads/" + cid() + "/tiktok?period=" + encodeURIComponent(period)); }
+      catch (e) { if (e.message !== "signed out") box.replaceChildren(h("h2", { id: "tt-h" }, "TikTok ads performance"), errorCard(e.message)); return; }
+      const head = h("div", { class: "between" }, h("h2", { id: "tt-h" }, "TikTok ads performance"), h("span", { class: "badge b-measured" }, "Live from TikTok"));
+      if (r.error) { box.replaceChildren(head, errorCard(r.error)); return; }
+      const t = r.totals, cur = r.currency, tr = r.truth || {};
+      const kpis = h("div", { class: "adkpis" },
+        [["Spent", fmt.format(t.spend) + " " + cur], ["Views", fmt.format(t.impressions)], ["Clicks", fmt.format(t.clicks) + " · " + (t.ctr * 100).toFixed(1) + "%"],
+         ["TikTok says purchases", fmt.format(t.results)],
+         tr.tracked ? ["Cost per TikTok order", fmt.format(Math.round(t.spend / tr.tracked)) + " " + cur] : ["Cost per purchase (TikTok's count)", t.cost_per_result ? fmt.format(t.cost_per_result) + " " + cur : "–"]]
+          .map(([a, b]) => h("div", {}, h("span", {}, a), h("b", {}, b))));
+      const stages = [
+        { label: "Spent", value: t.spend, fmt: fmt.format(Math.round(t.spend)), sub: cur },
+        { label: "Views", value: t.impressions, fmt: fmt.format(t.impressions) },
+        { label: "Clicked", value: t.clicks, fmt: fmt.format(t.clicks) },
+        { label: "TikTok says", value: t.results, fmt: fmt.format(t.results), sub: "purchases" },
+        { label: "Really paid", value: tr.orders, fmt: fmt.format(tr.orders || 0), sub: "verified orders", tone: tr.orders ? "win" : null },
+        { label: "Money kept", value: tr.revenue, fmt: fmt.format(Math.round(tr.revenue || 0)), sub: tr.currency, tone: tr.revenue > 0 ? "win" : null }];
+      const truth = h("div", { class: "truth" },
+        h("div", { class: "side" }, h("span", { class: "sub", style: "font-size:13px" }, "TikTok says"), h("span", { class: "big" }, fmt.format(t.results)), h("span", { class: "sub", style: "font-size:13px" }, "purchases")),
+        h("div", { class: "vs" }, "vs"),
+        h("div", { class: "side" }, h("span", { class: "sub", style: "font-size:13px" }, "ProAds confirmed"),
+          h("span", { class: "big", style: "color:#15803D" }, fmt.format(tr.orders || 0)),
+          h("span", { class: "sub", style: "font-size:13px" }, "paid orders, all channels · " + fmt.format(tr.tracked || 0) + " tracked to TikTok")));
+      const verdict = h("p", { style: "margin:0;font-size:14px" }, t.spend === 0 ? "No TikTok spend in this period yet. Once the campaign runs, this fills in by itself."
+        : t.results === 0 && !tr.orders ? "No purchases yet. Give a new campaign 3–4 days before judging."
+        : "Judge TikTok on the paid orders ProAds confirms, not only on TikTok's count. " + (tr.tracked ? "" : "Use your ProAds TikTok tracking link in the ads to tie each paid order to its ad."));
+      const list = (title, rows, label) => h("div", { style: "flex:1 1 300px;display:flex;flex-direction:column;gap:12px;min-width:0" }, h("b", {}, title),
+        rows.length ? rows.map((x) => {
+          const byRes = rows.some((y) => y.results), val = byRes ? x.results : x.clicks, max = Math.max(...rows.map((y) => byRes ? y.results : y.clicks), 1);
+          return h("div", { class: "hbar" }, h("span", {}, label(x)), h("b", {}, x.results ? fmt.format(x.results) + " purchases" : fmt.format(x.clicks) + " clicks"),
+            h("div", { class: "track" }, h("div", { style: "width:" + Math.max(3, Math.round(100 * val / max)) + "%" })));
+        }) : h("span", { class: "sub", style: "font-size:13px" }, "Nothing yet."));
+      box.replaceChildren(head, kpis, river(stages), truth, verdict,
+        h("div", { style: "display:flex;flex-direction:column;gap:6px" }, h("b", { style: "font-size:14px" }, "Purchases per day (TikTok)"), barsByDay(r.dates, r.series.results, r.series.spend, cur)),
+        h("div", { class: "row", style: "gap:24px" },
+          list("Where they're coming from", r.countries, (x) => flag(x.name) + "  " + countryName(x.name)),
+          list("Where they saw your ad", r.placements, (x) => x.name)),
+        h("span", { class: "sub", style: "font-size:12px" }, "Updated " + new Date(r.updated_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + " · refreshes every 10 minutes"));
+    })();
+    return box;
+  }
+
+  async function metaAdsSection(period, hideIfEmpty) {
     const box = h("section", { class: "card", "aria-labelledby": "ads-h" },
       h("div", { class: "between" }, h("h2", { id: "ads-h" }, "Ads performance"), h("span", { class: "badge b-neutral" }, "Live from Meta")), loading("Reading your ads from Meta…"));
     (async () => {
@@ -3570,6 +3626,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       const head = h("div", { class: "between" }, h("h2", { id: "ads-h" }, "Ads performance"),
         h("span", { class: "badge b-measured" }, r.live ? r.live + " live · from Meta" : "From Meta"));
       if (!r.has_campaigns) {
+        if (hideIfEmpty) { box.style.display = "none"; return; }
         box.replaceChildren(head, h("p", { class: "sub", style: "margin:0" }, "No ads published yet. Build your first campaign and you'll see spend, results, where they come from, and what was really true."),
           h("a", { class: "btn btn-primary", href: "#/assistant", style: "align-self:flex-start" }, "Build a campaign"));
         return;
@@ -3603,7 +3660,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         : "Every result Meta reports is confirmed by ProAds" + (gap < 0 ? ", plus " + fmt.format(-gap) + " Meta missed." : "."));
       const list = (title, rows, label) => h("div", { style: "flex:1 1 300px;display:flex;flex-direction:column;gap:12px;min-width:0" }, h("b", {}, title),
         rows.length ? rows.map((x) => {
-          const val = x.results || x.clicks, max = Math.max(...rows.map((y) => y.results || y.clicks), 1);
+          const byRes = rows.some((y) => y.results), val = byRes ? x.results : x.clicks, max = Math.max(...rows.map((y) => byRes ? y.results : y.clicks), 1);
           return h("div", { class: "hbar" }, h("span", {}, label(x)), h("b", {}, x.results ? fmt.format(x.results) + " " + what : fmt.format(x.clicks) + " clicks"),
             h("div", { class: "track" }, h("div", { style: "width:" + Math.max(3, Math.round(100 * val / max)) + "%" })));
         }) : h("span", { class: "sub", style: "font-size:13px" }, "Nothing yet."));
