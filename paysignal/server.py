@@ -2587,10 +2587,14 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             page_ids = re.findall(r"\d{6,}", q) if re.search(r"facebook\.com|^\d{6,}$", q) else []
             country = (body.get("country") or "AE").strip().upper()[:2]
             ads, err = None, None
+            deadline = time.time() + 55                   # stay well inside the hosting's request limit
             for token in tokens:
+                left = deadline - time.time()
+                if left < 8:
+                    break
                 try:
                     ads = competitors.scan(state.ads_http, token, meta_ads.settings()["version"], query=q,
-                                           page_ids=page_ids or None, country=country)
+                                           page_ids=page_ids or None, country=country, timeout=min(25, left))
                     break
                 except competitors.ScanError as e:
                     err = e

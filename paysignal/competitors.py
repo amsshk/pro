@@ -25,7 +25,7 @@ class ScanError(RuntimeError):
 
 
 def scan(http, token: str, version: str, query: str = "", page_ids: Optional[list[str]] = None,
-         country: str = "AE", limit: int = 60) -> list[dict]:
+         country: str = "AE", limit: int = 40, timeout: float = 25) -> list[dict]:
     """Active ads from the Ad Library for a search term or Page IDs, newest data first."""
     params = {"access_token": token, "fields": FIELDS, "ad_active_status": "ACTIVE", "ad_type": "ALL",
               "ad_reached_countries": json.dumps([country.upper()]), "limit": min(limit, 100)}
@@ -39,8 +39,11 @@ def scan(http, token: str, version: str, query: str = "", page_ids: Optional[lis
         import requests
         http = requests
     try:
-        r = http.get(f"https://graph.facebook.com/{version}/ads_archive", params=params, timeout=40)
+        r = http.get(f"https://graph.facebook.com/{version}/ads_archive", params=params, timeout=timeout)
     except Exception as e:
+        if "timeout" in type(e).__name__.lower():
+            raise ScanError("Meta's Ad Library took too long to answer. Try again, or paste their Facebook Page link "
+                            "instead of a name (it's much faster).") from e
         raise ScanError(f"couldn't reach Meta's Ad Library ({type(e).__name__}). Try again in a minute.") from e
     try:
         body = r.json()
