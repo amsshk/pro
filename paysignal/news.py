@@ -140,8 +140,15 @@ class NewsStore:
         self.db.execute("DELETE FROM news_posts WHERE id=?", (pid,))
         self.db.commit()
 
+    OLD_ENDING = "## Try it with ProAds\nUse the **Add ProAds on Google** button at the top of this page, then you will see ProAds articles more often in your Google results."
+
     def seed(self) -> None:
         """The first articles, once, so the section is never empty."""
+        for pid, body in self.db.execute("SELECT id, body FROM news_posts WHERE body LIKE '%## Try it with ProAds%'").fetchall():
+            if self.OLD_ENDING in body:                 # the button it pointed to is hidden until Google lists the site
+                self.db.execute("UPDATE news_posts SET body=? WHERE id=?", (body.replace(self.OLD_ENDING, SEED[2][2].split("## Eligibility takes time")[0].rstrip() and
+                                "## Eligibility takes time" + SEED[2][2].split("## Eligibility takes time")[1]), pid))
+                self.db.commit()
         if self.db.execute("SELECT COUNT(*) FROM news_posts").fetchone()[0]:
             return
         for i, (title, summary, body) in enumerate(SEED):
