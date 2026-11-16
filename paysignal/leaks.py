@@ -130,7 +130,7 @@ def build_leaks(engine: Engine, currency: str, unpaid: list[tuple[str, float, st
             failed = sum(1 for _, _, s in recent if any(w in (s or "") for w in ("fail", "declin", "requires")))
             leaks.append({"key": "unpaid", "kind": "unpaid", "title": "Orders that were never paid",
                           "per_month": round(total / months, 2), "how": "up to",
-                          "evidence": f"{len(recent)} orders worth {fmt(total)} stopped before payment"
+                          "evidence": f"{len(recent)} order{'' if len(recent) == 1 else 's'} worth {fmt(total)} stopped before payment"
                                       + (f", {failed} of them failed payments" if failed else "") + ".",
                           "fix": "Message these customers the same day with a payment link; check that the payment "
                                  "methods people want (Apple Pay, cash on delivery) work on phones."})
