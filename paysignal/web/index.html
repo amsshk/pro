@@ -3094,6 +3094,33 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     const notes = h("input", { placeholder: "Optional: what you want to push (e.g. Discovery Box, Tabby)", "aria-label": "Notes", autocomplete: "off" });
     const go = h("button", { class: "btn btn-primary", type: "submit" }, "Build my plan");
     const out = h("div", { style: "display:flex;flex-direction:column;gap:14px" });
+    const meter = h("div", { style: "display:flex;gap:10px;align-items:center;flex-wrap:wrap" });
+    const pastBox = h("div", {});
+    const buy = async (btn) => {
+      btn.disabled = true;
+      try { location.href = (await api("/competitors/" + cid() + "/conquest/checkout", { method: "POST" })).url; }
+      catch (er) { if (er.message !== "signed out") toast(er.message); btn.disabled = false; }
+    };
+    const buyBtn = (a) => a.pay_available ? h("button", { class: "btn btn-primary", type: "button", onclick: (e) => buy(e.currentTarget) }, "Buy a plan · " + a.price + " " + a.currency) : null;
+    function drawAccess(a) {
+      const line = a.free ? "Free for you (admin)."
+        : a.premium ? (a.included_left + " of " + a.included + " Premium plans left this month" + (a.bought_left ? " · " + a.bought_left + " bought plan" + (a.bought_left > 1 ? "s" : "") + " left" : "") + ". Extra plans: " + a.price + " " + a.currency + " each.")
+        : a.bought_left ? a.bought_left + " plan" + (a.bought_left > 1 ? "s" : "") + " ready to build."
+        : "Each plan is " + a.price + " " + a.currency + ", paid once. Premium includes 3 a month.";
+      meter.replaceChildren(h("span", { class: "badge " + (a.can_build ? "b-measured" : "b-neutral") }, a.can_build ? "Ready" : a.price + " " + a.currency), h("span", { class: "small" }, line),
+        a.can_build || a.free ? null : buyBtn(a));
+      go.style.display = a.can_build ? "" : "none";
+      go.disabled = !a.can_build;
+    }
+    function drawPast(plans) {
+      pastBox.replaceChildren(...(plans.length ? [h("details", {}, h("summary", { style: "cursor:pointer;font-weight:600" }, "Your plans (" + plans.length + ")"),
+        h("div", { style: "display:flex;flex-direction:column;gap:6px;margin-top:8px" }, plans.map((x) => h("div", { class: "conn" },
+          h("div", { style: "display:flex;flex-direction:column;gap:2px;min-width:0" }, h("b", {}, x.competitors), h("span", { class: "small" }, new Date(x.at * 1000).toLocaleString())),
+          h("button", { class: "btn btn-ghost", type: "button", onclick: () => { show(x.result); out.scrollIntoView({ behavior: "smooth", block: "start" }); } }, "Open")))))] : []));
+    }
+    const refresh = () => api("/competitors/" + cid() + "/conquest").then((r) => { drawAccess(r.access); drawPast(r.plans); }).catch(() => {});
+    if (/[?&]bought=1/.test(location.hash)) toast("Payment received. Your plan is ready to build (it can take a few seconds to show).");
+    refresh();
     const list = (title, items) => items && items.length ? h("div", {}, h("b", {}, title), h("ul", { class: "list", style: "margin:6px 0 0" }, items.map((x) => h("li", {}, x)))) : null;
     const chips = (title, items) => items && items.length ? h("div", {}, h("b", {}, title),
       h("div", { style: "display:flex;gap:6px;flex-wrap:wrap;margin-top:6px" }, items.map((x) => h("span", { class: "badge b-neutral" }, x)))) : null;
@@ -3133,16 +3160,18 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         list("Keep your ad accounts safe", p.watch_out));
     }
     return h("section", { class: "card", "aria-labelledby": "wc-h", style: "background: var(--violet-card); border-color: var(--violet-edge)" },
-      h("h2", { id: "wc-h" }, "Win their customers"),
+      h("div", { class: "between" }, h("h2", { id: "wc-h" }, "Win their customers"), h("span", { class: "badge b-measured" }, "Add-on")),
       h("p", { class: "sub", style: "margin:0" }, "Your competitors pay to make people curious. This plan catches those people when they compare: the searches to bid on, who to target on TikTok and Meta, 3 honest comparison videos and a creator brief, built from what really sells for you. Never their name, logo or claims in your ads."),
       h("form", { style: "display:flex;flex-direction:column;gap:8px", onsubmit: async (e) => {
         e.preventDefault(); if (!names.value.trim()) { toast("Type at least one competitor name"); return; }
         go.disabled = true; out.replaceChildren(loading("Building your plan… about a minute"));
         try { show(await api("/competitors/" + cid() + "/conquest", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ competitors: names.value, notes: notes.value, ads: (getAds && getAds()) || [] }) })); }
-        catch (er) { if (er.message !== "signed out") out.replaceChildren(errorCard(er.message)); }
-        go.disabled = false;
-      } }, names, notes, go), out);
+        catch (er) {
+          if (er.message !== "signed out") out.replaceChildren(errorCard(er.message), ...(er.data && er.data.needs_purchase ? [buyBtn(er.data)] : []));
+        }
+        go.disabled = false; refresh();
+      } }, names, notes, meter, go), out, pastBox);
   }
 
   async function viewCompetitors() {
@@ -3162,7 +3191,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
             h("li", {}, "The AI estimates what they're doing right and wrong, then builds you an original campaign to compete"),
             h("li", {}, "Publish it to your ad account in one click, like any other campaign"),
             h("li", {}, h("b", {}, "Win their customers: "), "the searches to bid on, TikTok and Meta targeting, 3 honest comparison video scripts and a creator brief, built from your own sales")),
-          h("a", { class: "btn btn-primary", href: "#/billing", style: "align-self:flex-start" }, "See Premium"))]));
+          h("a", { class: "btn btn-primary", href: "#/billing", style: "align-self:flex-start" }, "See Premium")), conquestCard(null)]));
       return;
     }
     let found = [];

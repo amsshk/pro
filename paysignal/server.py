@@ -168,6 +168,7 @@ class App:
         self.windsor_http = None               # set in tests
         self.tiktok_ads = tiktok_api.TikTokAdsStore(self.store.db)
         self.news = news.NewsStore(self.store.db)
+        self.conquest = competitors.ConquestStore(self.store.db)
         self.store.db.execute("CREATE TABLE IF NOT EXISTS merged_payments (client_id TEXT NOT NULL, source TEXT NOT NULL,"
                               " external_id TEXT NOT NULL, kept_source TEXT NOT NULL, kept_id TEXT NOT NULL, at INTEGER NOT NULL,"
                               " PRIMARY KEY (client_id, source, external_id))")
@@ -2543,8 +2544,12 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         """Win the customers competitors' ads warm up: keywords, targeting, honest comparison scripts and a creator
         brief, built from the business's own sales facts. Nothing is published; it's a plan to use."""
         state.require_key(client_id)
-        require_premium(client_id)
         body = request.get_json(silent=True) or {}
+        pay = conquest_access(client_id)
+        if not pay["can_build"]:
+            resp = jsonify({"error": f"Each plan is {pay['price']:g} AED. Buy one to build it.", "needs_purchase": True, **pay})
+            resp.status_code = 402
+            abort(resp)
         names = [n.strip()[:60] for n in re.split(r"[,\n]", str(body.get("competitors", ""))) if n.strip()][:5]
         if not names:
             abort(400, "Type one or more competitor names, separated by commas.")
@@ -2571,7 +2576,47 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         country = (str(body.get("country") or "AE").strip().upper() or "AE")[:2]
         out["libraries"] = [competitors.library_links(n, country) for n in names]
         out["facts"] = facts
+        with state.lock:
+            out["plan_id"] = state.conquest.save(client_id, names, {k: out[k] for k in ("plan", "libraries")}, pay["next"])
+        out["access"] = conquest_access(client_id)
         return out
+
+    def conquest_access(client_id: str) -> dict:
+        """Who pays for the next plan: free for ProAds/admins, included for Premium (a few a month), else a bought one."""
+        prices = competitors.conquest_prices()
+        free = is_admin(client_id) or bool(state.accounts.session_viewer(request.headers.get("X-API-Key", "")))
+        with state.lock:
+            premium = state.billing.tier(client_id) == "premium"
+            used = state.conquest.included_used(client_id)
+            bought = state.conquest.bought_left(client_id)
+        included_left = max(prices["included"] - used, 0) if premium else 0
+        nxt = "free" if free else "included" if included_left else "bought" if bought > 0 else None
+        return {"can_build": nxt is not None, "next": nxt, "premium": premium, "included": prices["included"] if premium else 0,
+                "included_left": included_left, "bought_left": bought, "free": free,
+                "price": prices["premium_price"] if premium else prices["price"], "currency": prices["currency"],
+                "pay_available": billing.available()}
+
+    @flask.get("/competitors/<client_id>/conquest")
+    def conquest_status(client_id):
+        state.require_key(client_id)
+        with state.lock:
+            plans = state.conquest.plans(client_id)
+        return {"access": conquest_access(client_id), "plans": plans}
+
+    @flask.post("/competitors/<client_id>/conquest/checkout")
+    def conquest_buy(client_id):
+        """Stripe's payment page for one plan; the webhook adds the plan after payment."""
+        state.require_key(client_id)
+        stripe = stripe_api()
+        acc = conquest_access(client_id)
+        with state.lock:
+            b = state.billing.get(client_id) or {}
+        acct = state.accounts.get(client_id) or {}
+        try:
+            url = competitors.conquest_checkout(stripe, client_id, acct.get("email", ""), b.get("customer_id"), public_base(), acc["price"])
+        except billing.BillingError as e:
+            abort(502, f"Stripe: {e}")
+        return {"url": url}
 
     @flask.post("/competitors/<client_id>/counter")
     def competitors_counter(client_id):
@@ -3945,6 +3990,14 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             event = json.loads(payload)
         except ValueError:
             abort(400, "bad JSON")
+        obj0 = (event.get("data") or {}).get("object") or {}
+        if event.get("type") == "checkout.session.completed" and obj0.get("mode") == "payment" \
+                and (obj0.get("metadata") or {}).get("kind") == "conquest_plan" and obj0.get("payment_status") == "paid":
+            ccid = obj0.get("client_reference_id") or (obj0.get("metadata") or {}).get("client_id")
+            if ccid and state.known(ccid):
+                with state.lock:
+                    if state.conquest.credit(ccid, obj0.get("id") or f"s:{time.time_ns()}"):
+                        log.info("conquest plan bought by %s", ccid)
         with state.lock:
             cid = state.billing.handle(event, state.known)
         if cid and event.get("type") == "checkout.session.completed":
@@ -3995,7 +4048,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             return None
         with state.lock:
             sub_details = inv.get("subscription_details") or ((inv.get("parent") or {}).get("subscription_details")) or {}
-            cid = state.billing.by_customer(inv.get("customer") or "") or (sub_details.get("metadata") or {}).get("client_id")
+            cid = state.billing.by_customer(inv.get("customer") or "") or (sub_details.get("metadata") or {}).get("client_id") \
+                or (inv.get("metadata") or {}).get("client_id")
             if not cid or is_admin(cid) or not state.known(cid) or state.revenue.get(inv_id):
                 return None
             currency = (inv.get("currency") or "").upper()
@@ -4003,6 +4057,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             meta = inv.get("metadata") or {}
             if meta.get("kind") == "ad_spend_fee":
                 kind = "fee"
+            elif meta.get("kind") == "conquest_plan":
+                kind = "addon"
             elif inv.get("billing_reason") in ("subscription_create", "subscription_cycle", "subscription_update",
                                                "subscription") or inv.get("subscription") or sub_details.get("subscription"):
                 kind = "renewal" if state.revenue.has_first(cid) else "first"

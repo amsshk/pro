@@ -198,3 +198,45 @@ def test_fee_in_another_invoice_currency_records_the_rate(app):
     from paysignal.settlement import fee_of
     assert fp["invoice_currency"] == "USD" and fp["fee_minor"] == fee_of(round(6000.50 * 0.27, 2), 5)
     assert fp["detail"]["fx"][0]["rate"] == 0.27 and fp["detail"]["fx"][0]["from"] == "AED"
+
+
+def test_buy_win_their_customers_plans(app):
+    import sys
+    sys.path.insert(0, "tests")
+    from test_ai import Session, ok
+    from paysignal.ai import MetaAI
+    st = app.extensions["paysignal"]
+    plan_json = {"edges": [], "search_keywords": [], "tiktok_targeting": {}, "meta_interests": [], "scripts": [],
+                 "creator_brief": {}, "watch_out": []}
+    st.ai = MetaAI(api_key="k", session=Session(lambda m, b: ok(json.dumps(plan_json))))
+    c = app.test_client()
+    H = {"X-API-Key": c.post("/auth/signup", json=ACCT).json["token"]}
+    a = c.get("/competitors/glow-clinic/conquest", headers=H).json["access"]
+    assert not a["can_build"] and a["price"] == 149 and a["currency"] == "AED"
+    r = c.post("/competitors/glow-clinic/conquest", json={"competitors": "Rival"}, headers=H)
+    assert r.status_code == 402 and r.json["needs_purchase"]
+    url = c.post("/competitors/glow-clinic/conquest/checkout", headers=H).json["url"]
+    data = st.stripe_http.posts[-1][1]
+    assert url.startswith("https://checkout.stripe.com/") and data["mode"] == "payment"
+    assert data["line_items[0][price_data][unit_amount]"] == "14900" and data["metadata[kind]"] == "conquest_plan"
+    paid = {"type": "checkout.session.completed", "data": {"object": {"id": "cs_conq_1", "mode": "payment", "payment_status": "paid",
+            "client_reference_id": "glow-clinic", "metadata": {"kind": "conquest_plan", "client_id": "glow-clinic"}}}}
+    assert signed(c, paid).status_code == 200
+    assert signed(c, paid).status_code == 200                      # Stripe retries: still one plan
+    assert c.get("/competitors/glow-clinic/conquest", headers=H).json["access"]["bought_left"] == 1
+    r = c.post("/competitors/glow-clinic/conquest", json={"competitors": "Rival"}, headers=H)
+    assert r.status_code == 200 and r.json["access"]["bought_left"] == 0 and r.json["plan_id"]
+    assert c.post("/competitors/glow-clinic/conquest", json={"competitors": "Rival"}, headers=H).status_code == 402
+    assert len(c.get("/competitors/glow-clinic/conquest", headers=H).json["plans"]) == 1
+    # Premium: 3 a month included, then 99 AED each
+    with st.lock:
+        st.billing.upsert("glow-clinic", status="active", tier="premium")
+    for i in range(3):
+        assert c.post("/competitors/glow-clinic/conquest", json={"competitors": "Rival"}, headers=H).status_code == 200
+    a = c.get("/competitors/glow-clinic/conquest", headers=H).json["access"]
+    assert a["included_left"] == 0 and not a["can_build"] and a["price"] == 99
+    inv = {"type": "invoice.paid", "data": {"object": {"id": "in_conq_1", "customer": "cus_new", "amount_paid": 14900, "currency": "aed",
+           "status": "paid", "metadata": {"kind": "conquest_plan", "client_id": "glow-clinic"}, "billing_reason": "manual"}}}
+    assert signed(c, inv).status_code == 200
+    with st.lock:
+        assert st.revenue.get("in_conq_1")["kind"] == "addon"

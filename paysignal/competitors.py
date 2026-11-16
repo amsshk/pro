@@ -8,6 +8,7 @@ so the client can also paste competitor ad texts by hand.
 from __future__ import annotations
 
 import json
+import time
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Optional
@@ -206,3 +207,74 @@ def conquest_plan(ai: MetaAI, names: list[str], facts: dict, ads: Optional[list[
         raise CampaignError(f"could not read the plan the model returned: {e}") from e
     out["scripts"] = (out.get("scripts") or [])[:3]
     return {"plan": out, "model": reply.model, "cost_usd": reply.cost_usd}
+
+
+# ---------------------------------------------------------------- paying for plans
+def conquest_prices() -> dict:
+    """AED. Premium includes a few plans a month; anyone can buy more, one at a time."""
+    import os
+
+    def num(k, d):
+        try:
+            return float(os.environ.get(k, "") or d)
+        except ValueError:
+            return d
+    return {"price": num("PROADS_CONQUEST_PRICE", 149), "premium_price": num("PROADS_CONQUEST_PREMIUM_PRICE", 99),
+            "included": int(num("PROADS_CONQUEST_INCLUDED", 3)), "currency": "AED"}
+
+
+class ConquestStore:
+    """Bought plans (credits, one per payment, idempotent by Stripe session) and every plan made."""
+
+    def __init__(self, db):
+        self.db = db
+        self.db.execute("CREATE TABLE IF NOT EXISTS conquest_credits (ref TEXT PRIMARY KEY, client_id TEXT NOT NULL,"
+                        " delta INTEGER NOT NULL, reason TEXT NOT NULL, at INTEGER NOT NULL)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS conquest_plans (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id TEXT NOT NULL,"
+                        " competitors TEXT NOT NULL, plan TEXT NOT NULL, paid_with TEXT NOT NULL, at INTEGER NOT NULL)")
+        self.db.commit()
+
+    def credit(self, client_id: str, ref: str, reason: str = "bought") -> bool:
+        cur = self.db.execute("INSERT OR IGNORE INTO conquest_credits VALUES (?,?,?,?,?)", (ref, client_id, 1, reason, int(time.time())))
+        self.db.commit()
+        return cur.rowcount == 1
+
+    def bought_left(self, client_id: str) -> int:
+        r = self.db.execute("SELECT COALESCE(SUM(delta),0) FROM conquest_credits WHERE client_id=?", (client_id,)).fetchone()
+        return int(r[0] or 0)
+
+    def included_used(self, client_id: str) -> int:
+        start = int(datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
+        r = self.db.execute("SELECT COUNT(*) FROM conquest_plans WHERE client_id=? AND paid_with='included' AND at>=?",
+                            (client_id, start)).fetchone()
+        return int(r[0] or 0)
+
+    def save(self, client_id: str, names: list[str], plan: dict, paid_with: str) -> int:
+        if paid_with == "bought":
+            self.db.execute("INSERT INTO conquest_credits VALUES (?,?,?,?,?)",
+                            (f"use:{client_id}:{time.time_ns()}", client_id, -1, "used", int(time.time())))
+        cur = self.db.execute("INSERT INTO conquest_plans (client_id, competitors, plan, paid_with, at) VALUES (?,?,?,?,?)",
+                              (client_id, ", ".join(names), json.dumps(plan, ensure_ascii=False), paid_with, int(time.time())))
+        self.db.commit()
+        return cur.lastrowid
+
+    def plans(self, client_id: str, limit: int = 30) -> list[dict]:
+        rows = self.db.execute("SELECT id, competitors, plan, paid_with, at FROM conquest_plans WHERE client_id=? ORDER BY id DESC LIMIT ?",
+                               (client_id, limit)).fetchall()
+        return [{"id": r[0], "competitors": r[1], "result": json.loads(r[2]), "paid_with": r[3], "at": r[4]} for r in rows]
+
+
+def conquest_checkout(stripe, client_id: str, email: str, customer_id: Optional[str], return_base: str, amount: float) -> str:
+    """Stripe's hosted page for one plan (cards, Apple Pay). An invoice is made so it lands in ProAds' revenue."""
+    data = {"mode": "payment", "line_items[0][quantity]": "1",
+            "line_items[0][price_data][currency]": "aed", "line_items[0][price_data][unit_amount]": str(int(round(amount * 100))),
+            "line_items[0][price_data][product_data][name]": "ProAds: Win their customers (1 plan)",
+            "success_url": return_base + "/app#/competitors?bought=1", "cancel_url": return_base + "/app#/competitors",
+            "client_reference_id": client_id, "metadata[client_id]": client_id, "metadata[kind]": "conquest_plan",
+            "invoice_creation[enabled]": "true", "invoice_creation[invoice_data][metadata][kind]": "conquest_plan",
+            "invoice_creation[invoice_data][metadata][client_id]": client_id}
+    if customer_id:
+        data["customer"] = customer_id
+    elif email:
+        data["customer_email"] = email
+    return stripe.post("checkout/sessions", data)["url"]
