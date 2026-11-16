@@ -223,7 +223,7 @@ def conquest_prices() -> dict:
             return float(os.environ.get(k, "") or d)
         except ValueError:
             return d
-    return {"price": num("PROADS_CONQUEST_PRICE", 149), "premium_price": num("PROADS_CONQUEST_PREMIUM_PRICE", 99),
+    return {"price": num("PROADS_CONQUEST_PRICE", 299), "premium_price": num("PROADS_CONQUEST_PREMIUM_PRICE", 99),
             "included": int(num("PROADS_CONQUEST_INCLUDED", 3)), "currency": "AED"}
 
 

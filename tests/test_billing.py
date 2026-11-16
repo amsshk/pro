@@ -212,13 +212,13 @@ def test_buy_win_their_customers_plans(app):
     c = app.test_client()
     H = {"X-API-Key": c.post("/auth/signup", json=ACCT).json["token"]}
     a = c.get("/competitors/glow-clinic/conquest", headers=H).json["access"]
-    assert not a["can_build"] and a["price"] == 149 and a["currency"] == "AED"
+    assert not a["can_build"] and a["price"] == 299 and a["currency"] == "AED"
     r = c.post("/competitors/glow-clinic/conquest", json={"competitors": "Rival"}, headers=H)
     assert r.status_code == 402 and r.json["needs_purchase"]
     url = c.post("/competitors/glow-clinic/conquest/checkout", headers=H).json["url"]
     data = st.stripe_http.posts[-1][1]
     assert url.startswith("https://checkout.stripe.com/") and data["mode"] == "payment"
-    assert data["line_items[0][price_data][unit_amount]"] == "14900" and data["metadata[kind]"] == "conquest_plan"
+    assert data["line_items[0][price_data][unit_amount]"] == "29900" and data["metadata[kind]"] == "conquest_plan"
     paid = {"type": "checkout.session.completed", "data": {"object": {"id": "cs_conq_1", "mode": "payment", "payment_status": "paid",
             "client_reference_id": "glow-clinic", "metadata": {"kind": "conquest_plan", "client_id": "glow-clinic"}}}}
     assert signed(c, paid).status_code == 200
@@ -235,7 +235,7 @@ def test_buy_win_their_customers_plans(app):
         assert c.post("/competitors/glow-clinic/conquest", json={"competitors": "Rival"}, headers=H).status_code == 200
     a = c.get("/competitors/glow-clinic/conquest", headers=H).json["access"]
     assert a["included_left"] == 0 and not a["can_build"] and a["price"] == 99
-    inv = {"type": "invoice.paid", "data": {"object": {"id": "in_conq_1", "customer": "cus_new", "amount_paid": 14900, "currency": "aed",
+    inv = {"type": "invoice.paid", "data": {"object": {"id": "in_conq_1", "customer": "cus_new", "amount_paid": 29900, "currency": "aed",
            "status": "paid", "metadata": {"kind": "conquest_plan", "client_id": "glow-clinic"}, "billing_reason": "manual"}}}
     assert signed(c, inv).status_code == 200
     with st.lock:
