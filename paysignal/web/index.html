@@ -48,6 +48,9 @@ h2{margin:0;font-family:var(--head);font-size:20px;font-weight:600}
 .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px;display:flex;flex-direction:column;gap:16px;min-width:0}
 .row{display:flex;flex-wrap:wrap;gap:24px}
 .row>.card{flex:1 1 420px}
+.dlmenu{position:relative}.dlmenu>summary{list-style:none;cursor:pointer}.dlmenu>summary::-webkit-details-marker{display:none}
+.dlpop{position:absolute;right:0;top:calc(100% + 6px);z-index:20;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px;display:flex;flex-direction:column;gap:6px;min-width:240px;box-shadow:0 8px 24px rgba(0,0,0,.12)}
+.dlpop .btn{justify-content:flex-start;width:100%}
 .card.done{padding:14px 18px;gap:0}
 .done-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .done-tick{flex:0 0 28px;height:28px;border-radius:50%;background:var(--win-bg);color:var(--win-txt);display:grid;place-items:center;font-weight:700;font-size:14px}
@@ -3339,9 +3342,26 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     const periods = h("div", { class: "periods", role: "group", "aria-label": "Time period" }, PERIOD_LABELS.map(([v, label]) =>
       h("button", { type: "button", "aria-pressed": v === homePeriod ? "true" : "false", onclick: () => {
         homePeriod = v; try { localStorage.setItem("proads.period", v); } catch (e) {} viewHome(); } }, label)));
+    const dl = async (fmt_, btn) => {
+      btn.disabled = true; const was = btn.textContent; btn.textContent = "Preparing…";
+      try {
+        const res = await fetch("/export/" + cid() + "?format=" + fmt_ + "&period=" + encodeURIComponent(homePeriod), { headers: { "X-API-Key": session.key } });
+        if (res.status === 401) { signOut("Your key was not accepted. Please sign in again."); return; }
+        if (!res.ok) { let m = "Couldn't make the report"; try { m = (await res.json()).error || m; } catch (e) {} throw new Error(m); }
+        const name = ((res.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/) || [])[1] || "proads-report." + fmt_;
+        const url = URL.createObjectURL(await res.blob());
+        const a = h("a", { href: url, download: name }); document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+      } catch (e) { toast(e.message); }
+      btn.disabled = false; btn.textContent = was;
+    };
+    const dlBtn = (fmt_, label) => h("button", { class: "btn btn-ghost", type: "button", onclick: (e) => dl(fmt_, e.currentTarget) }, label);
+    const download = h("details", { class: "dlmenu" }, h("summary", { class: "btn btn-ghost" }, "Download report"),
+      h("div", { class: "dlpop" }, dlBtn("pdf", "PDF report"), dlBtn("xlsx", "Excel (.xlsx)"), dlBtn("csv", "CSV (orders)")));
     root.replaceChildren(layout("#/home", [
-      h("header", { class: "between", style: "align-items:flex-end" },
-        h("div", {}, h("h1", {}, "Home"), h("p", { class: "sub" }, "Compared with the previous period")), periods),
+      h("header", { class: "between", style: "align-items:flex-end;flex-wrap:wrap;gap:12px" },
+        h("div", {}, h("h1", {}, "Home"), h("p", { class: "sub" }, "Compared with the previous period")),
+        h("div", { style: "display:flex;gap:10px;align-items:center;flex-wrap:wrap" }, periods, download)),
       body]));
     let d;
     try { d = await api("/dashboard/" + cid() + "?period=" + encodeURIComponent(homePeriod)); }

@@ -10,6 +10,7 @@ from .attribution import resolve
 from .engine import Engine
 from .identity import customer_key
 
+PLATFORM_NAMES = {"tiktok": "TikTok", "youtube": "YouTube", "whatsapp": "WhatsApp", "x": "X"}
 PERIODS = {"today": 1, "7": 7, "30": 30, "90": 90, "365": 365}
 
 
@@ -69,7 +70,7 @@ def build_dashboard(engine: Engine, period: str = "30", now: Optional[datetime] 
         if bucket is cur:
             touch = resolve(p, engine.promo_map)
             label = {"unattributed": "Direct / unknown"}.get(touch.kind) or \
-                f"{touch.platform.capitalize()} {'ads' if touch.kind == 'paid' else 'posts'}"
+                f"{PLATFORM_NAMES.get(touch.platform, touch.platform.capitalize())} {'ads' if touch.kind == 'paid' else 'posts'}"
             sources[label][0] += p.amount
             sources[label][1] += 1
             for it in p.items:

@@ -38,18 +38,18 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import urlencode
 
-from flask import Flask, abort, jsonify, redirect, request, send_from_directory
+from flask import Flask, Response, abort, jsonify, redirect, request, send_from_directory
 
 from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
-from . import growth, mailer, shopify_app, tiktok, tiktok_api, whatsapp, windsor
+from . import export, growth, mailer, shopify_app, tiktok, tiktok_api, whatsapp, windsor
 from .identity import hash_phone
 from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
-from .attribution import make_promo_code, tag_link
-from .dashboard import build_dashboard, _realized
+from .attribution import make_promo_code, resolve, tag_link
+from .dashboard import PLATFORM_NAMES, build_dashboard, _realized
 from .ads_report import build_report
 from .assistant import PROADS_PRODUCT, CampaignError, ask, build_campaign, business_context
 from . import autopilot, billing, buyers, competitors, engines, forecast, leaks, learning, meta_capi, proads_revenue, purchase_funnel, delivery, scaling, social, stripe_sync, media, signals, ledger, meta_ads, meta_connect, settlement
@@ -1032,7 +1032,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     def tiktok_results(client_id):
         """Per TikTok ad: spend (Windsor) next to verified paid orders and money kept (ProAds), with a verdict."""
         state.require_key(client_id)
-        days = max(1, min(int(request.args.get("days", "30") or 30), 365))
+        return tiktok_results_data(client_id, max(1, min(int(request.args.get("days", "30") or 30), 365)))
+
+    def tiktok_results_data(client_id: str, days: int) -> dict:
         since = datetime.now(timezone.utc) - timedelta(days=days)
         cur = (state.config(client_id).get("currency") or "AED").upper()
         with state.lock:
@@ -2017,6 +2019,48 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             out["setup"].append({"label": "Choose your plan", "done": plan, "href": "#/billing",
                                  "how": "Free trial, cancel any time"})
         return out
+
+    @flask.get("/export/<client_id>")
+    def export_report(client_id):
+        """Download the report for a period: ?format=csv (orders) | xlsx (every table) | pdf (ProAds-branded)."""
+        state.require_key(client_id)
+        fmt = request.args.get("format", "pdf")
+        if fmt not in ("csv", "xlsx", "pdf"):
+            abort(400, "format must be csv, xlsx or pdf")
+        period = request.args.get("period", "30")
+        cfg = state.config(client_id)
+        cur = cfg.get("currency", "AED")
+        with state.lock:
+            eng = state.engine(client_id)
+            dash = build_dashboard(eng, period, currency=cur)
+            orders = []
+            if dash.get("dates"):
+                first, last = dash["dates"][0], dash["dates"][-1]
+                for p in sorted(eng.store.purchases(client_id), key=lambda x: x.occurred_at):
+                    day = p.occurred_at.date().isoformat()
+                    if not first <= day <= last:
+                        continue
+                    refunded = eng.store.refunded_amount(client_id, p.external_id)
+                    t = resolve(p, eng.promo_map)
+                    came = "Direct / unknown" if t.kind == "unattributed" else \
+                        f"{PLATFORM_NAMES.get(t.platform, t.platform.capitalize())} {'ad' if t.kind == 'paid' else 'post'}" + (f" ({t.content})" if t.content not in ("-", "") else "")
+                    orders.append({"Date": p.occurred_at.strftime("%Y-%m-%d %H:%M"), "Order ID": p.external_id, "Came from": came,
+                                   "Products": "; ".join(f"{it.name or it.sku} x{it.quantity}" for it in p.items),
+                                   "Paid": round(p.amount, 2), "Refunded": round(refunded, 2), "Kept": round(max(p.amount - refunded, 0), 2),
+                                   "Currency": p.currency or cur, "Payment source": p.source})
+        data = {"business": cfg.get("name", client_id), "currency": cur, "dashboard": dash, "orders": orders}
+        if fmt != "csv" and (state.windsor.get(client_id) or state.tiktok_ads.get(client_id)):
+            try:
+                data["tiktok"] = tiktok_results_data(client_id, export.PERIOD_DAYS.get(period, 30))
+            except Exception:
+                log.warning("export: TikTok results unavailable for %s", client_id, exc_info=True)
+        body = {"csv": export.to_csv, "xlsx": export.to_xlsx, "pdf": export.to_pdf}[fmt](data)
+        mime = {"csv": "text/csv; charset=utf-8", "pdf": "application/pdf",
+                "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}[fmt]
+        resp = Response(body, mimetype=mime)
+        resp.headers["Content-Disposition"] = f'attachment; filename="{export.filename(data["business"], period, fmt)}"'
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
 
     @flask.get("/report/<client_id>")
     def report(client_id):
