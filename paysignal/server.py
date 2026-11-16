@@ -3326,6 +3326,14 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         return html_resp(f"User-agent: *\nAllow: /\nDisallow: /app\nDisallow: /admin/\n\nSitemap: {b}/sitemap.xml\nSitemap: {b}/news-sitemap.xml\n",
                          "text/plain; charset=utf-8", cache=3600)
 
+    @flask.get("/manifest.webmanifest")
+    def web_manifest():
+        """Lets phones add ProAds to the home screen and open it full screen, like an app."""
+        return html_resp(json.dumps({"name": "ProAds", "short_name": "ProAds", "start_url": "/app#/home", "scope": "/",
+                                     "display": "standalone", "background_color": "#FAFAF7", "theme_color": "#FAFAF7",
+                                     "icons": [{"src": "/proads-logo.png", "sizes": "512x512", "type": "image/png", "purpose": "any"}]}),
+                         "application/manifest+json", cache=86400)
+
     @flask.get("/proads-logo.png")
     def proads_logo():
         return send_from_directory(WEB_DIR, "proads-logo.png", max_age=86400)

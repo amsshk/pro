@@ -2,7 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="ProAds">
+<meta name="theme-color" content="#FAFAF7">
+<link rel="apple-touch-icon" href="/proads-logo.png">
+<link rel="icon" href="/proads-logo.png">
+<link rel="manifest" href="/manifest.webmanifest">
 <meta name="robots" content="noindex">
 <title>ProAds</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -48,7 +56,7 @@ h2{margin:0;font-family:var(--head);font-size:20px;font-weight:600}
 .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px;display:flex;flex-direction:column;gap:16px;min-width:0}
 .row{display:flex;flex-wrap:wrap;gap:24px}
 .row>.card{flex:1 1 420px}
-.dlmenu{position:relative}.dlmenu>summary{list-style:none;cursor:pointer}.dlmenu>summary::-webkit-details-marker{display:none}
+.dlmenu{position:relative}.dlmenu>summary{display:inline-flex;align-items:center;gap:8px}.dlmenu>summary{list-style:none;cursor:pointer}.dlmenu>summary::-webkit-details-marker{display:none}
 .dlpop{position:absolute;right:0;top:calc(100% + 6px);z-index:20;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px;display:flex;flex-direction:column;gap:6px;min-width:240px;box-shadow:0 8px 24px rgba(0,0,0,.12)}
 .dlpop .btn{justify-content:flex-start;width:100%}
 .viewbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 14px;border-radius:12px;background:var(--win-bg);border:1px solid var(--win);font-size:14px}
@@ -282,6 +290,58 @@ main{background:transparent}
 :root[data-theme="dark"] .themetog button[aria-pressed="true"]{background:#2E2E2E;color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
 :root[data-theme="dark"] .uchip[aria-pressed=true]{color:#fff}
 :root[data-theme="dark"] .navtag{background:#5E9400;color:#fff}
+
+/* ---------- iPhone: slim top bar, bottom tabs, "More" sheet ---------- */
+.topbar,.tabbar,.sheet,.sheet-bg,.a2hs{display:none}
+@media (max-width:720px){
+  nav.side{display:none}
+  .shell{display:block}
+  .topbar{display:flex;position:sticky;top:0;z-index:20;align-items:center;justify-content:space-between;gap:10px;
+    padding:calc(10px + env(safe-area-inset-top)) 16px 10px;background:rgba(250,250,247,.94);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  .topbar .brand{display:flex;align-items:center;gap:8px;font-family:var(--head);font-weight:700;font-size:18px;color:var(--text)}
+  .topbar .bizname{font-size:13px;color:var(--muted);max-width:52vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
+  main{padding:16px 16px calc(96px + env(safe-area-inset-bottom))}
+  .wrap{gap:18px}
+  h1{font-size:26px}
+  .tabbar{display:grid;grid-template-columns:repeat(5,1fr);position:fixed;left:0;right:0;bottom:0;z-index:30;
+    background:rgba(250,250,247,.96);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-top:1px solid var(--line);
+    padding:4px 2px calc(4px + env(safe-area-inset-bottom))}
+  .tabbar a,.tabbar button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:11px;font-weight:500;color:var(--muted);
+    text-decoration:none;background:none;border:0;padding:6px 0;min-height:54px;font-family:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent}
+  .tabbar svg{width:24px;height:24px}
+  .tabbar [aria-current="page"]{color:#4A7600;font-weight:700}
+  .sheet-bg.open{display:block;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:40}
+  .sheet.open{display:flex;flex-direction:column;position:fixed;left:0;right:0;bottom:0;z-index:41;background:var(--card);border-radius:20px 20px 0 0;
+    padding:8px 14px calc(16px + env(safe-area-inset-bottom));max-height:82vh;overflow-y:auto;gap:2px;box-shadow:0 -10px 30px rgba(0,0,0,.15)}
+  .sheet .grab{width:40px;height:5px;border-radius:3px;background:var(--line);margin:4px auto 10px}
+  .sheet a,.sheet .row-btn{display:flex;gap:14px;align-items:center;padding:12px 10px;border-radius:12px;color:var(--text);text-decoration:none;min-height:50px;font-size:16px;background:none;border:0;font-family:inherit;width:100%;text-align:left}
+  .sheet a[aria-current="page"]{background:var(--violet-chip);font-weight:600}
+  .sheet a svg,.sheet .row-btn svg{width:22px;height:22px;color:var(--muted)}
+  .sheet .sect{font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;margin:12px 10px 4px}
+  .sheet select{width:100%;min-height:44px}
+  .periods{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;max-width:100%}
+  .periods::-webkit-scrollbar{display:none}
+  .periods button{flex:0 0 auto;padding:8px 14px;min-height:40px}
+  .toast{bottom:calc(84px + env(safe-area-inset-bottom))}
+  .a2hs.show{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:10px 12px;border-radius:12px;background:var(--violet-card);border:1px solid var(--violet-edge);font-size:14px}
+  input,select,textarea{font-size:16px!important}
+  .card{padding:18px;gap:14px;border-radius:16px}
+  .card h2{font-size:19px}
+  .homehead{position:relative;display:block}
+  .homehead h1,.homehead .sub{padding-right:52px}
+  .homehead .dltext{display:none}
+  .homectl{display:block!important;margin-top:12px}
+  .homehead .dlmenu{position:absolute;top:2px;right:0}
+  .homehead .dlmenu>summary{min-height:42px;width:42px;padding:0;justify-content:center}
+  .homehead .dlpop{min-width:210px}
+  .a2hs.show{font-size:13px;padding:8px 10px}
+  .a2hs .btn{min-height:32px!important}
+  .sub{font-size:15px}
+}
+@media (max-width:720px){
+  :root[data-theme="dark"] .topbar,:root[data-theme="dark"] .tabbar{background:rgba(20,20,20,.94)}
+  :root[data-theme="dark"] .tabbar [aria-current="page"]{color:#9ACD4F}
+}
 </style>
 </head>
 <body>
@@ -394,7 +454,11 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   // ---------- session ----------
   const SKEY = "proads.session";
   let session = null;
-  try { session = JSON.parse(sessionStorage.getItem(SKEY) || "null"); } catch (e) { session = null; }
+  // The sign-in is kept on this device (30 days, like the server's session), so closing Safari or leaving the page
+  // doesn't sign anyone out. An admin's view of another business stays in this tab only.
+  const VKEY = "proads.viewing";
+  const store = { get(k, where) { try { return JSON.parse(where.getItem(k) || "null"); } catch (e) { return null; } } };
+  try { session = store.get(VKEY, sessionStorage) || store.get(SKEY, localStorage) || store.get(SKEY, sessionStorage); } catch (e) { session = null; }
   let status = null;
 
   async function api(path, opts = {}) {
@@ -404,7 +468,14 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     catch (e) { throw new Error("Cannot reach the server. Check your internet connection."); }
     let data = null;
     try { data = await res.json(); } catch (e) { data = null; }
-    if (res.status === 401) { signOut("Your key was not accepted. Please sign in again."); throw new Error("signed out"); }
+    if (res.status === 401) {
+      if (adminSession) {                              // the 2-hour view of a business ended: back to the admin's own account
+        session = adminSession; adminSession = null; saveSessions(); status = null;
+        toast("Your view of that business ended. Back to your account."); go("#/admin");
+        throw new Error("signed out");
+      }
+      signOut("Your key was not accepted. Please sign in again."); throw new Error("signed out");
+    }
     if (!res.ok) {
       const msg = data && (data.error || (data.errors && data.errors.join("; "))) || ("Server error " + res.status);
       const err = new Error(msg); err.status = res.status; err.data = data; throw err;
@@ -416,8 +487,17 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   // ---------- admin: look at any registered business (view only) ----------
   const AKEY = "proads.admin_session";
   let adminSession = null, bizList = null;
-  try { adminSession = JSON.parse(sessionStorage.getItem(AKEY) || "null"); } catch (e) { adminSession = null; }
-  const saveSessions = () => { try { sessionStorage.setItem(SKEY, JSON.stringify(session)); if (adminSession) sessionStorage.setItem(AKEY, JSON.stringify(adminSession)); else sessionStorage.removeItem(AKEY); } catch (e) {} };
+  try { adminSession = sessionStorage.getItem(VKEY) ? store.get(SKEY, localStorage) : null; } catch (e) { adminSession = null; }
+  function saveSessions() {
+    try {
+      if (adminSession) { localStorage.setItem(SKEY, JSON.stringify(adminSession)); sessionStorage.setItem(VKEY, JSON.stringify(session)); }
+      else { if (session) localStorage.setItem(SKEY, JSON.stringify(session)); sessionStorage.removeItem(VKEY); }
+      sessionStorage.removeItem(SKEY); sessionStorage.removeItem(AKEY);
+    } catch (e) {}
+  }
+  function clearSessions() {
+    try { localStorage.removeItem(SKEY); sessionStorage.removeItem(SKEY); sessionStorage.removeItem(VKEY); sessionStorage.removeItem(AKEY); } catch (e) {}
+  }
   async function viewBusiness(clientId) {
     const admin = adminSession || session;
     if (adminSession && clientId === adminSession.client) return backToAdmin();
@@ -455,7 +535,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     if (session && !message) fetch("/auth/logout", { method: "POST", headers: { "X-API-Key": session.key } }).catch(() => {});
     if (adminSession && !message) fetch("/auth/logout", { method: "POST", headers: { "X-API-Key": adminSession.key } }).catch(() => {});
     session = null; status = null; adminSession = null; bizList = null;
-    try { sessionStorage.removeItem(SKEY); sessionStorage.removeItem(AKEY); } catch (e) {}
+    clearSessions();
     renderLogin(message);
   }
 
@@ -499,7 +579,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         if (!res.ok) throw new Error(data.error || "Sign-in failed. Please try again.");
         session = { client: data.client_id, key: data.token };
         status = await api("/status/" + cid());
-        try { sessionStorage.setItem(SKEY, JSON.stringify(session)); } catch (e2) {}
+        saveSessions();
         go(location.hash && location.hash !== "#" ? location.hash : "#/home");
       } catch (e2) {
         if (e2.message !== "signed out") err.textContent = /fetch/i.test(e2.message) ? "Cannot reach the server. Check your internet connection." : e2.message;
@@ -555,7 +635,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         const d = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(d.error || "Please ask for a new reset link.");
         session = { client: d.client_id, key: d.token };
-        try { sessionStorage.setItem(SKEY, JSON.stringify(session)); } catch (e2) {}
+        saveSessions();
         window.history.replaceState(null, "", "/app#/home");
         toast("Password changed");
         route();
@@ -607,9 +687,50 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
           h("a", { href, "aria-current": href === active ? "page" : null }, icon(d), label, tag ? h("span", { class: "navtag" }, tag) : null))),
         h("div", { class: "statusbox" }, statusRows(), themeToggle(),
           h("button", { class: "btn btn-ghost", style: "margin-top:6px", onclick: () => signOut() }, "Sign out"))),
-      h("main", {}, h("div", { class: "wrap" }, status && status.viewer ? [h("div", { class: "viewbar", role: "status" },
+      mobileTop(),
+      h("main", {}, h("div", { class: "wrap" }, ...(status && status.viewer ? [h("div", { class: "viewbar", role: "status" },
         h("span", {}, "You're viewing ", h("b", {}, status.name), " as admin · view only, nothing can be changed"),
-        h("button", { class: "btn btn-primary", type: "button", onclick: backToAdmin }, "Back to my account"))].concat(content) : content)));
+        h("button", { class: "btn btn-primary", type: "button", onclick: backToAdmin }, "Back to my account"))] : []), installTip(), ...[].concat(content))),
+      ...mobileTabs(active));
+  }
+
+  // ---------- iPhone navigation ----------
+  const TABS = [["#/home", "Home", NAV[0][2]], ["#/audit", "Audit", NAV[1][2]], ["#/assistant", "Campaigns", NAV[5][2]], ["#/upload", "Connect", NAV[3][2]]];
+  function mobileTop() {
+    return h("header", { class: "topbar" }, h("a", { class: "brand", href: "#/home", style: "text-decoration:none" }, logo(), "ProAds"),
+      h("span", { class: "bizname" }, status ? status.name : session.client));
+  }
+  function mobileTabs(active) {
+    const extra = status && status.admin ? [["#/admin", "Admin", "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"]] : [["#/billing", "Plan & billing", "M3 7h18v10H3zM3 11h18"]];
+    const rest = NAV.filter(([href]) => !TABS.some((t) => t[0] === href)).concat(extra);
+    const inMore = rest.some(([href]) => href === active);
+    const bg = h("div", { class: "sheet-bg", onclick: () => close() });
+    const sheet = h("div", { class: "sheet", role: "dialog", "aria-label": "More" });
+    const close = () => { bg.classList.remove("open"); sheet.classList.remove("open"); document.body.style.overflow = ""; };
+    const open = () => {
+      const sw = bizSwitcher();
+      sheet.replaceChildren(h("div", { class: "grab" }),
+        h("div", { class: "sect" }, "Business"), h("div", { style: "padding:0 10px 6px" }, h("b", {}, status ? status.name : session.client), sw ? h("div", { style: "margin-top:8px" }, sw) : null),
+        h("div", { class: "sect" }, "More"),
+        ...rest.map(([href, label, d, tag]) => h("a", { href, "aria-current": href === active ? "page" : null, onclick: close }, icon(d), label, tag ? h("span", { class: "navtag", style: "margin-left:auto" }, tag) : null)),
+        h("div", { class: "sect" }, "Settings"), h("div", { style: "padding:4px 10px" }, themeToggle()),
+        h("button", { class: "row-btn", type: "button", onclick: () => { close(); signOut(); } }, icon("M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 17l5-5-5-5M15 12H3"), "Sign out"));
+      bg.classList.add("open"); sheet.classList.add("open"); document.body.style.overflow = "hidden";
+    };
+    const tabs = h("nav", { class: "tabbar", "aria-label": "Main" },
+      ...TABS.map(([href, label, d]) => h("a", { href, "aria-current": href === active ? "page" : null }, icon(d), label)),
+      h("button", { type: "button", "aria-current": inMore ? "page" : null, "aria-haspopup": "dialog", onclick: open }, icon("M4 6h16M4 12h16M4 18h16"), "More"));
+    return [tabs, bg, sheet];
+  }
+  // "Add to Home Screen" tip on iPhone Safari (once, dismissible): opens full screen, like an app
+  function installTip() {
+    const ios = /iPhone|iPad|iPod/.test(navigator.userAgent), standalone = window.navigator.standalone || matchMedia("(display-mode: standalone)").matches;
+    let hidden = false; try { hidden = localStorage.getItem("proads.a2hs") === "no"; } catch (e) {}
+    if (!ios || standalone || hidden) return null;
+    const box = h("div", { class: "a2hs show", role: "note" },
+      h("span", {}, h("b", {}, "Use ProAds like an app: "), "tap ", h("b", {}, "Share"), " then ", h("b", {}, "Add to Home Screen"), "."),
+      h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => { try { localStorage.setItem("proads.a2hs", "no"); } catch (e) {} box.remove(); } }, "OK"));
+    return box;
   }
   function themeToggle() {
     const sun = "M12 4V2M12 22v-2M4 12H2M22 12h-2M5.6 5.6 4.2 4.2M19.8 19.8l-1.4-1.4M5.6 18.4l-1.4 1.4M19.8 4.2l-1.4 1.4M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z";
@@ -1246,7 +1367,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       try {
         await api("/account/delete/" + cid(), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(noPw ? { confirm_email: pw.value } : { password: pw.value }) });
         session = null; status = null;
-        try { sessionStorage.removeItem(SKEY); } catch (e2) {}
+        clearSessions();
         root.replaceChildren(h("div", { class: "login" }, h("div", { class: "card", style: "max-width:460px" },
           h("h1", { style: "font-size:26px" }, "Your account is deleted"),
           h("p", { class: "sub" }, "Your account and all its data have been removed from ProAds."),
@@ -3693,12 +3814,13 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       btn.disabled = false; btn.textContent = was;
     };
     const dlBtn = (fmt_, label) => h("button", { class: "btn btn-ghost", type: "button", onclick: (e) => dl(fmt_, e.currentTarget) }, label);
-    const download = h("details", { class: "dlmenu" }, h("summary", { class: "btn btn-ghost" }, "Download report"),
+    const download = h("details", { class: "dlmenu" }, h("summary", { class: "btn btn-ghost", "aria-label": "Download report" },
+        icon("M12 4v11M7 10l5 5 5-5M5 20h14"), h("span", { class: "dltext" }, "Download report")),
       h("div", { class: "dlpop" }, dlBtn("pdf", "PDF report"), dlBtn("xlsx", "Excel (.xlsx)"), dlBtn("csv", "CSV (orders)")));
     root.replaceChildren(layout("#/home", [
-      h("header", { class: "between", style: "align-items:flex-end;flex-wrap:wrap;gap:12px" },
+      h("header", { class: "between homehead", style: "align-items:flex-end;flex-wrap:wrap;gap:12px" },
         h("div", {}, h("h1", {}, "Home"), h("p", { class: "sub" }, "Compared with the previous period")),
-        h("div", { style: "display:flex;gap:10px;align-items:center;flex-wrap:wrap" }, periods, download)),
+        h("div", { class: "homectl", style: "display:flex;gap:10px;align-items:center;flex-wrap:wrap;min-width:0;max-width:100%" }, periods, download)),
       body]));
     let d;
     try { d = await api("/dashboard/" + cid() + "?period=" + encodeURIComponent(homePeriod)); }
@@ -3914,7 +4036,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         const d = await res.json().catch(() => ({}));
         if (!res.ok) return renderLogin(d.error || "Sign-in expired. Please try again.");
         session = { client: d.client_id, key: d.token }; status = null;
-        try { sessionStorage.setItem(SKEY, JSON.stringify(session)); } catch (e) {}
+        saveSessions();
       } catch (e) { return renderLogin("Cannot reach the server. Check your internet connection."); }
       return route();
     }
