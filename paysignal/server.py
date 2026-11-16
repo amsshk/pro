@@ -3976,7 +3976,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 st = billing.Stripe(state.stripe_http)
                 out["price"] = billing.price_info(st)
                 if out["premium_available"]:
-                    out["premium_price"] = billing.price_info(st, billing.settings()["premium_price"])
+                    out["premium_price"] = billing.price_info(st, billing.premium_price_id(st))
             except billing.BillingError as e:
                 log.warning("could not read the Stripe price: %s", e)
         return out

@@ -97,6 +97,29 @@ class Stripe:
 _price_cache: dict = {}
 
 
+def _resolve(pid: str, stripe: Optional["Stripe"], setting: str) -> str:
+    """A price ID as given, or a product ID's default price (cached for an hour)."""
+    if pid.startswith("price_"):
+        return pid
+    if pid.startswith("prod_"):
+        hit = _price_cache.get("product:" + pid)
+        if hit and time.time() - hit[0] < 3600:
+            return hit[1]
+        default = (stripe or Stripe()).get(f"products/{pid}").get("default_price")
+        if isinstance(default, dict):
+            default = default.get("id")
+        if not default:
+            raise BillingError(f"the product in {setting} has no default price")
+        _price_cache["product:" + pid] = (time.time(), default)
+        return default
+    raise BillingError(f"{setting} must be a price ID (price_...) or a product ID (prod_...)")
+
+
+def premium_price_id(stripe: Optional["Stripe"] = None) -> str:
+    """Premium's price ID; a product ID (prod_...) also works."""
+    return _resolve(settings()["premium_price"], stripe, "PROADS_STRIPE_PREMIUM_PRICE_ID")
+
+
 def price_id(stripe: Stripe) -> str:
     """The plan's price ID. A product ID (prod_...) also works: its default price is used."""
     pid = settings()["price"]
@@ -138,13 +161,20 @@ def premium_available() -> bool:
 
 def tier_of_price(pid: Optional[str]) -> str:
     s = settings()
-    return "premium" if pid and s["premium_price"] and pid == s["premium_price"] else "pro"
+    if not pid or not s["premium_price"]:
+        return "pro"
+    if pid == s["premium_price"]:
+        return "premium"
+    try:
+        return "premium" if pid == premium_price_id() else "pro"
+    except Exception:
+        return "pro"
 
 
 def checkout_session(stripe: Stripe, client_id: str, email: str, customer_id: Optional[str],
                      return_base: str, first_time: bool, tier: str = "pro") -> str:
     s = settings()
-    pid = s["premium_price"] if tier == "premium" and s["premium_price"] else price_id(stripe)
+    pid = premium_price_id(stripe) if tier == "premium" and s["premium_price"] else price_id(stripe)
     data = {"mode": "subscription", "line_items[0][price]": pid, "line_items[0][quantity]": "1",
             "success_url": return_base + "/app#/billing?paid=1", "cancel_url": return_base + "/app#/billing",
             "client_reference_id": client_id, "metadata[client_id]": client_id,
@@ -171,7 +201,7 @@ def change_tier(stripe: Stripe, subscription_id: str, tier: str) -> None:
     if not items:
         raise BillingError("subscription has no items")
     stripe.post(f"subscriptions/{subscription_id}", {
-        "items[0][id]": items[0]["id"], "items[0][price]": s["premium_price"] if tier == "premium" else price_id(stripe),
+        "items[0][id]": items[0]["id"], "items[0][price]": premium_price_id(stripe) if tier == "premium" else price_id(stripe),
         "proration_behavior": "always_invoice", "metadata[client_id]": (sub.get("metadata") or {}).get("client_id", "")})
 
 

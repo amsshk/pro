@@ -240,3 +240,17 @@ def test_buy_win_their_customers_plans(app):
     assert signed(c, inv).status_code == 200
     with st.lock:
         assert st.revenue.get("in_conq_1")["kind"] == "addon"
+
+
+def test_premium_from_a_product_id(monkeypatch):
+    monkeypatch.setenv("PROADS_STRIPE_SECRET_KEY", "sk_test_x")
+    monkeypatch.setenv("PROADS_STRIPE_PREMIUM_PRICE_ID", "prod_Premium1")
+    billing._price_cache.clear()
+
+    class S:
+        def get(self, path, params=None):
+            assert path == "products/prod_Premium1"
+            return {"default_price": "price_prem_799"}
+    assert billing.premium_price_id(S()) == "price_prem_799"
+    assert billing.tier_of_price("price_prem_799") == "premium"          # cached: no second lookup
+    assert billing.tier_of_price("price_pro") == "pro"
