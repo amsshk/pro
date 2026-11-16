@@ -763,6 +763,43 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   }
 
   // ---------- Shopify connection ----------
+  // Free way in when the Shopify app can't be installed: Shopify's own webhooks + the signing key
+  function hooksBox() {
+    const hk = (status.connections.shopify_hooks) || {};
+    const out = h("div", {});
+    const url = hk.url || (location.origin + "/webhooks/shopify/" + session.client);
+    const copyRow = (v) => h("div", { style: "display:flex;gap:8px;flex-wrap:wrap;align-items:center" }, h("code", { class: "box", style: "flex:1 1 260px;overflow-wrap:anywhere" }, v),
+      h("button", { class: "btn btn-ghost", type: "button", onclick: () => copy(v) }, "Copy"));
+    if (hk.connected) {
+      const disc = h("button", { class: "btn btn-ghost", type: "button", onclick: async (e) => {
+        const b = e.currentTarget; if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.textContent = "Click again to disconnect"; return; }
+        try { await api("/connect/" + cid() + "/shopify-webhooks/disconnect", { method: "POST" }); status = await api("/status/" + cid()); route(); }
+        catch (er) { if (er.message !== "signed out") toast(er.message); } } }, "Disconnect");
+      return h("div", { class: "result", style: "flex-direction:column;align-items:stretch;gap:8px" },
+        h("div", { class: "between" }, h("b", {}, "Connected with Shopify webhooks"), h("span", { class: "badge b-measured" }, "Connected")),
+        h("span", { class: "small" }, hk.orders ? fmt.format(hk.orders) + " orders received" + (hk.last ? ", last " + new Date(hk.last).toLocaleString() : "") : "Waiting for the next paid order from Shopify."),
+        hk.merged ? h("span", { class: "small" }, fmt.format(hk.merged) + " Shopify orders were the same sale as a Stripe payment, so ProAds counted each once.") : null,
+        h("span", { class: "small" }, "Webhook address in Shopify: "), copyRow(url), disc);
+    }
+    const key = h("input", { type: "password", autocomplete: "new-password", name: "proads-secret-" + Math.random().toString(36).slice(2), "data-lpignore": "true", "data-1p-ignore": "true", spellcheck: "false", placeholder: "Signing key from Shopify", "aria-label": "Shopify webhook signing key", style: "flex:1;min-width:220px" });
+    const go = h("button", { class: "btn btn-primary", type: "submit" }, "Connect");
+    return h("details", { style: "border:1px solid var(--line);border-radius:12px;padding:12px 14px" },
+      h("summary", { style: "cursor:pointer;font-weight:600" }, "App won't install? Connect with Shopify webhooks instead (free)"),
+      h("ol", { style: "margin:10px 0;padding-left:20px;font-size:14px;display:flex;flex-direction:column;gap:6px" },
+        h("li", {}, "In Shopify admin, open ", h("b", {}, "Settings → Notifications → Webhooks"), " (at the bottom of the page)."),
+        h("li", {}, "Click ", h("b", {}, "Create webhook"), ": Event ", h("b", {}, "Order payment"), ", Format ", h("b", {}, "JSON"), ", the newest API version, and this URL:", copyRow(url)),
+        h("li", {}, "Create a second one the same way with Event ", h("b", {}, "Refund create"), "."),
+        h("li", {}, "Under the list Shopify shows ", h("i", {}, "\"Your webhooks will be signed with …\""), ". Copy that key and paste it here.")),
+      h("form", { style: "display:flex;gap:8px;flex-wrap:wrap", onsubmit: async (e) => {
+        e.preventDefault(); go.disabled = true;
+        try { await api("/connect/" + cid() + "/shopify-webhooks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ secret: key.value }) });
+          key.value = ""; status = await api("/status/" + cid()); toast("Shopify connected. New paid orders will arrive by themselves."); route(); }
+        catch (er) { if (er.message !== "signed out") out.replaceChildren(errorCard(er.message)); }
+        go.disabled = false;
+      } }, key, go), out,
+      h("p", { class: "small", style: "margin:6px 0 0" }, "Only new orders come in this way (no history), and the key is stored encrypted. If your Shopify checkout also charges through your connected Stripe, ProAds spots that each sale is the same one and counts it once."));
+  }
+
   function shopifyCard(params) {
     const card = h("section", { class: "card", "aria-labelledby": "shop-h", style: "background: var(--violet-card); border-color: var(--violet-edge)" });
     const notice = h("div", { style: "display:contents" });
@@ -789,7 +826,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         } }, h("label", { for: "shopdomain", class: "sr" }, "Store address"), h("div", { style: "flex:1 1 260px" }, shop), btn);
         card.replaceChildren(head,
           h("p", { class: "sub", style: "margin:0" }, "No files needed. You approve on Shopify's own page, then ProAds imports your orders and gets new ones and refunds automatically. Read-only: ProAds can't change anything in your store."),
-          form, err, notice);
+          form, err, hooksBox(), notice);
         return;
       }
       const running = s.sync_status === "running";
@@ -1739,8 +1776,10 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       for (const [k] of SOCIAL) if (has(k) && (!["instagram", "facebook"].includes(k) || !meta)) out.push(k === "tiktok" ? tiktokCard() : socialCard(k));
       if (has("shopify") && status && status.connections.shopify_app.available) {
         const sa = status.connections.shopify_app, sc = shopifyCard(params);
+        const hk = status.connections.shopify_hooks || {};
         out.push(sa.connected && sa.sync_status !== "error" && !(params && params.get("shopify"))
-          ? fold("shopify", sc, "Shopify", sa.shop + (sa.imported != null ? " · " + fmt.format(sa.imported) + " orders in" : "")) : sc);
+          ? fold("shopify", sc, "Shopify", sa.shop + (sa.imported != null ? " · " + fmt.format(sa.imported) + " orders in" : ""))
+          : hk.connected ? fold("shopify", sc, "Shopify (webhooks)", hk.orders ? fmt.format(hk.orders) + " orders received" : "Waiting for the next paid order") : sc);
       }
       for (const [k] of SHOPS) if (k !== "shopify" && has(k)) out.push(shopCard(k));
       chosen.replaceChildren(...out.filter(Boolean));

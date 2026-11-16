@@ -45,7 +45,7 @@ from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
 from . import audiences, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
-from .identity import hash_phone
+from .identity import hash_phone, normalize_phone
 from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
 from .attribution import make_promo_code, resolve, tag_link
@@ -168,6 +168,12 @@ class App:
         self.windsor_http = None               # set in tests
         self.tiktok_ads = tiktok_api.TikTokAdsStore(self.store.db)
         self.news = news.NewsStore(self.store.db)
+        self.store.db.execute("CREATE TABLE IF NOT EXISTS merged_payments (client_id TEXT NOT NULL, source TEXT NOT NULL,"
+                              " external_id TEXT NOT NULL, kept_source TEXT NOT NULL, kept_id TEXT NOT NULL, at INTEGER NOT NULL,"
+                              " PRIMARY KEY (client_id, source, external_id))")
+        self.store.db.execute("CREATE TABLE IF NOT EXISTS shopify_hook_secrets (client_id TEXT PRIMARY KEY, secret TEXT NOT NULL,"
+                              " added_at INTEGER NOT NULL)")
+        self.store.db.commit()
         self.news.seed()
         self.tiktok_api_http = None            # set in tests
         self.tiktok_launches = tiktok_api.TikTokLaunchStore(self.store.db)
@@ -229,6 +235,13 @@ class App:
                 abort(404, "unknown client")
             cfg = {"name": acct["name"], "currency": acct["currency"], "website": acct["website"] or "",
                    "self_serve": True}
+        if not cfg.get("shopify_webhook_secret"):
+            row = self.store.db.execute("SELECT secret FROM shopify_hook_secrets WHERE client_id=?", (client_id,)).fetchone()
+            if row:
+                try:
+                    cfg = {**cfg, "shopify_webhook_secret": shopify_app.decrypt(row[0]), "shopify_webhooks_own": True}
+                except Exception:
+                    log.warning("could not read the Shopify webhook key of %s", client_id)
         if not (cfg.get("meta") or {}).get("access_token"):
             meta = self.connected_meta(client_id)
             if meta:
@@ -356,6 +369,8 @@ class App:
                     continue
                 if p.kind == "refund" and not self._refund_delta(client_id, p):
                     continue
+                if self._same_sale_elsewhere(client_id, p):
+                    continue
                 match = self._wa_match(client_id, p)
                 if self.store.add(p):
                     new += 1
@@ -366,6 +381,58 @@ class App:
         if new and getattr(self, "instant_meta", False):
             self.nudge_meta(client_id)
         return {"received": len(payments), "new": new, "duplicates": len(payments) - new}
+
+    # The same sale can reach ProAds twice: a Shopify order paid through the shop's own Stripe arrives as a Shopify
+    # order AND a Stripe charge. Keep the first, remember the other as merged, and skip its refunds too, so
+    # Meta and TikTok never get one sale twice.
+    PAYMENT_SOURCES = ("stripe", "shopify")
+    MERGE_WINDOW = 15 * 60
+
+    def _same_sale_elsewhere(self, client_id: str, p) -> bool:
+        if p.source not in self.PAYMENT_SOURCES:
+            return False
+        db = self.store.db
+        if p.kind == "refund":
+            return bool(p.refund_of and db.execute("SELECT 1 FROM merged_payments WHERE client_id=? AND source=? AND external_id=?",
+                                                   (client_id, p.source, p.refund_of)).fetchone())
+        if db.execute("SELECT 1 FROM merged_payments WHERE client_id=? AND source=? AND external_id=?",
+                      (client_id, p.source, p.external_id)).fetchone():
+            return True
+        if db.execute("SELECT 1 FROM payments WHERE client_id=? AND source=? AND external_id=?",
+                      (client_id, p.source, p.external_id)).fetchone():
+            return False                                  # already stored: the normal duplicate check handles it
+        others = [x for x in self.PAYMENT_SOURCES if x != p.source]
+        rows = db.execute("SELECT data FROM payments WHERE client_id=? AND kind='purchase' AND source IN (%s) AND currency=?"
+                          " AND ABS(amount - ?) < 0.01" % ",".join("?" * len(others)),
+                          (client_id, *others, p.currency, p.amount)).fetchall()
+        cands = []
+        for (data,) in rows:
+            q = self.store._load((data,))
+            utc = lambda d: d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+            if abs((utc(q.occurred_at) - utc(p.occurred_at)).total_seconds()) > self.MERGE_WINDOW:
+                continue
+            if db.execute("SELECT 1 FROM merged_payments WHERE client_id=? AND kept_source=? AND kept_id=?",
+                          (client_id, q.source, q.external_id)).fetchone():
+                continue                                  # that sale already has its twin
+            e1, e2 = (p.email or "").strip().lower(), (q.email or "").strip().lower()
+            ph1, ph2 = normalize_phone(p.phone), normalize_phone(q.phone)
+            if e1 and e2:
+                if e1 == e2:
+                    cands.append((0, q))
+            elif ph1 and ph2:
+                if ph1 == ph2:
+                    cands.append((0, q))
+            else:
+                cands.append((1, q))                      # no contact to compare: only if it's the only possibility
+        sure = [q for k, q in cands if k == 0]
+        twin = sure[0] if sure else (cands[0][1] if len(cands) == 1 else None)
+        if not twin:
+            return False
+        db.execute("INSERT OR IGNORE INTO merged_payments VALUES (?,?,?,?,?,?)",
+                   (client_id, p.source, p.external_id, twin.source, twin.external_id, int(time.time())))
+        db.commit()
+        log.info("%s: %s order %s is the same sale as %s %s; kept once", client_id, p.source, p.external_id, twin.source, twin.external_id)
+        return True
 
     def _refund_delta(self, client_id: str, p) -> bool:
         """Stripe reports the running total refunded on a charge ("<charge>:refund:<total>"). Record only the part
@@ -1159,6 +1226,28 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             abort(400, "invalid json")
         topic = request.headers.get("X-Shopify-Topic", "")
         return state.ingest(client_id, parse_shopify_webhook(topic, payload, client_id, cfg.get("costs", {})))
+
+    @flask.post("/connect/<client_id>/shopify-webhooks")
+    def shopify_webhooks_connect(client_id):
+        """Free way in when the app can't be installed: the shop owner adds webhooks in Shopify (Settings >
+        Notifications > Webhooks) and pastes the signing key Shopify shows there. Stored encrypted."""
+        state.require_key(client_id)
+        key = re.sub(r"\s+", "", str((request.get_json(silent=True) or {}).get("secret", "")))
+        if len(key) < 20 or not re.fullmatch(r"[A-Za-z0-9_\-]+", key):
+            abort(400, "Paste the key from Shopify: Settings > Notifications > Webhooks, the line \"Your webhooks will be signed with ...\".")
+        with state.lock:
+            state.store.db.execute("INSERT INTO shopify_hook_secrets VALUES (?,?,?) ON CONFLICT(client_id) DO UPDATE SET"
+                                   " secret=excluded.secret, added_at=excluded.added_at", (client_id, shopify_app.encrypt(key), int(time.time())))
+            state.store.db.commit()
+        return {"connected": True, "url": f"{public_base()}/webhooks/shopify/{client_id}"}
+
+    @flask.post("/connect/<client_id>/shopify-webhooks/disconnect")
+    def shopify_webhooks_disconnect(client_id):
+        state.require_key(client_id)
+        with state.lock:
+            state.store.db.execute("DELETE FROM shopify_hook_secrets WHERE client_id=?", (client_id,))
+            state.store.db.commit()
+        return {"connected": False}
 
     @flask.post("/upload/csv/<client_id>")
     def upload_csv(client_id):
@@ -3667,6 +3756,11 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             "currency": cfg.get("currency", "AED"),
             "website": cfg.get("website", ""),
             "connections": {
+                "shopify_hooks": {"connected": bool(cfg.get("shopify_webhooks_own")),
+                                  "url": f"{public_base()}/webhooks/shopify/{client_id}",
+                                  "last": (payments.get("shopify") or {}).get("last"), "orders": (payments.get("shopify") or {}).get("count", 0),
+                                  "merged": state.store.db.execute("SELECT COUNT(*) FROM merged_payments WHERE client_id=? AND source='shopify'",
+                                                                   (client_id,)).fetchone()[0]},
                 "shopify": {"configured": bool(cfg.get("shopify_webhook_secret") or shop),
                             **payments.get("shopify", {})},
                 "shopify_app": shop_info,
