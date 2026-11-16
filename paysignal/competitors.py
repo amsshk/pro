@@ -191,7 +191,8 @@ def library_links(name: str, country: str = "AE") -> dict:
     q = quote(name.strip())
     return {"name": name.strip(),
             "meta": f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country={country}&q={q}&search_type=keyword_unordered",
-            "tiktok": "https://library.tiktok.com/ads"}
+            # TikTok's Ad Library only covers Europe; Creative Center's Top Ads has regions like the UAE and Saudi Arabia
+            "tiktok": "https://ads.tiktok.com/business/creativecenter/inspiration/topads/pc/en"}
 
 
 def conquest_plan(ai: MetaAI, names: list[str], facts: dict, ads: Optional[list[dict]] = None, notes: str = "") -> dict:

@@ -3141,7 +3141,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, h("button", { class: "btn btn-ghost", type: "button", onclick: () => copy(asText()) }, "Copy the whole plan")),
         h("div", { class: "result", style: "flex-direction:column;align-items:stretch;gap:6px" }, h("b", {}, "See what they're running"),
           ...(r.libraries || []).map((l) => h("span", { class: "small" }, l.name + ": ", h("a", { href: l.meta, target: "_blank", rel: "noopener" }, "Meta Ad Library"), " · ",
-            h("a", { href: l.tiktok, target: "_blank", rel: "noopener" }, "TikTok Ad Library"), " (search their name there)"))),
+            h("a", { href: l.tiktok, target: "_blank", rel: "noopener" }, "TikTok Top Ads"), " (pick your region and industry; TikTok's own Ad Library only covers Europe)"))),
         (p.edges || []).length ? h("div", {}, h("b", {}, "Your edges (from your own sales)"), h("ul", { class: "list", style: "margin:6px 0 0" },
           p.edges.map((e) => h("li", {}, h("b", {}, e.edge), " — ", h("span", { class: "small" }, e.proof))))) : null,
         (p.search_keywords || []).length ? h("div", {}, h("b", {}, "Searches to bid on"), h("p", { class: "small", style: "margin:2px 0 6px" }, "Bid on these searches; never put the competitor's name in your ad text."),
