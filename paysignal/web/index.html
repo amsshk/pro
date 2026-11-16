@@ -768,18 +768,20 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     const hk = (status.connections.shopify_hooks) || {};
     const out = h("div", {});
     const url = hk.url || (location.origin + "/webhooks/shopify/" + session.client);
-    const copyRow = (v) => h("div", { style: "display:flex;gap:8px;flex-wrap:wrap;align-items:center" }, h("code", { class: "box", style: "flex:1 1 260px;overflow-wrap:anywhere" }, v),
+    const copyRow = (v) => h("div", { style: "display:flex;gap:8px;flex-wrap:wrap;align-items:center;min-width:0" }, h("code", { class: "box", style: "flex:1 1 180px;min-width:0;overflow-wrap:anywhere;white-space:normal" }, v),
       h("button", { class: "btn btn-ghost", type: "button", onclick: () => copy(v) }, "Copy"));
     if (hk.connected) {
       const disc = h("button", { class: "btn btn-ghost", type: "button", onclick: async (e) => {
         const b = e.currentTarget; if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.textContent = "Click again to disconnect"; return; }
         try { await api("/connect/" + cid() + "/shopify-webhooks/disconnect", { method: "POST" }); status = await api("/status/" + cid()); route(); }
         catch (er) { if (er.message !== "signed out") toast(er.message); } } }, "Disconnect");
-      return h("div", { class: "result", style: "flex-direction:column;align-items:stretch;gap:8px" },
-        h("div", { class: "between" }, h("b", {}, "Connected with Shopify webhooks"), h("span", { class: "badge b-measured" }, "Connected")),
+      disc.style.alignSelf = "flex-start";
+      return h("div", { class: "result", style: "flex-direction:column;align-items:stretch;gap:8px;min-width:0;overflow:hidden" },
+        h("b", {}, "Connected with Shopify webhooks"),
         h("span", { class: "small" }, hk.orders ? fmt.format(hk.orders) + " orders received" + (hk.last ? ", last " + new Date(hk.last).toLocaleString() : "") : "Waiting for the next paid order from Shopify."),
         hk.merged ? h("span", { class: "small" }, fmt.format(hk.merged) + " Shopify orders were the same sale as a Stripe payment, so ProAds counted each once.") : null,
-        h("span", { class: "small" }, "Webhook address in Shopify: "), copyRow(url), disc);
+        h("span", { class: "small" }, "Webhook address in Shopify: "), copyRow(url),
+        h("span", { class: "small" }, "Shopify's \"Send test notification\" is ignored: test orders never count as sales."), disc);
     }
     const key = h("input", { type: "password", autocomplete: "new-password", name: "proads-secret-" + Math.random().toString(36).slice(2), "data-lpignore": "true", "data-1p-ignore": "true", spellcheck: "false", placeholder: "Signing key from Shopify", "aria-label": "Shopify webhook signing key", style: "flex:1;min-width:220px" });
     const go = h("button", { class: "btn btn-primary", type: "submit" }, "Connect");
@@ -824,9 +826,14 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
             location.href = r.url;
           } catch (e2) { if (e2.message !== "signed out") { err.textContent = e2.message; btn.disabled = false; } }
         } }, h("label", { for: "shopdomain", class: "sr" }, "Store address"), h("div", { style: "flex:1 1 260px" }, shop), btn);
-        card.replaceChildren(head,
+        const hooked = (status.connections.shopify_hooks || {}).connected;
+        if (hooked) {
+          head.querySelector("h2").textContent = "Shopify store";
+          const badge = head.querySelector(".badge"); badge.textContent = "Connected"; badge.className = "badge b-measured";
+        }
+        card.replaceChildren(head, ...(hooked ? [] : [
           h("p", { class: "sub", style: "margin:0" }, "No files needed. You approve on Shopify's own page, then ProAds imports your orders and gets new ones and refunds automatically. Read-only: ProAds can't change anything in your store."),
-          form, err, hooksBox(), notice);
+          form, err]), hooksBox(), notice);
         return;
       }
       const running = s.sync_status === "running";

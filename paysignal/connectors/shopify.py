@@ -54,9 +54,20 @@ def _ts(value: str | None) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00")) if value else datetime.now().astimezone()
 
 
+SAMPLE_ORDER_IDS = {"820982911946154508", "450789469"}       # the made-up orders Shopify sends as test notifications
+
+
+def is_test(body: dict) -> bool:
+    email = str(body.get("email") or (body.get("customer") or {}).get("email") or "").lower()
+    return bool(body.get("test")) or str(body.get("id")) in SAMPLE_ORDER_IDS or str(body.get("order_id")) in SAMPLE_ORDER_IDS \
+        or email.endswith(("@example.com", "@example.org", "@example.net"))
+
+
 def parse_shopify_webhook(topic: str, body: dict, client_id: str,
                           costs: dict[str, float] | None = None) -> list[Payment]:
     costs = costs or {}
+    if is_test(body):                      # "Send test notification" in Shopify, or a test-gateway order: never a sale
+        return []
     if topic == "orders/paid":
         track = _tracking(body)
         codes = body.get("discount_codes") or []

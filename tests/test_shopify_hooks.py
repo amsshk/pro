@@ -67,3 +67,13 @@ def test_stripe_after_shopify_is_merged_too(tmp_path, monkeypatch):
     assert stripe(app, "bynawi", "ch_9", "2026-11-16T06:03:00+00:00", 160, "mona@x.ae")["new"] == 0     # same sale
     assert stripe(app, "bynawi", "ch_8", "2026-11-16T06:04:00+00:00", 160, "other@x.ae")["new"] == 1    # same price, other buyer
     assert stripe(app, "bynawi", "ch_7", "2026-11-16T09:30:00+00:00", 160, "mona@x.ae")["new"] == 1     # hours later: a new sale
+
+
+def test_shopify_test_notifications_are_ignored():
+    from paysignal.connectors import parse_shopify_webhook
+    sample = {"id": 820982911946154508, "email": "jon@example.com", "total_price": "403.00", "currency": "USD",
+              "created_at": "2021-12-31T19:00:00-05:00", "line_items": []}
+    assert parse_shopify_webhook("orders/paid", sample, "b") == []
+    assert parse_shopify_webhook("orders/paid", {**order(5, 100, "a@b.ae"), "test": True}, "b") == []
+    assert parse_shopify_webhook("refunds/create", {"id": 1, "order_id": 820982911946154508}, "b") == []
+    assert len(parse_shopify_webhook("orders/paid", order(5, 100, "a@b.ae"), "b")) == 1
