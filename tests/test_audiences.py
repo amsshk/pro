@@ -20,6 +20,7 @@ def test_buyer_list(tmp_path):
     assert c.post("/upload/csv/bynawi", data=csv_text, headers=h).status_code == 200
     s = c.get("/audience/bynawi?format=summary", headers=h).json
     assert s["buyers"] == 2 and s["repeat"] == 1 and s["with_email"] == 1 and s["with_phone"] == 2 and not s["meta_ok"]
+    assert s["tiktok_min"] == 1000 and not s["tiktok_email_ok"]
     meta = c.get("/audience/bynawi?format=meta", headers=h)
     lines = meta.data.decode().strip().splitlines()
     assert lines[0] == "email,phone,value" and lines[1] == f"{H('sara@x.ae')},{H('971501234567')},500.00"

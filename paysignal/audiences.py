@@ -17,7 +17,7 @@ from .identity import hash_email, hash_phone, normalize_email, normalize_phone
 
 # The platforms' own floors (they can change): Meta needs about 100 matched people for a customer list;
 # TikTok and Meta lookalikes work best from about 1,000.
-META_MIN, LOOKALIKE_MIN = 100, 1000
+META_MIN, LOOKALIKE_MIN, TIKTOK_FILE_MIN = 100, 1000, 1000
 
 
 def buyers(store, client_id: str, default_cc: str = "971") -> list[dict]:
@@ -55,7 +55,9 @@ def summary(rows: list[dict]) -> dict:
     n = len(rows)
     return {"buyers": n, "with_email": sum(1 for r in rows if r["email"]), "with_phone": sum(1 for r in rows if r["phone"]),
             "repeat": sum(1 for r in rows if r["orders"] > 1), "meta_min": META_MIN, "lookalike_min": LOOKALIKE_MIN,
-            "meta_ok": n >= META_MIN, "lookalike_ok": n >= LOOKALIKE_MIN}
+            "meta_ok": n >= META_MIN, "lookalike_ok": n >= LOOKALIKE_MIN, "tiktok_min": TIKTOK_FILE_MIN,
+            "tiktok_email_ok": sum(1 for r in rows if r["email"]) >= TIKTOK_FILE_MIN,
+            "tiktok_phone_ok": sum(1 for r in rows if r["phone"]) >= TIKTOK_FILE_MIN}
 
 
 def meta_csv(rows: list[dict]) -> bytes:
