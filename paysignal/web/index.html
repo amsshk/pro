@@ -48,6 +48,12 @@ h2{margin:0;font-family:var(--head);font-size:20px;font-weight:600}
 .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px;display:flex;flex-direction:column;gap:16px;min-width:0}
 .row{display:flex;flex-wrap:wrap;gap:24px}
 .row>.card{flex:1 1 420px}
+.card.done{padding:14px 18px;gap:0}
+.done-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.done-tick{flex:0 0 28px;height:28px;border-radius:50%;background:var(--win-bg);color:var(--win-txt);display:grid;place-items:center;font-weight:700;font-size:14px}
+.done-txt{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 200px}
+.done-txt .small{overflow-wrap:anywhere}
+.done-acts{display:flex;gap:8px;flex-wrap:wrap}
 .between{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
 .uchips{display:flex;flex-wrap:wrap;gap:8px}
 .uchip{min-height:40px;padding:0 16px;border-radius:999px;border:1px solid var(--edge);background:var(--soft);color:var(--text);font:inherit;font-size:14px;font-weight:600;cursor:pointer}
@@ -1211,6 +1217,26 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     return card;
   }
 
+  // A finished connection folds into one line (tick, name, what it's doing) with Manage to open it again.
+  const openFolds = new Set();
+  function fold(key, full, title, summary, extra) {
+    if (!full) return full;
+    const btn = h("button", { class: "btn btn-ghost", type: "button", "aria-expanded": "false" }, "Manage");
+    const mini = h("section", { class: "card done" },
+      h("div", { class: "done-row" }, h("span", { class: "done-tick", "aria-hidden": "true" }, "\u2713"),
+        h("div", { class: "done-txt" }, h("b", {}, title), h("span", { class: "small" }, summary)),
+        h("div", { class: "done-acts" }, ...(extra || []), btn)));
+    const set = (open) => {
+      if (open) openFolds.add(key); else openFolds.delete(key);
+      full.style.display = open ? "" : "none";
+      btn.textContent = open ? "Hide" : "Manage";
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+    };
+    btn.addEventListener("click", () => set(!openFolds.has(key)));
+    set(openFolds.has(key));
+    return h("div", { style: "display:contents" }, mini, full);
+  }
+
   async function viewUpload(params) {
     const results = h("div", { style: "display:flex;flex-direction:column;gap:10px" });
     const input = h("input", { id: "files", type: "file", multiple: true, accept: ".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", class: "sr" });
@@ -1351,7 +1377,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
           (sa.message ? " · " + sa.message : ""))) : null;
       const off = sa.connected ? h("button", { class: "btn btn-ghost", type: "button", onclick: async () => {
         try { const r = await api("/connect/" + cid() + "/stripe/disconnect", { method: "POST" }); status = await api("/status/" + cid()); toast(r.note); route(); } catch (err) { if (err.message !== "signed out") toast(err.message); } }, style: "align-self:flex-start" }, "Disconnect") : null;
-      return h("section", { class: "card", style: "display:flex;flex-direction:column;gap:10px" },
+      const card = h("section", { class: "card", style: "display:flex;flex-direction:column;gap:10px" },
         h("div", { class: "between" }, h("h2", {}, "Stripe"), h("span", { class: "badge b-neutral" }, "Reads automatically")),
         h("p", { class: "sub", style: "margin:0" }, "Paste a read-only Stripe key once. ProAds brings in the last 12 months of payments, then new payments, refunds and lost chargebacks every few minutes. No files, no webhooks."),
         h("ol", { style: "margin:0;padding-left:20px;font-size:14px;display:flex;flex-direction:column;gap:4px" },
@@ -1361,13 +1387,17 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         state_, form, out,
         h("p", { class: "small", style: "margin:0" }, "Never paste your secret key (sk_…): ProAds refuses it, because it can move money. The restricted key is stored encrypted and can only read."),
         off);
+      if (!sa.connected || sa.status === "error") return card;
+      return fold("stripe", card, "Stripe" + (sa.live ? "" : " (test key)"), fmt.format(sa.imported || 0) + " payments and refunds in" +
+        (sa.last_sync ? " · checked " + new Date(sa.last_sync * 1000).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : " · reading your history now"));
     };
     const websiteCard = () => {
       if (status.admin) return null;
       const w = h("input", { value: status.website || "", placeholder: "https://yourshop.com", "aria-label": "Your website", style: "flex:1;min-width:220px", autocomplete: "url" });
       const msgW = h("span", { class: "small" }, /instagram|tiktok|facebook/i.test(status.website || "") ? "This is a social profile: put the shop's own website, where people buy." : "Where your ads send people, and what ProAds reads to learn your products.");
       const saveW = h("button", { class: "btn btn-ghost", type: "submit" }, "Save");
-      return h("section", { class: "card", style: "display:flex;flex-direction:column;gap:8px" },
+      const okSite = status.website && !/instagram|tiktok|facebook/i.test(status.website);
+      const card = h("section", { class: "card", style: "display:flex;flex-direction:column;gap:8px" },
         h("h2", {}, "Your website"), msgW,
         h("form", { style: "display:flex;gap:8px;flex-wrap:wrap", onsubmit: async (e) => {
           e.preventDefault(); saveW.disabled = true;
@@ -1376,6 +1406,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
           catch (err) { if (err.message !== "signed out") msgW.textContent = err.message; }
           saveW.disabled = false;
         } }, w, saveW));
+      return okSite ? fold("website", card, "Your website", status.website.replace(/^https?:\/\//, "").replace(/\/$/, "")) : card;
     };
     const tiktokCard = () => {
       const tt = (status.connections && status.connections.tiktok) || { connected: false, pixels: [] };
@@ -1546,7 +1577,21 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("b", { style: "font-size:14px" }, "Which TikTok ads bring buyers"),
         h("p", { class: "sub", style: "margin:0" }, "Make a tracking link for your ads. Then ProAds shows, per TikTok ad, how many orders were paid and how much money you kept after refunds: not clicks, not checkouts."),
         taErr, taPart, linkForm, linkOut, wsPart, salesBox);
-      return h("section", { class: "card", style: "display:flex;flex-direction:column;gap:10px" },
+      const addSteps = h("div", { style: "display:flex;flex-direction:column;gap:10px" },
+        h("b", { style: "font-size:14px;margin-top:4px" }, pixels.length ? "Add another Pixel" : "Connect a Pixel"),
+        h("ol", { style: "margin:0;padding-left:20px;font-size:14px;display:flex;flex-direction:column;gap:4px" },
+          h("li", {}, "Open ", h("a", { href: "https://ads.tiktok.com/i18n/events_manager", target: "_blank", rel: "noopener" }, "TikTok Events Manager"), " and pick your Pixel (or create one: Web events → Set up web events → Manual setup → Events API)."),
+          h("li", {}, "Copy the Pixel ID shown under its name (letters and numbers)."),
+          h("li", {}, "Open the Pixel's Settings → Events API → Generate access token, and copy it."),
+          h("li", {}, "Optional: from Test events, copy the test code to try it safely first.")),
+        form, out);
+      let addPart = addSteps;
+      if (pixels.length) {
+        addSteps.style.display = "none";
+        addPart = h("div", { style: "display:flex;flex-direction:column;gap:10px" },
+          h("button", { class: "btn btn-ghost", type: "button", style: "align-self:flex-start", onclick: (e) => { addSteps.style.display = ""; e.target.remove(); } }, "+ Add another Pixel"), addSteps);
+      }
+      const card = h("section", { class: "card", style: "display:flex;flex-direction:column;gap:10px" },
         h("div", { class: "between" }, h("h2", {}, "TikTok"), h("span", { class: "badge b-neutral" }, "Sends real sales to TikTok")),
         adsPart,
         h("b", { style: "font-size:14px;border-top:1px solid var(--line);padding-top:10px" }, "Send your sales to TikTok"),
@@ -1555,13 +1600,12 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         pixels.length > 1 || (pixels.length && !tt.connected) ? h("p", { class: "small", style: "margin:0" },
           tt.connected ? "Only one Pixel receives the sales at a time, so a sale is never counted twice. Switching sends the new one the last 7 days of sales it hasn't had."
             : "None of your saved Pixels receives sales right now: choose one with \u201cUse this one\u201d.") : null,
-        h("b", { style: "font-size:14px;margin-top:4px" }, pixels.length ? "Add another Pixel" : "Connect a Pixel"),
-        h("ol", { style: "margin:0;padding-left:20px;font-size:14px;display:flex;flex-direction:column;gap:4px" },
-          h("li", {}, "Open ", h("a", { href: "https://ads.tiktok.com/i18n/events_manager", target: "_blank", rel: "noopener" }, "TikTok Events Manager"), " and pick your Pixel (or create one: Web events → Set up web events → Manual setup → Events API)."),
-          h("li", {}, "Copy the Pixel ID shown under its name (letters and numbers)."),
-          h("li", {}, "Open the Pixel's Settings → Events API → Generate access token, and copy it."),
-          h("li", {}, "Optional: from Test events, copy the test code to try it safely first.")),
-        form, out);
+        addPart);
+      const active = pixels.find((p) => p.active);
+      const adsOk = !ta.available || (ta.connected && ta.advertiser_id && ta.status !== "error" && ta.status !== "expired");
+      if (!tt.connected || !active || active.status === "error" || !adsOk || taErr) return card;
+      const acct = ta.connected ? (ta.advertisers || []).find((a) => a.id === ta.advertiser_id) : null;
+      return fold("tiktok", card, "TikTok", "Sales go to " + active.name + " · " + fmt.format(active.sent || 0) + " sent" + (acct ? " · ad account " + acct.name : ""));
     };
     const shopCard = (k) => {
       if (k === "stripe") return stripeCard();
@@ -1580,17 +1624,21 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       const meta = has("instagram") || has("facebook") ? metaCard(params) : null;
       if (meta) out.push(meta);
       for (const [k] of SOCIAL) if (has(k) && (!["instagram", "facebook"].includes(k) || !meta)) out.push(k === "tiktok" ? tiktokCard() : socialCard(k));
-      if (has("shopify") && status && status.connections.shopify_app.available) out.push(shopifyCard(params));
+      if (has("shopify") && status && status.connections.shopify_app.available) {
+        const sa = status.connections.shopify_app, sc = shopifyCard(params);
+        out.push(sa.connected && sa.sync_status !== "error" && !(params && params.get("shopify"))
+          ? fold("shopify", sc, "Shopify", sa.shop + (sa.imported != null ? " · " + fmt.format(sa.imported) + " orders in" : "")) : sc);
+      }
       for (const [k] of SHOPS) if (k !== "shopify" && has(k)) out.push(shopCard(k));
       chosen.replaceChildren(...out.filter(Boolean));
-      chosen.style.display = out.length ? "" : "none";
+      chosen.style.display = out.length ? "flex" : "none";
       liveRows();
     }
     const liveBox = h("div", { style: "display:flex;flex-direction:column;gap:0" });
     function liveRows() {
       if (!c) { liveBox.replaceChildren(loading()); return; }
       liveBox.replaceChildren(...[
-        has("shopify") ? (c.shopify_app.connected
+        has("shopify") && !(c.shopify_app.available && !c.shopify_app.connected && !c.shopify.configured) ? (c.shopify_app.connected
           ? connRow("Shopify", "Connected through the Shopify app above · " + when(c.shopify), true, null)
           : connRow("Shopify", c.shopify.configured ? when(c.shopify) : (c.shopify_app.available ? "Advanced: add this address as a webhook in Shopify instead of the button above" : "Add this address as a webhook for orders/paid and refunds/create"), c.shopify.configured, status.webhooks.shopify)) : null,
         has("stripe") ? connRow("Stripe", c.stripe.configured ? when(c.stripe) : "Add this address as a webhook for charge.succeeded and charge.refunded", c.stripe.configured, status.webhooks.stripe) : null,
@@ -1603,10 +1651,15 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     root.replaceChildren(layout("#/upload", [
       h("header", {}, h("h1", {}, "Connect & upload"), h("p", { class: "sub" }, "Pick what you use, connect it, or upload your sales history. Your audit is ready right after.")),
       picker, chosen,
-      h("section", { class: "card", "aria-labelledby": "s1" },
-        h("div", { class: "srow", style: "gap:12px" }, h("span", { class: "num-dot" }, "1"), h("h2", { id: "s1" }, "Upload your sales history")),
-        drop, results,
-        h("a", { class: "btn btn-primary", href: "#/audit", style: "align-self:flex-start" }, "See my audit")),
+      (() => {
+        const up = h("section", { class: "card", "aria-labelledby": "s1" },
+          h("div", { class: "srow", style: "gap:12px" }, h("span", { class: "num-dot" }, "1"), h("h2", { id: "s1" }, "Upload your sales history")),
+          drop, results,
+          h("a", { class: "btn btn-primary", href: "#/audit", style: "align-self:flex-start" }, "See my audit"));
+        const t = status && status.totals;
+        return t && t.gross > 0 ? fold("upload", up, "Sales history", "Your sales are in. Upload more files any time.",
+          [h("a", { class: "btn btn-primary", href: "#/audit" }, "See my audit")]) : up;
+      })(),
       h("div", { class: "row" },
         h("section", { class: "card", "aria-labelledby": "s2" },
           h("div", { class: "srow", style: "gap:12px" }, h("span", { class: "num-dot" }, "2"), h("h2", { id: "s2" }, "Connect live payments")),
