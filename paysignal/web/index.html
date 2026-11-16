@@ -2569,6 +2569,42 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("span", { style: "font-weight:700;color:" + (x.ok ? "var(--win)" : x.warning_only ? "var(--muted)" : "var(--amber)") }, x.ok ? "✓" : x.warning_only ? "!" : "✗"),
         h("span", {}, x.label, x.fix ? h("span", { class: "small", style: "display:block" }, x.fix) : null))));
   }
+  // ---------- buyer list for Meta / TikTok customer-list audiences ----------
+  function buyerListCard() {
+    const card = h("section", { class: "card", "aria-labelledby": "bl-h" }, h("h2", { id: "bl-h" }, "Your buyer list for ads"), loading());
+    const get = async (fmt_, btn) => {
+      btn.disabled = true;
+      try {
+        const res = await fetch("/audience/" + cid() + "?format=" + fmt_, { headers: { "X-API-Key": session.key } });
+        if (res.status === 401) { signOut("Your key was not accepted. Please sign in again."); return; }
+        if (!res.ok) throw new Error(((await res.json().catch(() => ({}))).error) || "Couldn't make the list");
+        const name = ((res.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/) || [])[1] || "buyers.csv";
+        const url = URL.createObjectURL(await res.blob());
+        const a = h("a", { href: url, download: name }); document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+      } catch (e) { toast(e.message); }
+      btn.disabled = false;
+    };
+    const b = (fmt_, label) => h("button", { class: "btn btn-ghost", type: "button", onclick: (e) => get(fmt_, e.currentTarget) }, label);
+    api("/audience/" + cid() + "?format=summary").then((s) => {
+      const n = s.buyers;
+      card.replaceChildren(h("h2", { id: "bl-h" }, "Your buyer list for ads"),
+        h("p", { class: "sub", style: "margin:0" }, fmt.format(n) + " real buyers (" + fmt.format(s.with_email) + " with email, " + fmt.format(s.with_phone) + " with phone, " + fmt.format(s.repeat) + " bought more than once). Only paid orders count; customers whose orders were all refunded are left out. Every email and phone is scrambled (hashed) before it leaves ProAds."),
+        h("ul", { class: "list", style: "margin:0" },
+          h("li", {}, h("b", {}, "Exclude them"), " from ads for new customers, so your budget isn't spent on people who already bought."),
+          h("li", {}, h("b", {}, "Retarget them"), " with a new product or a bigger size."),
+          h("li", {}, h("b", {}, "Find similar people"), " (lookalike) once you have about " + fmt.format(s.lookalike_min) + " buyers" + (s.lookalike_ok ? ": you have enough." : ". Not yet."))),
+        n < s.meta_min ? h("p", { class: "small", style: "margin:0" }, "Meta needs about " + s.meta_min + " matched people before it can use a customer list, and not every buyer gets matched. With " + n + " buyers it may be too small for now; it grows by itself as sales come in.") : null,
+        n ? h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, b("meta", "Meta list (.csv, with value)"), s.with_email ? b("tiktok_email", "TikTok emails (.txt)") : null, s.with_phone ? b("tiktok_phone", "TikTok phones (.txt)") : null) : null,
+        h("details", {}, h("summary", { style: "cursor:pointer;font-size:14px" }, "How to upload"),
+          h("ol", { style: "font-size:14px;margin:8px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:4px" },
+            h("li", {}, h("b", {}, "Meta: "), "Ads Manager → Audiences → Create audience → Custom audience → Customer list. Upload the .csv, map email, phone and value (customer value), and confirm the data is already hashed."),
+            h("li", {}, h("b", {}, "TikTok: "), "Ads Manager → Tools → Audiences → Create audience → Custom audience → Customer file. Choose Email (or Phone) and SHA256, then upload the matching .txt. Upload the other file as a second audience if you like."),
+            h("li", {}, "In your campaign's ad group, add the audience under ", h("b", {}, "Exclude"), " for new-customer ads, or ", h("b", {}, "Include"), " for retargeting."))));
+    }).catch((e) => { if (e.message !== "signed out") card.replaceChildren(h("h2", {}, "Your buyer list for ads"), errorCard(e.message)); });
+    return card;
+  }
+
   async function viewBuyers() {
     const head = h("header", {}, h("h1", {}, "Buyer quality"),
       h("p", { class: "sub" }, "Based on the customers who actually made you money, what should you test next on Meta to get more like them?"));
@@ -2578,7 +2614,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     const a = d.analysis, cur = a.currency || "AED";
     const m = (x) => fmt.format(Math.round(x)) + " " + cur;
     const post = (url, body) => api(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
-    const blocks = [head];
+    const blocks = [head, buyerListCard()];
     if (!a.ready) {
       blocks.push(h("section", { class: "card" }, h("h2", {}, "Not enough buyers to judge yet"), h("p", { class: "sub", style: "margin:0" }, a.needs),
         h("a", { class: "btn btn-primary", href: "#/upload", style: "align-self:flex-start" }, "Upload sales history")));

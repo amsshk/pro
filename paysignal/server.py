@@ -44,7 +44,7 @@ from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
-from . import export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
+from . import audiences, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
 from .identity import hash_phone
 from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
@@ -2023,6 +2023,27 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             out["setup"].append({"label": "Choose your plan", "done": plan, "href": "#/billing",
                                  "how": "Free trial, cancel any time"})
         return out
+
+    @flask.get("/audience/<client_id>")
+    def buyer_list(client_id):
+        """Buyer list for Meta / TikTok customer-list audiences: ?format=summary | meta | tiktok_email | tiktok_phone.
+        Paid customers only, refunds taken off, every email and phone hashed (SHA-256) on the server."""
+        state.require_key(client_id)
+        fmt = request.args.get("format", "summary")
+        with state.lock:
+            rows = audiences.buyers(state.store, client_id)
+        if fmt == "summary":
+            return audiences.summary(rows)
+        if fmt not in ("meta", "tiktok_email", "tiktok_phone"):
+            abort(400, "format must be summary, meta, tiktok_email or tiktok_phone")
+        body = audiences.meta_csv(rows) if fmt == "meta" else audiences.tiktok_txt(rows, fmt.split("_")[1])
+        name = export.filename(state.config(client_id).get("name", client_id), "buyers", "csv" if fmt == "meta" else "txt")
+        name = name.replace("proads-report-", f"proads-{fmt.replace('_', '-')}-")
+        resp = Response(body, mimetype="text/csv" if fmt == "meta" else "text/plain")
+        resp.headers["Content-Disposition"] = f'attachment; filename="{name}"'
+        resp.headers["Cache-Control"] = "no-store"
+        log.info("buyer list %s downloaded for %s (%d buyers)", fmt, client_id, len(rows))
+        return resp
 
     @flask.get("/export/<client_id>")
     def export_report(client_id):
