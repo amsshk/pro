@@ -198,6 +198,68 @@ def library_links(name: str, country: str = "AE") -> dict:
             "tiktok": "https://ads.tiktok.com/business/creativecenter/inspiration/topads/pc/en"}
 
 
+SUGGEST_SYSTEM = (
+    "You suggest the direct competitors of a business, for a marketer who will look up their ads. Reply with JSON only: "
+    "{\"competitors\": [{\"name\": str, \"why\": str, \"type\": \"local\"|\"regional\"|\"global\"}]}. "
+    "Give 6 to 8 real, existing brands or shops that sell the same kind of product to the same customers in the given "
+    "country, most direct first, mixing local shops and bigger brands. Use the brand name as customers search it. "
+    "'why' is one short line on what they compete on (price, product, audience). Never invent a brand: if you aren't "
+    "sure a brand exists and sells there, leave it out. Never include the business itself. No URLs, no handles."
+)
+
+
+def links_for(name: str, country: str = "AE") -> dict:
+    """Where to look a competitor up: Meta's Ad Library, TikTok's Top Ads, and a web search for their shop."""
+    from urllib.parse import quote
+    out = library_links(name, country)
+    out["google"] = f"https://www.google.com/search?q={quote(name.strip() + ' ' + country)}"
+    out["instagram"] = f"https://www.google.com/search?q={quote('site:instagram.com ' + name.strip())}"
+    return out
+
+
+def suggest(ai: MetaAI, facts: dict, country: str) -> list[dict]:
+    reply = ai.chat("campaign_builder", [
+        {"role": "developer", "content": SUGGEST_SYSTEM},
+        {"role": "user", "content": json.dumps({"business": facts, "country": country}, ensure_ascii=False, default=str)}],
+        max_completion_tokens=1500)
+    try:
+        items = _extract_json(reply.text).get("competitors") or []
+    except (json.JSONDecodeError, CampaignError, AttributeError) as e:
+        raise CampaignError(f"could not read the suggestions the model returned: {e}") from e
+    own = (facts.get("name") or "").strip().lower()
+    out, seen = [], set()
+    for it in items:
+        name = str((it or {}).get("name") or "").strip()[:60]
+        if not name or name.lower() in seen or name.lower() == own:
+            continue
+        seen.add(name.lower())
+        kind = it.get("type") if it.get("type") in ("local", "regional", "global") else None
+        out.append({"name": name, "why": str(it.get("why") or "").strip()[:140], "type": kind, "links": links_for(name, country)})
+    return out[:8]
+
+
+class SuggestionStore:
+    DAYS = 7
+
+    def __init__(self, db):
+        self.db = db
+        self.db.execute("CREATE TABLE IF NOT EXISTS competitor_suggestions (client_id TEXT NOT NULL, country TEXT NOT NULL,"
+                        " at INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (client_id, country))")
+        self.db.commit()
+
+    def get(self, client_id: str, country: str) -> Optional[dict]:
+        r = self.db.execute("SELECT at, data FROM competitor_suggestions WHERE client_id=? AND country=?", (client_id, country)).fetchone()
+        if not r or r[0] < time.time() - self.DAYS * 86400:
+            return None
+        return {"at": r[0], "competitors": json.loads(r[1])}
+
+    def put(self, client_id: str, country: str, items: list[dict]) -> dict:
+        now = int(time.time())
+        self.db.execute("INSERT OR REPLACE INTO competitor_suggestions VALUES (?,?,?,?)", (client_id, country, now, json.dumps(items)))
+        self.db.commit()
+        return {"at": now, "competitors": items}
+
+
 def conquest_plan(ai: MetaAI, names: list[str], facts: dict, ads: Optional[list[dict]] = None, notes: str = "") -> dict:
     comp = [{k: a.get(k) for k in ("page", "headline", "text", "days_running")} for a in (ads or [])][:20]
     reply = ai.chat("campaign_builder", [

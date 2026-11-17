@@ -191,6 +191,7 @@ class App:
         self.partners = affiliates.PartnerStore(self.store.db)
         self.leads = leads.LeadStore(self.store.db)
         self.audience_sync = audience_sync.AudienceSyncStore(self.store.db)
+        self.competitor_suggestions = competitors.SuggestionStore(self.store.db)
         self.followups = followups.FollowupStore(self.store.db, shopify_app.encrypt, shopify_app.decrypt)
         self.digests = digest.DigestStore(self.store.db)
         self.store.db.execute("CREATE TABLE IF NOT EXISTS meta_pixel_links (client_id TEXT PRIMARY KEY, pixel_id TEXT NOT NULL,"
@@ -2913,6 +2914,40 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if own and own not in out:
             out.append(own)
         return out
+
+    @flask.get("/competitors/<client_id>/suggest")
+    def competitors_suggest(client_id):
+        """Premium: AI-suggested direct competitors for this business and country, each with links to look up their
+        ads (Meta Ad Library, TikTok Top Ads) and their shop. Kept for 7 days; ?fresh=1 asks again."""
+        state.require_key(client_id)
+        require_premium(client_id)
+        country = str(request.args.get("country") or "AE").strip().upper()[:2]
+        if not (len(country) == 2 and country.isalpha()):
+            abort(400, "country must be a 2-letter code like AE")
+        if not request.args.get("fresh"):
+            with state.lock:
+                hit = state.competitor_suggestions.get(client_id, country)
+            if hit:
+                return {**hit, "country": country}
+        cfg = state.config(client_id)
+        cur = cfg.get("currency", "AED")
+        with state.lock:
+            d = build_dashboard(state.engine(client_id), "90", currency=cur)
+        facts = {"name": cfg.get("name", client_id), "website": cfg.get("website", ""), "currency": cur,
+                 "top_products": [x["product"] for x in (d.get("products") or [])[:8]],
+                 "average_order": next((x["value"] for x in d.get("metrics") or [] if x["key"] == "aov"), None)}
+        if is_admin(client_id):
+            facts.update({"name": "ProAds", "website": public_base(), "product": PROADS_PRODUCT})
+        ai = need_ai()
+        try:
+            items = competitors.suggest(ai, facts, country)
+        except PermissionError as e:
+            abort(503, str(e))
+        except (competitors.CampaignError, RuntimeError) as e:
+            abort(502, f"Couldn't get suggestions right now: {e}")
+        with state.lock:
+            saved = state.competitor_suggestions.put(client_id, country, items)
+        return {**saved, "country": country}
 
     @flask.post("/competitors/<client_id>/scan")
     def competitors_scan(client_id):

@@ -3571,7 +3571,29 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         out);
     }
 
-    root.replaceChildren(layout("#/competitors", [head, conquestCard(() => found), h("section", { class: "card" }, h("h2", {}, "Who do you want to beat?"), form), results]));
+    // AI-suggested competitors, each with links to look up their ads and shop
+    const sugBody = h("div", { style: "display:flex;flex-direction:column;gap:10px" });
+    const sugCard = h("section", { class: "card", "aria-labelledby": "sug-h" },
+      h("div", { class: "between" }, h("h2", { id: "sug-h" }, "Suggested competitors"), h("span", { class: "badge b-neutral" }, "AI suggestions")), sugBody);
+    const loadSug = async (fresh) => {
+      sugBody.replaceChildren(loading("Finding businesses that sell what you sell…"));
+      try {
+        const r = await api("/competitors/" + cid() + "/suggest?country=" + encodeURIComponent(country.value || "AE") + (fresh ? "&fresh=1" : ""));
+        const link = (href, label) => h("a", { href, target: "_blank", rel: "noopener", style: "font-size:13px" }, label + " \u2197");
+        sugBody.replaceChildren(
+          h("p", { class: "sub", style: "margin:0;font-size:13px" }, "Picked by AI from what you sell. Check each one really competes with you before you act on it."),
+          ...(r.competitors || []).map((x) => h("div", { class: "adset", style: "gap:6px" },
+            h("div", { class: "between", style: "gap:8px;flex-wrap:wrap" }, h("b", { dir: "auto" }, x.name, x.type ? h("span", { class: "small" }, " · " + x.type) : null),
+              h("button", { class: "btn btn-primary", type: "button", onclick: () => { query.value = x.name; form.requestSubmit(); form.scrollIntoView({ behavior: "smooth" }); } }, "Scan their ads")),
+            x.why ? h("span", { class: "small", dir: "auto" }, x.why) : null,
+            h("div", { style: "display:flex;gap:14px;flex-wrap:wrap" }, link(x.links.meta, "Meta Ad Library"), link(x.links.tiktok, "TikTok Top Ads"), link(x.links.instagram, "Instagram"), link(x.links.google, "Google")))),
+          (r.competitors || []).length ? null : h("p", { class: "small", style: "margin:0" }, "No confident suggestions for this country. Type a competitor below."),
+          h("button", { class: "btn btn-ghost", type: "button", style: "align-self:flex-start", onclick: () => loadSug(true) }, "Suggest again"));
+      } catch (err) { if (err.message !== "signed out") sugBody.replaceChildren(errorCard(err.message)); }
+    };
+    country.addEventListener("change", () => loadSug(false));
+    loadSug(false);
+    root.replaceChildren(layout("#/competitors", [head, sugCard, conquestCard(() => found), h("section", { class: "card" }, h("h2", {}, "Who do you want to beat?"), form), results]));
   }
 
   // ---------- plan & billing ----------

@@ -168,3 +168,45 @@ def test_win_their_customers(tmp_path):
     sent = s.calls[-1]["body"]["messages"]
     assert "never contain the competitor's name" in sent[0]["content"] and "Rival" in sent[1]["content"]
     assert c.post("/competitors/bynawi/counter", json={"ads": [{"text": "x"}], "daily_budget": 40}, headers=v).status_code == 403
+
+
+def test_suggested_competitors_have_lookup_links_and_skip_self():
+    from paysignal import competitors as C
+
+    class AI:
+        def chat(self, task, messages, max_completion_tokens=0):
+            from types import SimpleNamespace
+            return SimpleNamespace(text='{"competitors": [{"name": "Arabian Oud", "why": "Oud perfumes, same buyers", "type": "regional"},'
+                                        ' {"name": "Bynawi", "why": "self"}, {"name": "arabian oud", "why": "dupe"}, {"name": "", "why": "x"}]}')
+    out = C.suggest(AI(), {"name": "Bynawi"}, "AE")
+    assert [x["name"] for x in out] == ["Arabian Oud"] and out[0]["type"] == "regional"
+    l = out[0]["links"]
+    assert "facebook.com/ads/library" in l["meta"] and "country=AE" in l["meta"] and "q=Arabian%20Oud" in l["meta"]
+    assert "creativecenter" in l["tiktok"] and l["google"].startswith("https://www.google.com/search?q=") and "instagram.com" in l["instagram"]
+
+
+def test_suggest_endpoint_premium_and_cached(tmp_path):
+    from types import SimpleNamespace
+    from paysignal.server import create_app
+    calls = []
+
+    class AI:
+        available = True
+
+        def chat(self, task, messages, max_completion_tokens=0):
+            calls.append(1)
+            return SimpleNamespace(text='{"competitors": [{"name": "Rival Scents", "why": "same price"}]}')
+    app = create_app({"pro": {"api_key": "sug-admin-0123456789ab", "name": "P"}, "shop": {"api_key": "sug-shop-0123456789abc", "name": "S"}},
+                     str(tmp_path / "s.db"), start_worker=False)
+    st = next(c.cell_contents for c in app.view_functions["competitors_suggest"].__closure__ if type(c.cell_contents).__name__ == "App")
+    st.ai = AI()
+    c = app.test_client()
+    assert c.get("/competitors/shop/suggest", headers={"X-API-Key": "sug-shop-0123456789abc"}).status_code == 402
+    H = {"X-API-Key": "sug-admin-0123456789ab"}
+    r = c.get("/competitors/pro/suggest?country=SA", headers=H).json
+    assert r["country"] == "SA" and r["competitors"][0]["name"] == "Rival Scents" and "country=SA" in r["competitors"][0]["links"]["meta"]
+    c.get("/competitors/pro/suggest?country=SA", headers=H)
+    assert len(calls) == 1                                   # kept for 7 days
+    c.get("/competitors/pro/suggest?country=SA&fresh=1", headers=H)
+    assert len(calls) == 2
+    assert c.get("/competitors/pro/suggest?country=1A", headers=H).status_code == 400
