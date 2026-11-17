@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>About · ProAds</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+<style>:root{color-scheme:light}body{margin:0;background:#fff;color:#141414;font-family:Inter,system-ui,sans-serif;line-height:1.65;font-size:16px}a{color:#4a7600}a:hover{color:#5e9400}main{max-width:760px;margin:0 auto;padding:32px clamp(16px,4vw,40px) 64px}.brand{display:inline-flex;align-items:center;gap:10px;font-family:Space Grotesk,Inter,sans-serif;font-weight:700;font-size:20px;color:#141414;text-decoration:none}h1{font-family:Space Grotesk,Inter,sans-serif;font-size:36px;margin:28px 0 4px}h2{font-family:Space Grotesk,Inter,sans-serif;font-size:21px;margin:32px 0 8px}p,li{color:#333}.muted{color:#5c5c5c;font-size:14px}ul{padding-left:20px}.co{border:1px solid #E8E9E3;border-radius:12px;padding:16px 18px;background:#fafaf7}.co dt{font-weight:600;font-size:14px;margin-top:6px}.co dd{margin:0 0 4px;color:#333}footer{margin-top:40px;font-size:14px;color:#5c5c5c}</style>
+</head>
+<body>
+<main>
+<a class="brand" href="/"><svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="5" fill="#5E9400"/><path d="M5 19l6-6 4 3 8-9" stroke="#0A0A0A" stroke-width="2.4" fill="none" stroke-linecap="square" stroke-linejoin="miter"/></svg>ProAds</a>
+<h1>About ProAds</h1>
+<p>ProAds is marketing software made by <b>EzDevSoft</b>, a software company in the United Arab Emirates. It helps businesses see which posts and ads bring people who actually pay, and teaches Meta (Facebook, Instagram) and TikTok to find more of them.</p>
+<h2>What ProAds does</h2>
+<ul>
+<li>Reads a business's real sales (Shopify, Stripe, or an uploaded orders file) and shows real profit, refunds, and which discount codes or products lose money.</li>
+<li>Matches each paid order to the post or ad that brought it, using tracking links and the ad platforms' own click IDs.</li>
+<li>Sends verified, paid sales back to Meta and TikTok through their official APIs, so their ads learn who buys rather than who clicks.</li>
+<li>Builds ad campaigns from a business's own products and results, and suggests budget changes that only happen when the owner approves them.</li>
+</ul>
+<h2>Who runs it</h2>
+<dl class="co">
+<div data-co-row><dt>Company</dt><dd data-co="legal_name">EzDevSoft</dd></div>
+<div data-co-row><dt>Trade licence</dt><dd data-co="trade_license"></dd></div>
+<div data-co-row><dt>Address</dt><dd data-co="address"></dd></div>
+<div data-co-row><dt>Email</dt><dd><a data-co="email" href="#"></a></dd></div>
+<div data-co-row><dt>Phone</dt><dd data-co="phone"></dd></div>
+<div data-co-row><dt>Website</dt><dd><a data-co="website" href="https://ezdevsoft.net">https://ezdevsoft.net</a></dd></div>
+</dl>
+<h2>Contact</h2>
+<p>Questions, support or partnership: email us at the address above. To report a security issue, see the <a href="/security">security page</a>.</p>
+<footer><a href="/">Home</a> · <a href="/about">About</a> · <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/security">Security</a> · <a href="/fees">Fees</a></footer>
+</main>
+<script>"use strict";fetch("/public-config").then(e=>e.json()).then(e=>{const o=e.company||{};document.querySelectorAll("[data-co]").forEach(t=>{const c=o[t.getAttribute("data-co")];c?(t.textContent=c,t.tagName==="A"&&c.includes("@")?t.href="mailto:"+c:t.tagName==="A"&&(t.href=c)):t.closest("[data-co-row]")&&(t.closest("[data-co-row]").hidden=!0)})}).catch(()=>{});</script>
+</body>
+</html>

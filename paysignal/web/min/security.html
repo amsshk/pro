@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security · ProAds</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+<style>:root{color-scheme:light}body{margin:0;background:#fff;color:#141414;font-family:Inter,system-ui,sans-serif;line-height:1.65;font-size:16px}a{color:#4a7600}a:hover{color:#5e9400}main{max-width:760px;margin:0 auto;padding:32px clamp(16px,4vw,40px) 64px}.brand{display:inline-flex;align-items:center;gap:10px;font-family:Space Grotesk,Inter,sans-serif;font-weight:700;font-size:20px;color:#141414;text-decoration:none}h1{font-family:Space Grotesk,Inter,sans-serif;font-size:36px;margin:28px 0 4px}h2{font-family:Space Grotesk,Inter,sans-serif;font-size:21px;margin:32px 0 8px}p,li{color:#333}.muted{color:#5c5c5c;font-size:14px}ul{padding-left:20px}.co{border:1px solid #E8E9E3;border-radius:12px;padding:16px 18px;background:#fafaf7}.co dt{font-weight:600;font-size:14px;margin-top:6px}.co dd{margin:0 0 4px;color:#333}footer{margin-top:40px;font-size:14px;color:#5c5c5c}</style>
+</head>
+<body>
+<main>
+<a class="brand" href="/"><svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="5" fill="#5E9400"/><path d="M5 19l6-6 4 3 8-9" stroke="#0A0A0A" stroke-width="2.4" fill="none" stroke-linecap="square" stroke-linejoin="miter"/></svg>ProAds</a>
+<h1>Security at ProAds</h1>
+<p>ProAds handles sales records and access to advertising accounts, so we keep its access narrow and its data locked down. This page explains how, in plain words.</p>
+<h2>What ProAds can and can't do</h2>
+<ul>
+<li><b>Stripe:</b> only restricted, read-only keys are accepted. A full secret key (which can move money) is refused.</li>
+<li><b>Shopify:</b> read access to orders (and, if granted, customers and products). ProAds can't change your store, prices or payouts.</li>
+<li><b>Meta and TikTok:</b> ProAds only acts on the ad accounts you choose, and only publishes or changes budgets after you approve.</li>
+<li>You can disconnect any of these at any time, from ProAds or from the platform itself.</li>
+</ul>
+<h2>How data is protected</h2>
+<ul>
+<li>All traffic uses HTTPS, enforced with HSTS.</li>
+<li>Passwords are stored only as salted scrypt hashes. Sign-in tokens are stored hashed and expire after 30 days; changing your password ends every other sign-in.</li>
+<li>Access tokens and keys for connected platforms are encrypted at rest and never shown again after you save them. They are removed from server logs and error messages.</li>
+<li>Each business's data is kept separate, and every request is checked against the business it belongs to.</li>
+<li>Connect links for Facebook and Shopify only work in the browser that started them, so nobody can attach your accounts to theirs by sending you a link.</li>
+<li>Repeated wrong passwords or keys are blocked, without locking out the real owner.</li>
+<li>Customer emails, phone numbers and IDs are SHA-256 hashed before they are sent to Meta or TikTok.</li>
+<li>The AI features see totals and post results only, never customer names, emails, phones or individual payments.</li>
+<li>Deleting your account deletes all of your business's data in ProAds (we keep only our own invoices to you, as tax law requires).</li>
+</ul>
+<h2>Report a security issue</h2>
+<p>If you think you've found a vulnerability, email us at <a data-co="email" href="#">our contact address</a> with the details. Please don't access other people's data or disrupt the service while testing. We'll reply and keep you updated until it's fixed.</p>
+<dl class="co">
+<div data-co-row><dt>Company</dt><dd data-co="legal_name">EzDevSoft</dd></div>
+<div data-co-row><dt>Trade licence</dt><dd data-co="trade_license"></dd></div>
+<div data-co-row><dt>Address</dt><dd data-co="address"></dd></div>
+<div data-co-row><dt>Email</dt><dd><a data-co="email" href="#"></a></dd></div>
+<div data-co-row><dt>Phone</dt><dd data-co="phone"></dd></div>
+<div data-co-row><dt>Website</dt><dd><a data-co="website" href="https://ezdevsoft.net">https://ezdevsoft.net</a></dd></div>
+</dl>
+<footer><a href="/">Home</a> · <a href="/about">About</a> · <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/security">Security</a> · <a href="/fees">Fees</a></footer>
+</main>
+<script>"use strict";fetch("/public-config").then(e=>e.json()).then(e=>{const o=e.company||{};document.querySelectorAll("[data-co]").forEach(t=>{const c=o[t.getAttribute("data-co")];c?(t.textContent=c,t.tagName==="A"&&c.includes("@")?t.href="mailto:"+c:t.tagName==="A"&&(t.href=c)):t.closest("[data-co-row]")&&(t.closest("[data-co-row]").hidden=!0)})}).catch(()=>{});</script>
+</body>
+</html>

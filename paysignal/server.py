@@ -24,6 +24,7 @@ Production:    gunicorn "paysignal.server:create_app()" --workers 1 --threads 8
 from __future__ import annotations
 
 import base64
+import hashlib
 import hmac
 import html
 import json
@@ -93,6 +94,22 @@ for _name in ("paysignal", "proads", "werkzeug", "urllib3", "requests"):
     logging.getLogger(_name).addFilter(_RedactSecrets())
 RETRAIN_SECONDS = 24 * 3600
 WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
+MIN_DIR = os.path.join(WEB_DIR, "min")
+
+
+def web_page_dir(name: str) -> str:
+    """Where to serve a page from: the compact build in web/min when it matches the current source page
+    (tools/minify_web.mjs records each source's SHA-256), otherwise the readable source page."""
+    try:
+        with open(os.path.join(MIN_DIR, "manifest.json"), encoding="utf-8") as f:
+            want = json.load(f).get(name)
+        with open(os.path.join(WEB_DIR, name), "rb") as f:
+            have = hashlib.sha256(f.read()).hexdigest()
+        if want and want == have and os.path.isfile(os.path.join(MIN_DIR, name)):
+            return MIN_DIR
+    except (OSError, ValueError):
+        pass
+    return WEB_DIR
 _DUMMY_HASH = hash_password("not-a-real-password")
 
 
@@ -3249,7 +3266,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             return {"launches": state.launches.list(client_id), "missing": meta_ads.missing()}
 
     def page(name: str, referrer: str = "no-referrer"):
-        resp = send_from_directory(WEB_DIR, name)
+        resp = send_from_directory(web_page_dir(name), name)
         resp.headers["Cache-Control"] = "no-cache"
         resp.headers["X-Frame-Options"] = "DENY"
         resp.headers["X-Content-Type-Options"] = "nosniff"
@@ -3263,7 +3280,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if not code:
             return page("landing.html", referrer="strict-origin-when-cross-origin")
         # Google Search Console "HTML tag" ownership check
-        html = open(os.path.join(WEB_DIR, "landing.html"), encoding="utf-8").read().replace(
+        html = open(os.path.join(web_page_dir("landing.html"), "landing.html"), encoding="utf-8").read().replace(
             "<head>", f'<head>\n<meta name="google-site-verification" content="{code}">', 1)
         resp = flask.response_class(html, mimetype="text/html")
         resp.headers.update({"Cache-Control": "no-cache", "X-Frame-Options": "DENY", "X-Content-Type-Options": "nosniff",
