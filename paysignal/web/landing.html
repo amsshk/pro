@@ -304,13 +304,27 @@ html[dir=rtl] h1,html[lang=hi] h1,html[lang=th] h1{line-height:1.3}
     const prev = (() => { try { return JSON.parse(get("proads.utm") || "null"); } catch (e) { return null; } })();
     if (!prev || Date.now() - prev.t > 90 * 864e5) set("proads.utm", JSON.stringify({ v: Object.fromEntries(UTM.map((k) => [k, params.get(k) || ""])), t: Date.now() }));
   }
+  // Partner link (?ref=CODE): remember the partner for 90 days (the first partner keeps the credit) and count the click.
+  const refCode = (params.get("ref") || "").toUpperCase().replace(/[^A-Z0-9_-]/g, "").slice(0, 24);
+  if (refCode) {
+    const prevRef = (() => { try { return JSON.parse(get("proads.ref") || "null"); } catch (e) { return null; } })();
+    if (!prevRef || Date.now() - prevRef.t > 90 * 864e5) set("proads.ref", JSON.stringify({ v: refCode, t: Date.now() }));
+    const today = new Date().toISOString().slice(0, 10);
+    if (get("proads.refday") !== refCode + today) {
+      set("proads.refday", refCode + today);
+      try { fetch("/t/ref", { method: "POST", keepalive: true, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: refCode }) }).catch(() => {}); } catch (e) {}
+    }
+  }
   // Count this page load for the funnel: only the campaign tags in the link, nothing about the visitor.
   try {
     fetch("/t/visit", { method: "POST", keepalive: true, headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ utm_source: params.get("utm_source") || "", utm_medium: params.get("utm_medium") || "", utm_campaign: params.get("utm_campaign") || "" }) }).catch(() => {});
   } catch (e) {}
   function utm() {
-    try { const x = JSON.parse(get("proads.utm") || "null"); return x && Date.now() - x.t < 90 * 864e5 ? x.v : {}; } catch (e) { return {}; }
+    let out = {};
+    try { const x = JSON.parse(get("proads.utm") || "null"); out = x && Date.now() - x.t < 90 * 864e5 ? { ...x.v } : {}; } catch (e) {}
+    try { const r = JSON.parse(get("proads.ref") || "null"); if (r && Date.now() - r.t < 90 * 864e5) out.ref = r.v; } catch (e) {}
+    return out;
   }
   function fbclid() {
     try { const x = JSON.parse(get("proads.fbclid") || "null"); return x && Date.now() - x.t < 90 * 864e5 ? x.v : ""; } catch (e) { return ""; }

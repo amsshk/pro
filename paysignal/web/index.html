@@ -1147,6 +1147,56 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   }
 
   // ---------- admin ----------
+  // ---------- Partner program (admin): people who bring paying clients earn a share ----------
+  function partnersCard() {
+    const base = "/admin/" + cid() + "/partners";
+    const list = h("div", { style: "display:flex;flex-direction:column;gap:10px" }, loading());
+    const out = h("div", {});
+    const m = (v, c) => fmt.format(Math.round(v || 0)) + " " + (c || "AED");
+    const f = { name: h("input", { placeholder: "Name, e.g. Caleb Kruse", "aria-label": "Partner name" }),
+      code: h("input", { placeholder: "Code, e.g. CALEB", "aria-label": "Partner code", style: "text-transform:uppercase" }),
+      email: h("input", { type: "email", placeholder: "Email (optional)", "aria-label": "Partner email" }),
+      percent: h("input", { type: "number", min: 1, max: 60, value: 20, "aria-label": "Commission %", style: "width:90px" }),
+      months: h("input", { type: "number", min: 1, max: 60, value: 12, "aria-label": "Months", style: "width:90px" }) };
+    async function load() {
+      try {
+        const r = await api(base);
+        list.replaceChildren(...(r.partners.length ? r.partners.map((p) => {
+          const amt = h("input", { type: "number", min: 1, step: "0.01", placeholder: "Amount", "aria-label": "Amount paid", style: "width:120px" });
+          return h("div", { class: "result", style: "flex-direction:column;align-items:stretch;gap:8px" },
+            h("div", { class: "between", style: "flex-wrap:wrap;gap:8px" }, h("b", {}, p.name + " · " + p.code),
+              h("span", { class: "badge " + (p.active ? "b-measured" : "b-neutral") }, p.percent + "% for " + p.months + " months")),
+            h("div", { class: "small" }, fmt.format(p.clicks) + " click" + (p.clicks === 1 ? "" : "s") + " · " + fmt.format(p.signups) + " sign-up" + (p.signups === 1 ? "" : "s") + " · " + fmt.format(p.paying) + " paying · earned " +
+              m(p.earned, p.currency) + " · paid " + m(p.paid, p.currency) + " · ", h("b", {}, "owed " + m(p.owed, p.currency))),
+            h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" },
+              h("button", { class: "btn btn-ghost", type: "button", onclick: () => copy(p.link) }, "Copy their link"),
+              h("button", { class: "btn btn-ghost", type: "button", onclick: () => copy(p.dashboard) }, "Copy their dashboard"),
+              h("form", { style: "display:flex;gap:6px", onsubmit: async (e) => {
+                e.preventDefault();
+                try { await api(base + "/" + encodeURIComponent(p.code) + "/pay", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ amount: amt.value, currency: p.currency }) });
+                  toast("Payout recorded"); load(); } catch (er) { if (er.message !== "signed out") toast(er.message); }
+              } }, amt, h("button", { class: "btn btn-ghost", type: "submit" }, "Mark as paid"))));
+        }) : [h("p", { class: "sub", style: "margin:0" }, "No partners yet.")]));
+      } catch (e) { if (e.message !== "signed out") list.replaceChildren(errorCard(e.message)); }
+    }
+    load();
+    return h("section", { class: "card", "aria-labelledby": "pt-h" },
+      h("div", { class: "between" }, h("h2", { id: "pt-h" }, "Partners"), h("span", { class: "badge b-neutral" }, "Affiliate program")),
+      h("p", { class: "sub", style: "margin:0" }, "People who bring paying clients earn a share of what those clients pay you (subscriptions and add-ons, after refunds; not the ad-spend fee). Each partner gets a link and a private dashboard; anyone who signs up within 90 days of clicking counts for them."),
+      h("form", { style: "display:flex;gap:8px;flex-wrap:wrap;align-items:center", onsubmit: async (e) => {
+        e.preventDefault();
+        try {
+          const r = await api(base, { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: f.name.value, code: f.code.value, email: f.email.value, percent: f.percent.value, months: f.months.value }) });
+          out.replaceChildren(h("div", { class: "result", style: "flex-direction:column;align-items:stretch;gap:6px" }, h("b", {}, "Partner saved. Send them both links:"),
+            h("span", { class: "small" }, "Their link: ", h("code", {}, r.partner.link)), h("span", { class: "small" }, "Their dashboard (private): ", h("code", {}, r.partner.dashboard))));
+          Object.values(f).forEach((x) => { if (x.type !== "number") x.value = ""; }); load();
+        } catch (er) { if (er.message !== "signed out") out.replaceChildren(errorCard(er.message)); }
+      } }, f.name, f.code, f.email, h("label", { class: "small", style: "display:flex;gap:6px;align-items:center" }, f.percent, "%"),
+        h("label", { class: "small", style: "display:flex;gap:6px;align-items:center" }, "for", f.months, "months"), h("button", { class: "btn btn-primary", type: "submit" }, "Add partner")),
+      out, list);
+  }
+
   // ---------- ProAds News (admin): articles on pro.ezdevsoft.net/news so ProAds advertises itself on Google ----------
   function newsCard() {
     const card = h("section", { class: "card", "aria-labelledby": "news-h" });
@@ -1264,6 +1314,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("div", { class: "kpi" }, h("span", { class: "label" }, "Connected Facebook"), h("span", { class: "num" }, fmt.format(t.with_facebook || 0)), h("span", { class: "note" }, fmt.format(t.live_campaigns || 0) + " live campaigns")),
         h("div", { class: "kpi" }, h("span", { class: "label" }, "Engine lessons"), h("span", { class: "num" }, fmt.format(t.lessons_from || 0)), h("span", { class: "note" }, "businesses it has learned from (anonymous)"))),
       linkBox,
+      partnersCard(),
       newsCard(),
       addCompanyCard(),
       h("section", { class: "card", "aria-labelledby": "accts" },

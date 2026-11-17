@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import base64
 import hmac
+import html
 import json
 import math
 import logging
@@ -44,7 +45,7 @@ from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
-from . import audiences, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
+from . import affiliates, audiences, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
 from .identity import hash_phone, normalize_phone
 from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
@@ -169,6 +170,7 @@ class App:
         self.tiktok_ads = tiktok_api.TikTokAdsStore(self.store.db)
         self.news = news.NewsStore(self.store.db)
         self.conquest = competitors.ConquestStore(self.store.db)
+        self.partners = affiliates.PartnerStore(self.store.db)
         self.store.db.execute("CREATE TABLE IF NOT EXISTS merged_payments (client_id TEXT NOT NULL, source TEXT NOT NULL,"
                               " external_id TEXT NOT NULL, kept_source TEXT NOT NULL, kept_id TEXT NOT NULL, at INTEGER NOT NULL,"
                               " PRIMARY KEY (client_id, source, external_id))")
@@ -3447,10 +3449,13 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         utm = {k: str(raw_utm.get(k) or from_url.get(k) or "")[:120] for k in
                ("utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term")}
         utm = {k: v for k, v in utm.items() if v}
+        ref = affiliates.clean_code(raw_utm.get("ref") or from_url.get("ref") or "")
         with state.lock:
             cid = state.accounts.create(clean, set(state.clients), json.dumps(ctx) if ctx else "")
             if utm:
                 state.accounts.set_attribution(cid, utm)
+            if ref:
+                state.partners.refer(cid, ref)
             token = state.accounts.new_session(cid)
         state.signup_limiter.fail(ip_key)              # counts sign-ups per connection
         event_id = f"signup:{cid}"
@@ -3484,7 +3489,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             raw = json.loads(a.get("utm") or "{}")
         except ValueError:
             raw = {}
-        utm = {k: str(raw.get(k) or "")[:120] for k in ("utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term")
+        utm = {k: str(raw.get(k) or "")[:120] for k in ("utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "ref")
                if isinstance(raw, dict) and raw.get(k)}
         with state.lock:
             st = state.social.new_state(provider, intent, {"ctx": ctx, "utm": utm})
@@ -3594,7 +3599,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             state.accounts.mark_no_password(cid)
             state.social.link(who["provider"], who["subject"], cid, who["email"])
             if got.get("utm"):
-                state.accounts.set_attribution(cid, got["utm"])
+                state.accounts.set_attribution(cid, {k: v for k, v in got["utm"].items() if k != "ref"})
+                if got["utm"].get("ref"):
+                    state.partners.refer(cid, got["utm"]["ref"])
             token = state.accounts.new_session(cid)
         state.signup_limiter.fail(ip_key)
         event_id = f"signup:{cid}"
@@ -4283,6 +4290,90 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
 
     def from_meta_ads(u: dict) -> bool:
         return (u.get("utm_medium") or "").lower() == "paid" and (u.get("utm_source") or "").lower() in META_SOURCES
+
+    # ---------------- partner program ----------------
+    @flask.post("/t/ref")
+    def partner_click():
+        """A visit through a partner's link (counted per partner per day; nothing about the visitor)."""
+        code = affiliates.clean_code((request.get_json(silent=True) or {}).get("code", ""))
+        with state.lock:
+            if code:
+                state.partners.click(code)
+        return ("", 204)
+
+    def partner_report(code: str) -> dict:
+        with state.lock:
+            rows = state.revenue.all()
+            return state.partners.report(code, rows, lambda c: state.billing.active(c))
+
+    @flask.get("/admin/<admin_id>/partners")
+    def admin_partners(admin_id):
+        require_admin(admin_id)
+        with state.lock:
+            plist = state.partners.list()
+        base = public_base()
+        return {"partners": [{**partner_report(p["code"]), "email": p["email"], "link": f"{base}/?ref={p['code']}",
+                              "dashboard": f"{base}/partner/{p['token']}"} for p in plist]}
+
+    @flask.post("/admin/<admin_id>/partners")
+    def admin_partner_save(admin_id):
+        require_admin(admin_id)
+        b = request.get_json(silent=True) or {}
+        try:
+            with state.lock:
+                p = state.partners.save(b.get("code", ""), b.get("name", ""), b.get("email", ""),
+                                        float(b.get("percent") or 20), int(b.get("months") or 12), b.get("active", True) is not False)
+        except (TypeError, ValueError) as e:
+            abort(400, str(e))
+        return {"partner": {"code": p["code"], "link": f"{public_base()}/?ref={p['code']}", "dashboard": f"{public_base()}/partner/{p['token']}"}}
+
+    @flask.post("/admin/<admin_id>/partners/<code>/pay")
+    def admin_partner_pay(admin_id, code):
+        require_admin(admin_id)
+        b = request.get_json(silent=True) or {}
+        with state.lock:
+            if not state.partners.get(code):
+                abort(404, "No such partner")
+        try:
+            with state.lock:
+                state.partners.pay(code, float(b.get("amount") or 0), str(b.get("currency") or "AED"), str(b.get("note") or ""))
+        except (TypeError, ValueError) as e:
+            abort(400, str(e))
+        return partner_report(code)
+
+    @flask.get("/partner/<token>")
+    def partner_dashboard(token):
+        """The partner's own page (private link): what they brought and earned. No client names."""
+        with state.lock:
+            p = state.partners.by_token(token)
+        if not p:
+            abort(404)
+        r = partner_report(p["code"])
+        e = lambda x: html.escape(str(x))
+        money = lambda v: f"{r['currency']} {v:,.2f}"
+        rows = "".join(f"<tr><td>{e(m['month'])}</td><td>{money(m['earned'])}</td></tr>" for m in r["by_month"]) or \
+            "<tr><td colspan=2>Nothing yet. Commission appears once a client you brought pays.</td></tr>"
+        pays = "".join(f"<tr><td>{datetime.fromtimestamp(x['at'], timezone.utc):%d %b %Y}</td><td>{e(x['currency'])} {x['amount']:,.2f}</td>"
+                       f"<td>{e(x['note'] or '')}</td></tr>" for x in r["payouts"]) or "<tr><td colspan=3>No payouts yet.</td></tr>"
+        link = f"{public_base()}/?ref={p['code']}"
+        page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex"><title>ProAds partner · {e(p['name'])}</title><link rel="icon" href="/proads-logo.png">
+<style>body{{margin:0;font-family:Inter,system-ui,sans-serif;background:#FAFAF7;color:#141414}}main{{max-width:760px;margin:0 auto;padding:28px 16px 48px}}
+h1{{font-size:28px;margin:18px 0 4px}}.sub{{color:#5C5C5C}}.k{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:20px 0}}
+.k div{{background:#fff;border:1px solid #E3E6DD;border-radius:12px;padding:12px 14px}}.k span{{display:block;color:#5C5C5C;font-size:13px}}.k b{{font-size:22px}}
+.box{{background:#fff;border:1px solid #E3E6DD;border-radius:12px;padding:14px;margin:14px 0}}code{{word-break:break-all;background:#F3F7EA;padding:6px 8px;border-radius:8px;display:inline-block}}
+table{{width:100%;border-collapse:collapse;font-size:14px}}td,th{{text-align:left;padding:8px 6px;border-bottom:1px solid #EEE}}.brand{{display:flex;gap:8px;align-items:center;font-weight:700;font-size:18px}}</style></head>
+<body><main><div class="brand"><img src="/proads-logo.png" width="28" height="28" alt="">ProAds partner</div>
+<h1>Hi {e(p['name'])}</h1><p class="sub">You earn {r['percent']:g}% of what each client you bring pays ProAds, for their first {r['months']} months (after refunds).</p>
+<div class="box"><b>Your link</b><br><code>{e(link)}</code><p class="sub" style="margin:8px 0 0">Anyone who signs up within 90 days of clicking it counts as yours. Code: <b>{e(p['code'])}</b></p></div>
+<div class="k"><div><span>Clicks</span><b>{r['clicks']:,}</b></div><div><span>Sign-ups</span><b>{r['signups']:,}</b></div><div><span>Paying now</span><b>{r['paying']:,}</b></div>
+<div><span>Earned</span><b>{money(r['earned'])}</b></div><div><span>Paid to you</span><b>{money(r['paid'])}</b></div><div><span>Owed</span><b>{money(r['owed'])}</b></div></div>
+<div class="box"><b>Earned by month</b><table>{rows}</table></div><div class="box"><b>Payouts</b><table>{pays}</table></div>
+<p class="sub" style="font-size:13px">Questions? Reply to the email you got this link in. Keep this link private.</p></main></body></html>"""
+        resp = html_resp(page, cache=0)
+        resp.headers["Cache-Control"] = "no-store"
+        resp.headers["Referrer-Policy"] = "no-referrer"
+        return resp
 
     @flask.post("/t/visit")
     def landing_visit():
