@@ -1632,9 +1632,9 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     const drop = h("label", { class: "drop", for: "files" },
       h("svg", { width: 36, height: 36, viewBox: "0 0 24 24", fill: "none", stroke: "#5E9400", "stroke-width": 1.8, "aria-hidden": "true" }, h("path", { d: "M12 16V4M6 10l6-6 6 6M4 20h16" })),
       h("b", { style: "font-size:16px" }, "Drop export files here, or choose files"),
-      h("span", { class: "sub", style: "font-size:14px" }, "CSV or Excel: Shopify, Salla, Zid, WooCommerce, Stripe, Tap, any shop or POS export, or Meta posts. Each file is recognised automatically."),
+      h("span", { class: "sub", style: "font-size:14px" }, "CSV or Excel: Shopify, Salla, Zid, WooCommerce, Stripe, Tap, any shop or POS export, Meta posts, or Meta Business Suite leads (chat sales). Each file is recognised automatically."),
       input);
-    const KIND = { shopify: "Shopify orders", stripe: "Stripe payments", posts: "Posts", csv: "Sales list", sales: "Sales list" };
+    const KIND = { shopify: "Shopify orders", stripe: "Stripe payments", posts: "Posts", csv: "Sales list", sales: "Sales list", leads: "Meta leads (chat sales)" };
     async function handle(files) {
       for (const file of files) {
         const row = h("div", { class: "result" }, h("span", {}, h("b", {}, file.name)), h("span", { class: "ok" }, h("span", { class: "spinner", "aria-hidden": "true" }), " Importing…"));
@@ -1645,6 +1645,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
           const body = excel ? await file.arrayBuffer() : await file.text();
           const r = await api("/import/" + cid(), { method: "POST", headers: { "Content-Type": excel ? "application/octet-stream" : "text/csv; charset=utf-8" }, body });
           let said = r.kind === "posts" ? (r.posts + " posts, labelled by " + (r.labels.source || "your labels")) :
+            r.kind === "leads" ? (fmt.format(r.new) + " new leads" + (r.duplicates ? ", " + fmt.format(r.duplicates) + " already here" : "") + " · see them on Home") :
             (fmt.format(r.new) + " new records" + (r.duplicates ? ", " + fmt.format(r.duplicates) + " already here" : ""));
           if (r.labels && r.labels.low_confidence && r.labels.low_confidence.length) said += " · " + r.labels.low_confidence.length + " to check by hand";
           row.replaceChildren(h("span", {}, h("b", {}, file.name), " · " + (KIND[r.kind] || r.kind)), h("span", { class: "ok" }, said));
@@ -3918,6 +3919,45 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     return box;
   }
 
+  // ---------- leads from Meta Business Suite (Messenger sales) ----------
+  async function leadsCard() {
+    let L;
+    try { L = await api("/leads/" + cid()); } catch (e) { return null; }
+    if (!L || !L.leads) return null;
+    const cur = L.currency, dmy = (t) => new Date(t * 1000).toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+    const maxM = Math.max(...L.months.map((m) => m.leads), 1), maxAd = Math.max(...L.top_ads.map((a) => a.buyers || a.leads), 1);
+    const maxT = Math.max(...L.team.map((t) => t.buyers), 1);
+    const bars = h("div", { role: "img", "aria-label": "Leads per month", style: "display:flex;align-items:flex-end;gap:3px;height:90px;margin-top:4px" },
+      L.months.map((m) => h("div", { title: m.month + ": " + m.leads + " lead(s), " + m.buyers + " bought",
+        style: "flex:1;min-width:3px;border-radius:3px 3px 0 0;background:" + (m.leads ? "#5E9400" : "var(--soft)") + ";height:" + Math.max(3, Math.round(86 * m.leads / maxM)) + "px" })));
+    const bar = (label, sub, value, w) => h("div", { class: "hbar" }, h("span", {}, label, sub ? h("span", { class: "sub", style: "font-size:12px" }, " · " + sub) : null),
+      h("b", {}, value), h("div", { class: "track", "aria-hidden": "true" }, h("div", { style: "width:" + Math.max(2, Math.round(100 * w)) + "%" })));
+    const price = h("input", { type: "number", min: "1", step: "any", inputmode: "decimal", value: L.avg_price || "", placeholder: "e.g. 1500",
+      "aria-label": "Average price of one sale in " + cur, style: "max-width:140px" });
+    const save = h("button", { class: "btn btn-ghost", type: "button", onclick: async () => {
+      save.disabled = true;
+      try { await api("/leads/" + cid() + "/price", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ price: price.value || null }) }); viewHome(); }
+      catch (e) { toast(e.message); save.disabled = false; } } }, "Save");
+    const lowSent = L.buyers >= 5 && L.sent_to_meta < L.buyers / 2;
+    return h("section", { class: "card", "aria-labelledby": "leads-h" },
+      h("div", { class: "between" }, h("h2", { id: "leads-h" }, "Chat sales (Meta leads)"), h("span", { class: "sub", style: "font-size:13px" }, dmy(L.first) + " – " + dmy(L.last))),
+      h("div", { style: "display:flex;gap:22px;flex-wrap:wrap;font-size:14px" },
+        h("span", {}, h("b", { style: "font-size:22px" }, fmt.format(L.leads)), " leads"),
+        h("span", {}, h("b", { style: "font-size:22px" }, fmt.format(L.buyers)), " bought"),
+        L.value ? h("span", {}, h("b", { style: "font-size:22px" }, money0(L.value, cur)), " estimated") : null,
+        h("span", { class: "sub" }, L.sources.map((x) => x.source + " " + x.leads).join(" · "))),
+      bars,
+      lowSent ? h("div", { class: "result err", role: "note" }, h("span", {}, h("b", {}, "Meta isn't learning from these sales. "),
+        "Only " + L.sent_to_meta + " of " + L.buyers + " buyers were sent to Meta as a purchase. Labelling a chat “Purchased” doesn't tell Meta: in the Meta inbox, mark the chat as purchased and enter the amount, so ads optimised for Messenger purchases can learn.")) : null,
+      L.top_ads.length ? h("div", { style: "display:flex;flex-direction:column;gap:10px" }, h("b", { style: "font-size:14px" }, "Ads that brought buyers"),
+        L.top_ads.slice(0, 6).map((a) => bar("Ad " + a.ad_id, fmt.format(a.leads) + " lead" + (a.leads === 1 ? "" : "s"), fmt.format(a.buyers) + " bought", (a.buyers || a.leads) / maxAd))) : null,
+      L.team.length ? h("div", { style: "display:flex;flex-direction:column;gap:10px" }, h("b", { style: "font-size:14px" }, "Who closed the sales"),
+        L.team.slice(0, 6).map((t) => bar(t.label, "", fmt.format(t.buyers) + " bought", t.buyers / maxT))) : null,
+      h("div", { style: "display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:14px" },
+        h("span", {}, "Average price of one sale (" + cur + ")"), price, save,
+        h("span", { class: "sub", style: "font-size:13px" }, "Turns buyers into money. Upload a newer export from Meta Business Suite → Leads anytime.")));
+  }
+
   async function viewHome() {
     const body = h("div", { style: "display:contents" }, loading());
     const periods = h("div", { class: "periods", role: "group", "aria-label": "Time period" }, PERIOD_LABELS.map(([v, label]) =>
@@ -3958,7 +3998,8 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("span", { style: "display:flex;flex-direction:column;gap:2px" }, h("b", { style: "font-size:14px" }, x.label), x.done ? null : h("span", { class: "sub", style: "font-size:13px" }, x.how)),
         h("span", { class: "sr" }, x.done ? "done" : "to do")))));
     if (d.mode !== "proads" && !d.has_data) {
-      body.replaceChildren(...[adsBanner(d.ads_access), guide, await adsSection(homePeriod)].filter(Boolean), h("section", { class: "card empty" }, h("h2", {}, "Your sales will show here"),
+      const [adsEmpty, leadsEmpty] = await Promise.all([adsSection(homePeriod), leadsCard()]);
+      body.replaceChildren(...[adsBanner(d.ads_access), guide, adsEmpty, leadsEmpty].filter(Boolean), h("section", { class: "card empty" }, h("h2", {}, "Your sales will show here"),
         h("p", { class: "sub" }, "Bring in your sales and this page fills with sales, real profit and orders, day by day."),
         h("a", { class: "btn btn-primary", href: "#/upload" }, "Bring in your sales")));
       return;
@@ -4025,7 +4066,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       draw();
       return;
     }
-    const [adsBox, fcBox, lk] = await Promise.all([adsSection(homePeriod), forecastSection(), api("/leaks/" + cid()).catch(() => null)]);
+    const [adsBox, fcBox, lk, leadsBox] = await Promise.all([adsSection(homePeriod), forecastSection(), api("/leaks/" + cid()).catch(() => null), leadsCard()]);
     const leakNote = lk && lk.leaks && lk.leaks.length ? h("a", { href: "#/audit", class: "result err", style: "text-decoration:none;color:inherit" },
       h("span", {}, h("b", {}, "Money leaks: "), (lk.measured_per_month ? "about " + fmt.format(Math.round(lk.measured_per_month)) + " " + lk.currency + " a month measured" : "")
         + (lk.at_stake_per_month ? (lk.measured_per_month ? ", " : "") + "up to " + fmt.format(Math.round(lk.at_stake_per_month)) + " " + lk.currency + " more at stake" : "")
@@ -4039,7 +4080,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         chartHost, extra),
       ...[fcBox].filter(Boolean),
       h("div", { class: "row", style: "align-items:flex-start" },
-        h("div", { style: "flex:3 1 420px;display:flex;flex-direction:column;gap:24px;min-width:0" }, ...[sources, methodsCard, products].filter(Boolean)),
+        h("div", { style: "flex:3 1 420px;display:flex;flex-direction:column;gap:24px;min-width:0" }, ...[sources, leadsBox, methodsCard, products].filter(Boolean)),
         h("div", { style: "flex:2 1 300px;display:flex;flex-direction:column;gap:24px;min-width:0" }, guide, camps)));
     draw();
     let lastW = chartHost.clientWidth, timer = null;

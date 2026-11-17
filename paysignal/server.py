@@ -46,7 +46,7 @@ from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
-from . import affiliates, audiences, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
+from . import affiliates, audiences, leads, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
 from .identity import hash_phone, normalize_phone
 from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
@@ -188,6 +188,7 @@ class App:
         self.news = news.NewsStore(self.store.db)
         self.conquest = competitors.ConquestStore(self.store.db)
         self.partners = affiliates.PartnerStore(self.store.db)
+        self.leads = leads.LeadStore(self.store.db)
         self.store.db.execute("CREATE TABLE IF NOT EXISTS meta_pixel_links (client_id TEXT PRIMARY KEY, pixel_id TEXT NOT NULL,"
                               " name TEXT, token_enc TEXT NOT NULL, added_at INTEGER NOT NULL)")
         self.store.db.commit()
@@ -1335,6 +1336,11 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if res["kind"] == "unknown":
             return jsonify({"errors": res["errors"]}), 400
         out = {"kind": res["kind"], "errors": res["errors"]}
+        if res.get("leads"):
+            with state.lock:
+                out.update(state.leads.add(client_id, res["leads"]))
+            state.maybe_activate(client_id)
+            return out
         if res.get("unpaid"):
             with state.lock:
                 out["unpaid_kept"] = state.unpaid.add(client_id, res["unpaid"])
@@ -1349,6 +1355,27 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if out.get("new") or res["posts"]:
             state.maybe_activate(client_id)
         return out
+
+    @flask.get("/leads/<client_id>")
+    def leads_summary(client_id):
+        """Messenger and lead-form leads uploaded from Meta Business Suite: buyers per month, ad and team member."""
+        state.require_key(client_id)
+        with state.lock:
+            out = state.leads.summary(client_id)
+        out["currency"] = state.config(client_id).get("currency", "AED")
+        return out
+
+    @flask.post("/leads/<client_id>/price")
+    def leads_price(client_id):
+        """Average price of one sale, so buyer counts show as money. Send {"price": null} to remove it."""
+        state.require_key(client_id)
+        price = (request.get_json(silent=True) or {}).get("price")
+        try:
+            with state.lock:
+                state.leads.set_avg_price(client_id, None if price in (None, "") else float(price))
+        except (TypeError, ValueError) as e:
+            abort(400, str(e) if isinstance(e, ValueError) and "average" in str(e) else "Enter the average price of one sale, like 1500.")
+        return leads_summary(client_id)
 
     @flask.get("/audit/<client_id>")
     def audit_endpoint(client_id):
@@ -1410,6 +1437,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             n = state.store.db.execute("DELETE FROM payments WHERE client_id=?", (client_id,)).rowcount
             posts = state.store.db.execute("DELETE FROM posts WHERE client_id=?", (client_id,)).rowcount
             state.unpaid.clear(client_id)
+            state.leads.clear(client_id)
             state.store.db.commit()
             for cache in (state.engines, state.posts, state.trained_at):
                 cache.pop(client_id, None)

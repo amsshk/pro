@@ -257,6 +257,9 @@ def detect(text: str) -> str:
         return "csv"
     if looks_like_sales(header):
         return "sales"
+    from .leads import is_meta_leads
+    if is_meta_leads(header):
+        return "leads"
     return "unknown"
 
 
@@ -390,5 +393,9 @@ def _import_auto(text: str, client_id: str, costs: dict | None, platform: str, d
     if kind == "sales":
         payments, errors = import_generic_sales(text, client_id, default_currency)
         return {"kind": kind, "payments": payments, "posts": [], "errors": errors}
+    if kind == "leads":
+        from .leads import parse as parse_leads
+        leads, errors = parse_leads(text)
+        return {"kind": kind, "payments": [], "posts": [], "leads": leads, "errors": errors}
     return {"kind": "unknown", "payments": [], "posts": [],
             "errors": ["file not recognised: it needs at least a date column and an amount (or total) column"]}
