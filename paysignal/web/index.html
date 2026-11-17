@@ -1464,7 +1464,39 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       card.replaceChildren(head(expired ? "Reconnect Facebook & Instagram" : "Connect Facebook & Instagram", expired ? "Access expired" : "Needed for ads", false),
         h("p", { class: "sub", style: "margin:0" }, "Approve on Facebook's own page and pick your ad account and Page. Then ProAds can publish campaigns in your ad account (paused until you press Go live) and send your real sale values to your Pixel, so Meta finds people who pay."),
         h("ul", { class: "list" }, h("li", {}, "Nothing spends money until you press Go live"), h("li", {}, "ProAds never sees your Facebook password"), h("li", {}, "Disconnect any time")),
-        btn, ...(notice ? [notice] : []));
+        btn, pixelTokenBox(), ...(notice ? [notice] : []));
+    }
+    // Facebook login not available? Send sales to the Pixel with its own Conversions API token instead
+    function pixelTokenBox() {
+      const mp = (status.connections && status.connections.meta_pixel) || {};
+      const out = h("div", {});
+      if (mp.connected) {
+        return h("div", { class: "result", style: "flex-direction:column;align-items:stretch;gap:6px" },
+          h("b", {}, "Sales go to Pixel " + (mp.name ? mp.name + " · " : "") + mp.pixel_id),
+          h("span", { class: "small" }, "Every paid order is sent to Meta within minutes (the last 7 days were sent first). Check it on Meta learning."),
+          h("button", { class: "btn btn-ghost", type: "button", style: "align-self:flex-start", onclick: async (e) => {
+            const b = e.currentTarget; if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.textContent = "Click again to stop sending"; return; }
+            try { await api("/connect/" + cid() + "/meta-pixel/disconnect", { method: "POST" }); status = await api("/status/" + cid()); route(); }
+            catch (er) { if (er.message !== "signed out") toast(er.message); } } }, "Disconnect Pixel"));
+      }
+      const pid = h("input", { inputmode: "numeric", placeholder: "Pixel ID, e.g. 1234567890123456", "aria-label": "Pixel ID", autocomplete: "off" });
+      const tok = h("input", { type: "password", autocomplete: "new-password", name: "proads-secret-" + Math.random().toString(36).slice(2), "data-lpignore": "true", "data-1p-ignore": "true",
+        placeholder: "Conversions API access token (EAA…)", "aria-label": "Access token" });
+      const go = h("button", { class: "btn btn-primary", type: "submit" }, "Connect Pixel");
+      return h("details", { style: "border:1px solid var(--line);border-radius:12px;padding:12px 14px" },
+        h("summary", { style: "cursor:pointer;font-weight:600" }, "Facebook login not working? Connect your Pixel with a token instead"),
+        h("ol", { style: "margin:10px 0;padding-left:20px;font-size:14px;display:flex;flex-direction:column;gap:6px" },
+          h("li", {}, "Open ", h("a", { href: "https://business.facebook.com/events_manager2", target: "_blank", rel: "noopener" }, "Meta Events Manager"), " and pick your Pixel (dataset). Copy its ID (the number under its name)."),
+          h("li", {}, "Go to ", h("b", {}, "Settings → Conversions API → Generate access token"), ", and copy the token."),
+          h("li", {}, "Paste both here. ProAds checks them with Meta, then sends every paid order (last 7 days first).")),
+        h("form", { style: "display:flex;flex-direction:column;gap:8px", onsubmit: async (e) => {
+          e.preventDefault(); go.disabled = true; out.replaceChildren();
+          try { const r = await api("/connect/" + cid() + "/meta-pixel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pixel_id: pid.value, token: tok.value }) });
+            tok.value = ""; toast("Pixel connected" + (r.name ? ": " + r.name : "")); status = await api("/status/" + cid()); route(); }
+          catch (er) { if (er.message !== "signed out") out.replaceChildren(errorCard(er.message)); }
+          go.disabled = false;
+        } }, pid, tok, go), out,
+        h("p", { class: "small", style: "margin:6px 0 0" }, "This sends sales only. Publishing campaigns from ProAds still needs the Facebook connection above."));
     }
     function disconnectBtn() {
       let armed = false, force = false;

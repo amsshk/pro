@@ -171,6 +171,9 @@ class App:
         self.news = news.NewsStore(self.store.db)
         self.conquest = competitors.ConquestStore(self.store.db)
         self.partners = affiliates.PartnerStore(self.store.db)
+        self.store.db.execute("CREATE TABLE IF NOT EXISTS meta_pixel_links (client_id TEXT PRIMARY KEY, pixel_id TEXT NOT NULL,"
+                              " name TEXT, token_enc TEXT NOT NULL, added_at INTEGER NOT NULL)")
+        self.store.db.commit()
         self.store.db.execute("CREATE TABLE IF NOT EXISTS merged_payments (client_id TEXT NOT NULL, source TEXT NOT NULL,"
                               " external_id TEXT NOT NULL, kept_source TEXT NOT NULL, kept_id TEXT NOT NULL, at INTEGER NOT NULL,"
                               " PRIMARY KEY (client_id, source, external_id))")
@@ -255,7 +258,15 @@ class App:
         """Conversions API settings from the client's own Facebook connection, if they chose a Pixel."""
         c = self.meta_conns.get(client_id)
         if not c or not c["pixel_id"] or not c["send_sales"] or (c["expires_at"] and c["expires_at"] < time.time()):
-            return None
+            # no Facebook login: a Pixel connected with its own Conversions API token (Events Manager) also works
+            row = self.store.db.execute("SELECT pixel_id, token_enc FROM meta_pixel_links WHERE client_id=?", (client_id,)).fetchone()
+            if not row:
+                return None
+            try:
+                return {"dataset_id": row[0], "access_token": shopify_app.decrypt(row[1]), "live": True}
+            except Exception:
+                log.warning("could not read the Pixel token of %s", client_id)
+                return None
         try:
             return {"dataset_id": c["pixel_id"], "access_token": meta_connect.decrypt(c["token"]), "live": True}
         except Exception:
@@ -352,7 +363,8 @@ class App:
             # Facebook with the admin's own login (agencies run their clients' ad accounts)
             if request.method not in ("GET", "HEAD", "OPTIONS") and self.accounts.session_viewer(given) and \
                     request.path not in (f"/competitors/{client_id}/scan", f"/competitors/{client_id}/conquest",
-                                         f"/meta/connect/{client_id}", f"/meta/{client_id}/select", f"/meta/{client_id}/disconnect"):
+                                         f"/meta/connect/{client_id}", f"/meta/{client_id}/select", f"/meta/{client_id}/disconnect",
+                                         f"/connect/{client_id}/meta-pixel", f"/connect/{client_id}/meta-pixel/disconnect"):
                 abort(403, "You're viewing this business as admin, so it's view only. Switch back to your account to make changes.")
             return
         if expected and given and hmac.compare_digest(expected, given):
@@ -3938,6 +3950,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 "uploads": payments.get("csv", {}),
                 "meta_capi": {"configured": bool(meta.get("dataset_id") and meta.get("access_token")),
                               "live": bool(meta.get("live"))},
+                "meta_pixel": (lambda r: {"connected": True, "pixel_id": r[0], "name": r[1] or ""} if r else {"connected": False})(
+                    state.store.db.execute("SELECT pixel_id, name FROM meta_pixel_links WHERE client_id=?", (client_id,)).fetchone()),
                 "ai": {"configured": ai.available},
                 "ads_publish": {"configured": state.ads_settings(client_id, is_admin(client_id)) is not None},
                 "meta_login": {k: v for k, v in meta_connect.public_view(state.meta_conns.get(client_id)).items()
@@ -5114,6 +5128,46 @@ table{{width:100%;border-collapse:collapse;font-size:14px}}td,th{{text-align:lef
     def same_browser(state_arg: str) -> bool:
         got = request.cookies.get(OAUTH_COOKIE, "")
         return bool(got and state_arg and hmac.compare_digest(got, state_arg))
+
+    @flask.post("/connect/<client_id>/meta-pixel")
+    def meta_pixel_connect(client_id):
+        """Send sales to a Meta Pixel without Facebook Login: its ID plus a Conversions API access token from Events Manager
+        (Pixel > Settings > Conversions API > Generate access token). Checked with Meta before it's saved; kept encrypted."""
+        state.require_key(client_id)
+        b = request.get_json(silent=True) or {}
+        pid = re.sub(r"\D", "", str(b.get("pixel_id") or ""))
+        tok = re.sub(r"\s+", "", str(b.get("token") or ""))
+        if not 10 <= len(pid) <= 20:
+            abort(400, "Paste the Pixel ID: the number under the Pixel's name in Events Manager (15-16 digits).")
+        if len(tok) < 50 or not tok.startswith("EA"):
+            abort(400, "Paste the access token from Events Manager: Pixel > Settings > Conversions API > Generate access token. It starts with EAA.")
+        version = meta_connect.settings()["version"]
+        http = state.meta_http
+        if http is None:
+            import requests as http
+        try:
+            r = http.get(f"https://graph.facebook.com/{version}/{pid}", params={"fields": "id,name", "access_token": tok}, timeout=20)
+            body = r.json()
+        except Exception as e:
+            abort(502, f"Couldn't reach Meta to check the token ({type(e).__name__}). Try again in a minute.")
+        if r.status_code != 200 or "error" in body:
+            msg = ((body.get("error") or {}).get("error_user_msg") or (body.get("error") or {}).get("message") or "Meta refused it")
+            abort(400, "Meta didn't accept this Pixel ID and token: " + redact(msg)[:200])
+        with state.lock:
+            state.store.db.execute("INSERT INTO meta_pixel_links VALUES (?,?,?,?,?) ON CONFLICT(client_id) DO UPDATE SET pixel_id=excluded.pixel_id,"
+                                   " name=excluded.name, token_enc=excluded.token_enc, added_at=excluded.added_at",
+                                   (client_id, pid, str(body.get("name") or "")[:80], shopify_app.encrypt(tok), int(time.time())))
+            state.store.db.commit()
+        state.nudge_meta(client_id)
+        return {"connected": True, "pixel_id": pid, "name": body.get("name") or ""}
+
+    @flask.post("/connect/<client_id>/meta-pixel/disconnect")
+    def meta_pixel_disconnect(client_id):
+        state.require_key(client_id)
+        with state.lock:
+            state.store.db.execute("DELETE FROM meta_pixel_links WHERE client_id=?", (client_id,))
+            state.store.db.commit()
+        return {"connected": False}
 
     @flask.post("/meta/connect/<client_id>")
     def meta_connect_start(client_id):

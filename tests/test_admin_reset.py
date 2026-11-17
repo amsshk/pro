@@ -160,3 +160,38 @@ def test_admin_viewer_can_connect_facebook_only(app):
     assert r.status_code != 403                                  # allowed (503 here: Facebook isn't configured in tests)
     assert c.post("/meta/glow-clinic/disconnect", headers=v).status_code != 403
     assert c.post("/import/glow-clinic", data="id,date,amount,currency\n1,2026-10-01,100,AED\n", headers=v).status_code == 403
+
+
+def test_meta_pixel_with_token(app, monkeypatch):
+    monkeypatch.setenv("PROADS_SECRET_KEY", "test-secret-key-for-encryption-0123456789")
+
+    class R:
+        def __init__(self, code, body):
+            self.status_code, self.b = code, body
+
+        def json(self):
+            return self.b
+
+    class G:
+        def get(self, url, params, timeout):
+            if params["access_token"] == "EAA" + "x" * 60:
+                return R(200, {"id": "1234567890123456", "name": "Glow Pixel"})
+            return R(400, {"error": {"message": "Invalid OAuth access token"}})
+    st = app.extensions["paysignal"]
+    st.meta_http = G()
+    c = app.test_client()
+    tok = c.post("/auth/signup", json=ACCT).json["token"]
+    h = {"X-API-Key": tok}
+    assert c.post("/connect/glow-clinic/meta-pixel", json={"pixel_id": "12", "token": "x"}, headers=h).status_code == 400
+    bad = c.post("/connect/glow-clinic/meta-pixel", json={"pixel_id": "1234567890123456", "token": "EAA" + "y" * 60}, headers=h)
+    assert bad.status_code == 400 and "Invalid OAuth" in bad.json["error"]
+    v = {"X-API-Key": c.post("/admin/pro/view-as/glow-clinic", headers=ADMIN).json["token"]}     # the agency does it
+    ok = c.post("/connect/glow-clinic/meta-pixel", json={"pixel_id": "1234567890123456", "token": "EAA" + "x" * 60}, headers=v)
+    assert ok.status_code == 200 and ok.json["name"] == "Glow Pixel"
+    s = c.get("/status/glow-clinic", headers=h).json["connections"]
+    assert s["meta_pixel"] == {"connected": True, "pixel_id": "1234567890123456", "name": "Glow Pixel"}
+    assert s["meta_capi"]["configured"] and s["meta_capi"]["live"]
+    with st.lock:
+        assert st.config("glow-clinic")["meta"]["dataset_id"] == "1234567890123456"
+    assert not c.post("/connect/glow-clinic/meta-pixel/disconnect", headers=h).json["connected"]
+    assert not c.get("/status/glow-clinic", headers=h).json["connections"]["meta_capi"]["configured"]
