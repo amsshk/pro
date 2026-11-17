@@ -176,7 +176,13 @@ def test_meta_pixel_with_token(app, monkeypatch):
         def get(self, url, params, timeout):
             if params["access_token"] == "EAA" + "x" * 60:
                 return R(200, {"id": "1234567890123456", "name": "Glow Pixel"})
-            return R(400, {"error": {"message": "Invalid OAuth access token"}})
+            if params["access_token"] == "EAA" + "z" * 60:                       # a send-only Conversions API token
+                return R(400, {"error": {"message": "(#100) Missing Permission", "code": 100}})
+            return R(400, {"error": {"message": "Invalid OAuth access token", "code": 190}})
+
+        def post(self, url, timeout, data):
+            assert url.endswith("/1234567890123456/events") and data["test_event_code"] == "PROADSCHECK"
+            return R(200, {"events_received": 1})
     st = app.extensions["paysignal"]
     st.meta_http = G()
     c = app.test_client()
@@ -184,7 +190,9 @@ def test_meta_pixel_with_token(app, monkeypatch):
     h = {"X-API-Key": tok}
     assert c.post("/connect/glow-clinic/meta-pixel", json={"pixel_id": "12", "token": "x"}, headers=h).status_code == 400
     bad = c.post("/connect/glow-clinic/meta-pixel", json={"pixel_id": "1234567890123456", "token": "EAA" + "y" * 60}, headers=h)
-    assert bad.status_code == 400 and "Invalid OAuth" in bad.json["error"]
+    assert bad.status_code == 400 and "isn't valid" in bad.json["error"]
+    send_only = c.post("/connect/glow-clinic/meta-pixel", json={"pixel_id": "1234567890123456", "token": "EAA" + "z" * 60}, headers=h)
+    assert send_only.status_code == 200 and send_only.json["connected"]
     v = {"X-API-Key": c.post("/admin/pro/view-as/glow-clinic", headers=ADMIN).json["token"]}     # the agency does it
     ok = c.post("/connect/glow-clinic/meta-pixel", json={"pixel_id": "1234567890123456", "token": "EAA" + "x" * 60}, headers=v)
     assert ok.status_code == 200 and ok.json["name"] == "Glow Pixel"

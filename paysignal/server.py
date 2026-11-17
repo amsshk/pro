@@ -5151,8 +5151,26 @@ table{{width:100%;border-collapse:collapse;font-size:14px}}td,th{{text-align:lef
         except Exception as e:
             abort(502, f"Couldn't reach Meta to check the token ({type(e).__name__}). Try again in a minute.")
         if r.status_code != 200 or "error" in body:
-            msg = ((body.get("error") or {}).get("error_user_msg") or (body.get("error") or {}).get("message") or "Meta refused it")
-            abort(400, "Meta didn't accept this Pixel ID and token: " + redact(msg)[:200])
+            err = body.get("error") or {}
+            if err.get("code") == 190:                   # the token itself is wrong or expired
+                abort(400, "Meta says this access token isn't valid. Generate a new one in Events Manager and paste it again.")
+            # Conversions API tokens may only SEND events, not read the Pixel: prove the pair with one test event
+            # (test events show in Events Manager > Test events only; Meta never uses them for reports or ads)
+            try:
+                tr = http.post(f"https://graph.facebook.com/{version}/{pid}/events", timeout=20, data={
+                    "access_token": tok, "test_event_code": "PROADSCHECK",
+                    "data": json.dumps([{"event_name": "PageView", "event_time": int(time.time()), "action_source": "website",
+                                         "event_source_url": public_base(), "user_data": {"client_ip_address": "127.0.0.1",
+                                                                                          "client_user_agent": "ProAds connection check"}}])})
+                tb = tr.json()
+            except Exception as e:
+                abort(502, f"Couldn't reach Meta to check the token ({type(e).__name__}). Try again in a minute.")
+            if tr.status_code != 200 or not tb.get("events_received"):
+                e2 = tb.get("error") or {}
+                msg = e2.get("error_user_msg") or e2.get("message") or err.get("message") or "Meta refused it"
+                abort(400, "Meta didn't accept this Pixel ID and token: " + redact(msg)[:200] +
+                      ". Check that the token was generated on this same Pixel (Settings > Conversions API).")
+            body = {"name": ""}
         with state.lock:
             state.store.db.execute("INSERT INTO meta_pixel_links VALUES (?,?,?,?,?) ON CONFLICT(client_id) DO UPDATE SET pixel_id=excluded.pixel_id,"
                                    " name=excluded.name, token_enc=excluded.token_enc, added_at=excluded.added_at",
