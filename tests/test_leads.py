@@ -24,7 +24,7 @@ def test_thai_and_english_exports_are_recognised():
     assert rows[0]["source"] == "Paid ads" and rows[0]["stage"] == "Purchased" and rows[0]["ad_ids"] == ["111"]
     assert rows[0]["team"] == ["ไอซ์/มาย"] and rows[1]["flags"] == ["Conversion sent"] and rows[2]["owner"] == "Staff One"
     en, _ = parse(ENGLISH)
-    assert en[0]["stage"] == "New" and en[1]["stage"] == "Purchased" and en[0]["phone_hash"] and en[0]["email_hash"]
+    assert en[0]["stage"] == "New" and en[1]["stage"] == "Converted" and en[0]["phone_hash"] and en[0]["email_hash"]
 
 
 def test_no_names_or_contacts_are_stored(tmp_path):
@@ -54,3 +54,17 @@ def test_upload_summary_price_and_clear(tmp_path):
 
 def test_a_sales_file_is_still_a_sales_file():
     assert detect("Created,Amount,Name\n2026-10-01,100,x\n") == "sales"
+
+
+def test_meta_converted_stage_counts_and_a_newer_export_never_moves_a_lead_back(tmp_path):
+    head = THAI.split("\n", 1)[0] + "\n"
+    c = create_app(CLIENTS, str(tmp_path / "l.db"), start_worker=False).test_client()
+    first = head + '05/01/2026 1:00pm,X,,เสียค่าใช้จ่าย,,Messenger,สร้างคอนเวอร์ชั่นแล้ว,Unassigned,"ad_id.9",,,\n' \
+        + '05/02/2026 1:00pm,Y,,เสียค่าใช้จ่าย,,Messenger,มาใหม่,Unassigned,"ad_id.9,Intake",,,\n' \
+        + '05/03/2026 1:00pm,Z,,เสียค่าใช้จ่าย,,Messenger,Spam,Unassigned,"",,,\n'
+    later = head + '05/01/2026 1:00pm,X,,เสียค่าใช้จ่าย,,Messenger,มาใหม่,Unassigned,"ad_id.9",,,\n'
+    c.post("/import/clinic", data=first.encode(), headers=H)
+    c.post("/import/clinic", data=later.encode(), headers=H)
+    s = c.get("/leads/clinic", headers=H).json
+    assert s["leads"] == 2 and s["buyers"] == 1 and s["sent_to_meta"] == 1 and s["rate"] == 0.5
+    assert [f["stage"] for f in s["funnel"]] == ["Converted", "New"] and s["team"] == [] or s["team"][0]["label"] != "Intake"

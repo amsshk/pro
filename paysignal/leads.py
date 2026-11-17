@@ -32,16 +32,24 @@ COLUMNS = {
 }
 SOURCE = {"เสียค่าใช้จ่าย": "Paid ads", "paid": "Paid ads", "ออร์แกนิก": "Organic", "organic": "Organic",
           "โดยตรง": "Direct", "direct": "Direct"}
-STAGE = {"ซื้อแล้ว": "Purchased", "purchased": "Purchased", "converted": "Purchased", "won": "Purchased",
+STAGE = {"ซื้อแล้ว": "Purchased", "สั่งซื้อแล้ว": "Purchased", "purchased": "Purchased", "won": "Purchased",
+         "สร้างคอนเวอร์ชั่นแล้ว": "Converted", "converted": "Converted", "conversion created": "Converted",
          "นัดหมายแล้ว": "Booked", "booked": "Booked", "appointment booked": "Booked",
-         "ใหม่": "New", "new": "New", "intake": "New", "qualified": "Qualified", "ผ่านการคัดกรอง": "Qualified",
-         "ติดต่อแล้ว": "Contacted", "contacted": "Contacted", "lost": "Lost", "ไม่สำเร็จ": "Lost"}
-BOUGHT = ("Purchased",)
+         "มาใหม่": "New", "ใหม่": "New", "new": "New", "intake": "New", "การรับข้อมูล": "New",
+         "มีคุณสมบัติ": "Qualified", "qualified": "Qualified", "ผ่านการคัดกรอง": "Qualified",
+         "ติดต่อแล้ว": "Contacted", "contacted": "Contacted", "ทักไม่คุย": "No reply", "no reply": "No reply",
+         "lost": "Lost", "ไม่สำเร็จ": "Lost", "spam": "Spam", "สแปม": "Spam"}
+# Converted is Meta's own last stage in Leads Center; Purchased is the business's own stage or label
+BOUGHT = ("Purchased", "Converted")
+# how far along a lead is: a newer export never moves a lead backwards
+RANK = {"Spam": 0, "Lost": 1, "No reply": 2, "New": 3, "Contacted": 4, "Qualified": 5, "Booked": 6, "Converted": 7, "Purchased": 8}
 # labels Meta or the business use for status rather than for a team member
 STATUS_LABELS = {"messenger_ads": None, "การตอบสนองต่อโฆษณา": None, "ad response": None, "ad_response": None,
-                 "ซื้อแล้ว": "Purchased", "purchased": "Purchased", "นัดหมายแล้ว": "Booked", "booked": "Booked",
+                 "ซื้อแล้ว": "Purchased", "purchased": "Purchased", "สั่งซื้อแล้ว": "Purchased",
+                 "นัดหมายแล้ว": "Booked", "booked": "Booked", "intake": None, "การรับข้อมูล": None,
+                 "รอนัดปรึกษา": "Waiting to book", "สมัครงาน": "Job application", "job application": "Job application",
                  "ลูกค้าเก่า": "Returning customer", "returning customer": "Returning customer",
-                 "รอจอง": "Waiting to book", "สร้างคอนเวอร์ชั่นแล้ว": "Conversion sent", "conversion created": "Conversion sent",
+                 "รอจอง": "Waiting to book", "waiting to book": "Waiting to book", "สร้างคอนเวอร์ชั่นแล้ว": "Conversion sent", "conversion created": "Conversion sent",
                  "conversion sent": "Conversion sent"}
 
 
@@ -144,10 +152,14 @@ class LeadStore:
                  "|".join(l["team"]), l["owner"], ",".join(l["flags"]), l["email_hash"], l["phone_hash"]))
             if cur.rowcount == 1:
                 new += 1
-            else:                                        # seen before: keep its latest stage and labels
+            else:                                        # seen before (another export): merge, never move it backwards
+                old = self.db.execute("SELECT stage, ad_ids, team, owner, flags FROM leads WHERE client_id=? AND key=?",
+                                      (client_id, l["key"])).fetchone()
+                stage = l["stage"] if RANK.get(l["stage"], 3) >= RANK.get(old[0], 3) else old[0]
+                join = lambda a, b, sep: sep.join(dict.fromkeys([x for x in (a or "").split(sep) if x] + list(b)))
                 self.db.execute("UPDATE leads SET stage=?, ad_ids=?, team=?, owner=?, flags=? WHERE client_id=? AND key=?",
-                                (l["stage"], ",".join(l["ad_ids"]), "|".join(l["team"]), l["owner"], ",".join(l["flags"]),
-                                 client_id, l["key"]))
+                                (stage, join(old[1], l["ad_ids"], ","), join(old[2], l["team"], "|"), l["owner"] or old[3],
+                                 join(old[4], l["flags"], ","), client_id, l["key"]))
         self.db.commit()
         return {"leads": len(leads), "new": new, "duplicates": len(leads) - new}
 
@@ -183,6 +195,9 @@ class LeadStore:
         sources: Counter = Counter()
         sent = 0
         bought_total = 0
+        rows = [r for r in rows if r[3] != "Spam" and "Job application" not in (r[7] or "")]
+        if not rows:
+            return {"leads": 0, "avg_price": price}
         for at, source, channel, stage, ad_ids, tm, owner, flags in rows:
             m = datetime.fromtimestamp(at, timezone.utc).strftime("%Y-%m")
             bought = stage in BOUGHT
@@ -191,7 +206,7 @@ class LeadStore:
             bought_total += bought
             stages[stage] += 1
             sources[source] += 1
-            sent += "Conversion sent" in (flags or "")
+            sent += stage == "Converted" or "Conversion sent" in (flags or "")
             for a in {x for x in (ad_ids or "").split(",") if x}:
                 ads[a] += 1
                 ads_buyers[a] += bought
@@ -212,6 +227,9 @@ class LeadStore:
                 "sources": [{"source": k, "leads": v} for k, v in sources.most_common()],
                 "stages": [{"stage": k, "leads": v} for k, v in stages.most_common()],
                 "months": series,
+                "rate": round(bought_total / len(rows), 4),
+                "funnel": [{"stage": k, "leads": stages[k]} for k in sorted(stages, key=lambda k: -RANK.get(k, 3))],
                 "top_ads": [{"ad_id": a, "leads": n, "buyers": ads_buyers[a]} for a, n in
                             sorted(ads.items(), key=lambda x: (-ads_buyers[x[0]], -x[1]))[:10]],
+                "no_buyer_ads": [{"ad_id": a, "leads": n} for a, n in ads.most_common() if not ads_buyers[a]][:5],
                 "team": [{"label": k, "buyers": v} for k, v in team.most_common(8) if v]}
