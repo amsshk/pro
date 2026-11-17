@@ -3638,7 +3638,8 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       h("li", {}, h("b", {}, "Competitor X-ray: "), "see every ad your competitors run and which they keep running longest"),
       h("li", {}, "One click: an original campaign built to beat them, ready to publish"),
       h("li", {}, "AI read of their angles, offers and weak spots"),
-      h("li", {}, h("b", {}, "Auto buyer audiences: "), "your real buyers kept up to date in Meta every day, plus a 1% lookalike"));
+      h("li", {}, h("b", {}, "Auto buyer audiences: "), "your real buyers kept up to date in Meta every day, plus a 1% lookalike"),
+      h("li", {}, h("b", {}, "Follow-ups: "), "recover unpaid checkouts, win back past buyers and ask for reviews, one tap on WhatsApp, with sales brought back counted"));
     const premium = h("section", { class: "card", style: "background: var(--violet-card); border-color: var(--violet-edge)" },
       h("div", { class: "between" }, h("h2", {}, "Premium"), mine("premium") || h("span", { class: "badge b-neutral" }, "Most power")),
       priceOf(b.premium_price) ? h("b", { style: "font-family: var(--head); font-size:28px" }, priceOf(b.premium_price)) : null, feeLine, premItems,
