@@ -150,3 +150,13 @@ def test_admin_views_a_business_read_only(app):
     assert c.post("/admin/glow-clinic/view-as/glow-clinic", headers=v).status_code in (403, 404)
     assert c.get("/status/glow-clinic", headers={"X-API-Key": tok}).json["viewer"] is None
     assert c.post("/import/glow-clinic", data="id,date,amount,currency\n1,2026-10-01,100,AED\n", headers={"X-API-Key": tok}).status_code == 200
+
+
+def test_admin_viewer_can_connect_facebook_only(app):
+    c = app.test_client()
+    c.post("/auth/signup", json=ACCT)
+    v = {"X-API-Key": c.post("/admin/pro/view-as/glow-clinic", headers=ADMIN).json["token"]}
+    r = c.post("/meta/connect/glow-clinic", headers=v)
+    assert r.status_code != 403                                  # allowed (503 here: Facebook isn't configured in tests)
+    assert c.post("/meta/glow-clinic/disconnect", headers=v).status_code != 403
+    assert c.post("/import/glow-clinic", data="id,date,amount,currency\n1,2026-10-01,100,AED\n", headers=v).status_code == 403

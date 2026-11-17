@@ -348,8 +348,11 @@ class App:
         expected = cfg.get("api_key", "")
         # a valid key or sign-in always works: someone spamming wrong keys can't lock the real owner out
         if given and self.accounts.session_client(given) == client_id:
+            # an admin viewing a business can only read, plus: build competitor plans, and connect the business's
+            # Facebook with the admin's own login (agencies run their clients' ad accounts)
             if request.method not in ("GET", "HEAD", "OPTIONS") and self.accounts.session_viewer(given) and \
-                    request.path not in (f"/competitors/{client_id}/scan", f"/competitors/{client_id}/conquest"):
+                    request.path not in (f"/competitors/{client_id}/scan", f"/competitors/{client_id}/conquest",
+                                         f"/meta/connect/{client_id}", f"/meta/{client_id}/select", f"/meta/{client_id}/disconnect"):
                 abort(403, "You're viewing this business as admin, so it's view only. Switch back to your account to make changes.")
             return
         if expected and given and hmac.compare_digest(expected, given):

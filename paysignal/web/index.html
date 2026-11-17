@@ -696,7 +696,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
           h("button", { class: "btn btn-ghost", style: "margin-top:6px", onclick: () => signOut() }, "Sign out"))),
       mobileTop(),
       h("main", {}, h("div", { class: "wrap" }, ...(status && status.viewer ? [h("div", { class: "viewbar", role: "status" },
-        h("span", {}, "You're viewing ", h("b", {}, status.name), " as admin · view only, nothing can be changed"),
+        h("span", {}, "You're viewing ", h("b", {}, status.name), " as admin · view only (you can connect their Facebook with your own login)"),
         h("button", { class: "btn btn-primary", type: "button", onclick: backToAdmin }, "Back to my account"))] : []), installTip(), ...[].concat(content))),
       ...mobileTabs(active));
   }
