@@ -131,7 +131,7 @@ def test_full_connect_import_flow(tmp_path, env):
     assert s["connected"] and s["shop"] == SHOP and s["imported"] == 3
     assert "60 days" in s["sync_message"]
     hooks = [x["json"]["variables"] for x in fake.calls if x["json"] and "webhookSubscriptionCreate" in x["json"]["query"]]
-    assert {h["topic"] for h in hooks} == {"ORDERS_PAID", "REFUNDS_CREATE", "APP_UNINSTALLED"}
+    assert {h["topic"] for h in hooks} == {"ORDERS_PAID", "REFUNDS_CREATE", "APP_UNINSTALLED", "CHECKOUTS_CREATE", "CHECKOUTS_UPDATE"}
     assert hooks[0]["sub"]["uri"] == "https://pro.example.net/webhooks/shopify-app"
     totals = c.get("/status/shop1", headers=H).json["totals"]
     assert totals == {"gross": 900.0, "refunds": 300.0, "net": 600.0}       # pending + test orders skipped

@@ -149,10 +149,11 @@ class NewsStore:
                 self.db.execute("UPDATE news_posts SET body=? WHERE id=?", (body.replace(self.OLD_ENDING, SEED[2][2].split("## Eligibility takes time")[0].rstrip() and
                                 "## Eligibility takes time" + SEED[2][2].split("## Eligibility takes time")[1]), pid))
                 self.db.commit()
-        if self.db.execute("SELECT COUNT(*) FROM news_posts").fetchone()[0]:
-            return
-        for i, (title, summary, body) in enumerate(SEED):
-            self.save(title, summary, body, "ProAds team", True, at=int(time.time()) - (len(SEED) - i) * 3600)
+        if not self.db.execute("SELECT COUNT(*) FROM news_posts").fetchone()[0]:
+            for i, (title, summary, body) in enumerate(SEED):
+                self.save(title, summary, body, "ProAds team", True, at=int(time.time()) - (len(SEED) - i) * 3600)
+        if not self.db.execute("SELECT 1 FROM news_posts WHERE title=?", (LAUNCH_2[0],)).fetchone():
+            self.save(*LAUNCH_2, "ProAds team", False)   # a draft: the admin reviews and publishes it
 
 
 # ---------------------------------------------------------------- pages
@@ -321,6 +322,39 @@ def news_sitemap(base: str, posts: list[dict]) -> str:
 
 
 # ---------------------------------------------------------------- first articles (facts only, with sources)
+LAUNCH_2 = (
+    "ProAds 2.0: see the difference in percentages, and win back the sales you almost lost",
+    "ProAds 2.0 adds ProAds Impact, Follow-ups, auto buyer audiences in Meta and a morning summary email. Every number says where it comes from.",
+    """Most ad tools show you what the ad platforms claim. ProAds starts from what your shop was actually paid, and 2.0 is about showing the difference that makes, honestly.
+
+## ProAds Impact: the difference, in percentages
+A new card on Home, in three parts, each labelled with its source:
+- **What Meta says.** Meta's own Dataset Quality figures for your Purchase event: Additional Conversions Reported (the share of purchases Meta measures because of server events), Event Match Quality and event coverage.
+- **What ProAds sent.** Of your real paid orders, how many reached Meta and TikTok, how many carried an email or phone for matching, and how many were paid outside your website checkout, where no browser pixel can see them.
+- **What changed.** Money really paid and orders per day in the same number of days before and after ProAds started sending your sales, with a likely range. It's a before-and-after comparison, not a controlled test, and the card says so.
+
+ProAds never counts a sale that a platform claims but your shop didn't get paid for.
+
+## Follow-ups (Premium)
+The cheapest sales come from people who almost bought or already bought. Follow-ups lists:
+- **Checkouts started but not paid**, from Shopify, with the saved cart link.
+- **Past buyers due to buy again**, after the number of days you choose, with an optional code.
+- **Happy customers to ask for a review**, 5 to 30 days after they paid.
+
+One tap opens WhatsApp on your own phone with the message ready. ProAds counts a sale as brought back only when the same customer pays within 7 days of a checkout message or 14 days of a win-back message, and it shows separately the people who paid without a message.
+
+## Auto buyer audiences (Premium)
+Your real buyers, kept up to date in your Meta ad account every day: new buyers join, fully refunded ones drop out, plus a 1% lookalike once you have 100 buyers. Use it to stop paying to reach people who already bought, and to find more people like them.
+
+## Morning summary
+One email around 8:00: yesterday's money really paid against the same day last week, the last 7 days, ad spend and money back per 1 spent, what's waiting in Follow-ups and one thing to fix.
+
+## Also new for chat-based businesses
+Upload the leads export from Meta Business Suite (English or Thai) to see which ads bring buyers in Messenger, who closed the sales, and whether those buyers are reaching Meta at all.
+
+ProAds 2.0 is live for every account. Impact and the morning summary are on every plan; Follow-ups and auto buyer audiences are part of Premium.""",
+)
+
 SEED = [
     ("TikTok's learning phase: the daily budget a UAE online shop needs",
      "TikTok needs enough purchases to learn who buys. Here is how to size a daily budget from your cost per sale, and what to do when the budget is small.",

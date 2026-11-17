@@ -19,7 +19,7 @@ def available() -> bool:
     return bool(os.environ.get("SMTP_HOST") and os.environ.get("SMTP_FROM"))
 
 
-def send(to: str, subject: str, text: str) -> bool:
+def send(to: str, subject: str, text: str, html: str | None = None) -> bool:
     if not available():
         return False
     msg = EmailMessage()
@@ -27,6 +27,8 @@ def send(to: str, subject: str, text: str) -> bool:
     msg["To"] = to
     msg["Subject"] = subject
     msg.set_content(text)
+    if html:
+        msg.add_alternative(html, subtype="html")
     host, port = os.environ["SMTP_HOST"], int(os.environ.get("SMTP_PORT", "587"))
     user, password = os.environ.get("SMTP_USER", ""), os.environ.get("SMTP_PASSWORD", "")
     try:

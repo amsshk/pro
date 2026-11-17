@@ -46,7 +46,7 @@ from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
-from . import affiliates, audience_sync, audiences, leads, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
+from . import affiliates, audience_sync, audiences, digest, followups, impact, leads, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
 from .identity import hash_phone, normalize_phone
 from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
@@ -95,6 +95,7 @@ for _name in ("paysignal", "proads", "werkzeug", "urllib3", "requests"):
 RETRAIN_SECONDS = 24 * 3600
 WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
 MIN_DIR = os.path.join(WEB_DIR, "min")
+PROADS_VERSION = "2.0"
 
 
 def web_page_dir(name: str) -> str:
@@ -190,6 +191,8 @@ class App:
         self.partners = affiliates.PartnerStore(self.store.db)
         self.leads = leads.LeadStore(self.store.db)
         self.audience_sync = audience_sync.AudienceSyncStore(self.store.db)
+        self.followups = followups.FollowupStore(self.store.db, shopify_app.encrypt, shopify_app.decrypt)
+        self.digests = digest.DigestStore(self.store.db)
         self.store.db.execute("CREATE TABLE IF NOT EXISTS meta_pixel_links (client_id TEXT PRIMARY KEY, pixel_id TEXT NOT NULL,"
                               " name TEXT, token_enc TEXT NOT NULL, added_at INTEGER NOT NULL)")
         self.store.db.commit()
@@ -384,7 +387,8 @@ class App:
                     request.path not in (f"/competitors/{client_id}/scan", f"/competitors/{client_id}/conquest",
                                          f"/meta/connect/{client_id}", f"/meta/{client_id}/select", f"/meta/{client_id}/disconnect",
                                          f"/connect/{client_id}/meta-pixel", f"/connect/{client_id}/meta-pixel/disconnect",
-                                         f"/meta/{client_id}/token", f"/audiences/{client_id}/meta-sync"):
+                                         f"/meta/{client_id}/token", f"/audiences/{client_id}/meta-sync",
+                                         f"/followups/{client_id}/settings"):
                 abort(403, "You're viewing this business as admin, so it's view only. Switch back to your account to make changes.")
             return
         if expected and given and hmac.compare_digest(expected, given):
@@ -702,7 +706,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
 
     @flask.get("/health")
     def health():
-        return {"ok": True, "clients": len(state.clients)}
+        return {"ok": True, "version": PROADS_VERSION, "clients": len(state.clients)}
 
     @flask.post("/webhooks/stripe/<client_id>")
     def stripe_hook(client_id):
@@ -1266,6 +1270,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         except ValueError:
             abort(400, "invalid json")
         topic = request.headers.get("X-Shopify-Topic", "")
+        if topic.startswith("checkouts/"):
+            with state.lock:
+                return {"checkout": state.followups.checkout(client_id, payload)}
         return state.ingest(client_id, parse_shopify_webhook(topic, payload, client_id, cfg.get("costs", {})))
 
     @flask.post("/connect/<client_id>/shopify-webhooks")
@@ -2261,6 +2268,213 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         resp.headers["Cache-Control"] = "no-store"
         log.info("buyer list %s downloaded for %s (%d buyers)", fmt, client_id, len(rows))
         return resp
+
+    # ---------------- ProAds Impact: the difference ProAds makes, in percentages ----------------
+    def impact_started_at(client_id: str) -> Optional[datetime]:
+        db = state.store.db
+        firsts = [db.execute("SELECT MIN(at) FROM capi_log WHERE client_id=? AND mode='live' AND COALESCE(received,0)>0 AND error IS NULL",
+                             (client_id,)).fetchone()[0],
+                  db.execute("SELECT MIN(sent_at) FROM tiktok_delivered WHERE client_id=? AND status='accepted'", (client_id,)).fetchone()[0]]
+        firsts = [x for x in firsts if x]
+        return datetime.fromtimestamp(min(firsts), timezone.utc) if firsts else None
+
+    def meta_spend(client_id: str, since: str, until: str) -> Optional[float]:
+        s = state.ads_settings(client_id, is_admin(client_id))
+        if not s or not s.get("ad_account"):
+            return None
+        acct = str(s["ad_account"]) if str(s["ad_account"]).startswith("act_") else "act_" + str(s["ad_account"])
+        try:
+            r = state.ads_http.get(f"https://graph.facebook.com/{meta_ads.settings()['version']}/{acct}/insights",
+                                   params={"access_token": s["token"], "fields": "spend", "level": "account",
+                                           "time_range": json.dumps({"since": since, "until": until})}, timeout=20)
+            body = r.json()
+            if r.status_code != 200 or "error" in body:
+                return None
+            return sum(float(x.get("spend") or 0) for x in body.get("data") or [])
+        except Exception:
+            return None
+
+    def tiktok_spend(client_id: str, since: str, until: str) -> Optional[float]:
+        with state.lock:
+            row = state.tiktok_ads.get(client_id)
+        if not row or not row["advertiser_id"]:
+            return None
+        try:
+            live = tiktok_api.live_summary(tt_http(), tt_token(client_id, row), row["advertiser_id"], since, until)
+            return sum(d["spend"] for d in live["days"].values())
+        except Exception:
+            return None
+
+    @flask.get("/impact/<client_id>")
+    def impact_view(client_id):
+        """ProAds Impact: what Meta says, what ProAds sent, what changed (before vs after ProAds started)."""
+        state.require_key(client_id)
+        hit = state.ads_cache.get(("impact", client_id))
+        if hit and time.time() - hit[0] < 6 * 3600 and not request.args.get("fresh"):
+            return hit[1]
+        now = datetime.now(timezone.utc)
+        cfg = state.config(client_id)
+        with state.lock:
+            eng = state.engine(client_id)
+            purchases = eng.store.purchases(client_id)
+            refunded = {p.external_id: eng.store.refunded_amount(client_id, p.external_id) for p in purchases}
+            since30 = now - timedelta(days=30)
+            sent_meta = state.signals.sent_purchases_since(client_id, int(since30.timestamp()))
+            keys = {k["key"]: k["share"] for k in state.signals.summary(client_id, 30)["match_keys"]}
+            tt = state.store.db.execute("SELECT COUNT(DISTINCT event_id) FROM tiktok_delivered WHERE client_id=? AND status='accepted'"
+                                        " AND sent_at>=? AND event_id NOT LIKE '%refund%'", (client_id, int(since30.timestamp()))).fetchone()[0]
+            has_tt = state.store.db.execute("SELECT 1 FROM tiktok_pixels WHERE client_id=? LIMIT 1", (client_id,)).fetchone()
+            started = impact_started_at(client_id)
+        ref = lambda p: refunded.get(p.external_id, 0.0)
+        out = {"currency": cfg.get("currency", "AED"), "as_of": int(now.timestamp()),
+               "coverage": impact.coverage(purchases, ref, since30, sent_meta, keys, tt if has_tt else None)}
+        meta = state.connected_meta(client_id)
+        out["meta"] = impact.meta_quality(state.ads_http, meta["access_token"], meta["dataset_id"], meta_ads.settings()["version"]) \
+            if meta else {"error": "Connect your Meta Pixel to see Meta's own figures."}
+        if started:
+            days = min(impact.WINDOW_DAYS, (now.date() - started.date()).days)
+            sb = sa = None
+            if days >= impact.MIN_AFTER_DAYS:
+                d0 = started.date()
+                b0, b1 = (d0 - timedelta(days=days)).isoformat(), (d0 - timedelta(days=1)).isoformat()
+                a0, a1 = d0.isoformat(), (d0 + timedelta(days=days - 1)).isoformat()
+                parts = [(meta_spend(client_id, b0, b1), meta_spend(client_id, a0, a1)),
+                         (tiktok_spend(client_id, b0, b1), tiktok_spend(client_id, a0, a1))]
+                got = [(b, a) for b, a in parts if b is not None and a is not None]
+                if got:
+                    sb, sa = sum(b for b, _ in got), sum(a for _, a in got)
+            out["change"] = impact.before_after(purchases, ref, started, now, sb, sa)
+        else:
+            out["change"] = {"ready": False, "not_started": True}
+        state.ads_cache[("impact", client_id)] = (time.time(), out)
+        return out
+
+    # ---------------- Follow-ups (Premium): recover checkouts, ask for reviews, win buyers back ----------------
+    PHONE_CC = {"AED": "971", "SAR": "966", "QAR": "974", "KWD": "965", "BHD": "973", "OMR": "968", "EGP": "20", "JOD": "962",
+                "THB": "66", "USD": "1", "GBP": "44", "INR": "91", "MAD": "212", "TRY": "90"}
+
+    def followups_premium(client_id: str) -> bool:
+        return is_admin(client_id) or bool(state.accounts.session_viewer(request.headers.get("X-API-Key", ""))) \
+            or state.billing.tier(client_id) == "premium"
+
+    @flask.get("/followups/<client_id>")
+    def followups_view(client_id):
+        """Who to message today, with one-tap WhatsApp links, and how many came back. Without Premium: counts only."""
+        state.require_key(client_id)
+        cfg = state.config(client_id)
+        with state.lock:
+            eng = state.engine(client_id)
+            purchases = eng.store.purchases(client_id)
+            refunded = {p.external_id: eng.store.refunded_amount(client_id, p.external_id) for p in purchases}
+            out = state.followups.build(client_id, purchases, lambda p: refunded.get(p.external_id, 0.0),
+                                        cfg.get("name") or "our shop", PHONE_CC.get(cfg.get("currency", "AED").upper(), "971"))
+        out["currency"] = cfg.get("currency", "AED")
+        out["premium"] = followups_premium(client_id)
+        out["webhook_url"] = f"{public_base()}/webhooks/shopify/{client_id}"
+        if not out["premium"]:                           # no names or links without Premium, just what's waiting
+            out["lists"] = {k: [] for k in out["lists"]}
+        return out
+
+    @flask.post("/followups/<client_id>/mark")
+    def followups_mark(client_id):
+        """{"kind": "checkout"|"review"|"winback", "ref": "...", "action": "sent"|"dismissed"}"""
+        state.require_key(client_id)
+        require_premium(client_id, "Follow-ups")
+        b = request.get_json(silent=True) or {}
+        try:
+            with state.lock:
+                state.followups.mark(client_id, str(b.get("kind")), str(b.get("ref") or "")[:80], str(b.get("action")))
+        except ValueError as e:
+            abort(400, str(e))
+        return {"ok": True}
+
+    @flask.post("/followups/<client_id>/settings")
+    def followups_settings(client_id):
+        state.require_key(client_id)
+        require_premium(client_id, "Follow-ups")
+        try:
+            with state.lock:
+                return state.followups.save_settings(client_id, request.get_json(silent=True) or {})
+        except (TypeError, ValueError) as e:
+            abort(400, str(e) if str(e) else "check the settings")
+
+    # ---------------- Morning summary email ----------------
+    def digest_for(client_id: str, today) -> Optional[tuple[str, str, str]]:
+        cfg = state.config(client_id)
+        cur = cfg.get("currency", "AED")
+        tz = cfg.get("timezone") or "Asia/Dubai"
+        with state.lock:
+            eng = state.engine(client_id)
+            purchases = eng.store.purchases(client_id)
+            refunded = {p.external_id: eng.store.refunded_amount(client_id, p.external_id) for p in purchases}
+        d = digest.build(purchases, lambda p: refunded.get(p.external_id, 0.0), today, tz)
+        if not d["week_orders"] and not d["orders"]:
+            return None                                  # nothing sold in a week: no email
+        spend = None
+        parts = [x for x in (meta_spend(client_id, d["day"], d["day"]), tiktok_spend(client_id, d["day"], d["day"])) if x is not None]
+        if parts:
+            spend = sum(parts)
+        waiting = None
+        if is_admin(client_id) or state.billing.tier(client_id) == "premium":
+            try:
+                with state.lock:
+                    st = state.followups.build(client_id, purchases, lambda p: refunded.get(p.external_id, 0.0),
+                                               cfg.get("name") or "our shop", PHONE_CC.get(cur.upper(), "971"))["stats"]
+                waiting = {k: st[k]["waiting"] for k in followups.TYPES}
+            except Exception:
+                log.exception("follow-ups for the summary of %s", client_id)
+        leak = None
+        try:
+            lk = leaks_for(client_id).get("leaks") or []
+            leak = lk[0] if lk else None
+        except Exception:
+            pass
+        return digest.render(cfg.get("name") or client_id, cur, d, spend, waiting, leak, f"{public_base()}/app#/home")
+
+    def digest_all() -> None:
+        if not mailer.available():
+            return
+        with state.lock:
+            ids = sorted(set(state.clients) | {r[0] for r in state.store.db.execute("SELECT client_id FROM accounts")})
+        for cid in ids:
+            try:
+                acct = state.accounts.get(cid)
+                email = (acct or {}).get("email") or state.config(cid).get("email")
+                if not email or not state.known(cid):
+                    continue
+                with state.lock:
+                    ds = state.digests.get(cid)
+                today, hour = digest.local_day(state.config(cid).get("timezone") or "Asia/Dubai")
+                if not ds["enabled"] or ds["last_sent"] == today.isoformat() or hour < digest.SEND_HOUR:
+                    continue
+                with state.lock:
+                    state.digests.set(cid, last_sent=today.isoformat())     # once a day even if sending fails
+                made = digest_for(cid, today)
+                if made:
+                    mailer.send(email, *made)
+            except Exception:
+                log.exception("morning summary failed for %s", cid)
+    state.digest_all = digest_all
+
+    @flask.get("/digest/<client_id>")
+    def digest_view(client_id):
+        """The switch, plus a preview of today's email (?preview=1)."""
+        state.require_key(client_id)
+        with state.lock:
+            out = {**state.digests.get(client_id), "email_on": mailer.available()}
+        if request.args.get("preview"):
+            made = digest_for(client_id, digest.local_day(state.config(client_id).get("timezone") or "Asia/Dubai")[0])
+            out["preview"] = {"subject": made[0], "text": made[1]} if made else None
+        return out
+
+    @flask.post("/digest/<client_id>")
+    def digest_switch(client_id):
+        state.require_key(client_id)
+        on = (request.get_json(silent=True) or {}).get("enabled")
+        if not isinstance(on, bool):
+            abort(400, "send {\"enabled\": true or false}")
+        with state.lock:
+            return state.digests.set(client_id, enabled=on)
 
     # ---------------- Auto buyer audiences in Meta (Premium) ----------------
     def run_audience_sync(client_id: str) -> dict:
@@ -3547,7 +3761,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         """Values the public pages need: the Pixel ID (public by nature) and contact email."""
         # Cloudflare (in front of the site) says which country the visitor is in: the page picks its language from it
         country = (request.headers.get("CF-IPCountry") or "").strip().upper()
-        return {"pixel_id": growth.pixel_id(), "tiktok_pixel": tiktok.proads_settings()["pixel"], "company": company(), "contact": os.environ.get("PROADS_CONTACT_EMAIL", ""),
+        return {"version": PROADS_VERSION, "pixel_id": growth.pixel_id(), "tiktok_pixel": tiktok.proads_settings()["pixel"], "company": company(), "contact": os.environ.get("PROADS_CONTACT_EMAIL", ""),
                 "sign_in": social.configured(),
                 "google_source": news.google_source_on(),
                 "country": country if len(country) == 2 and country.isalpha() and country not in ("XX", "T1") else ""}
@@ -5572,6 +5786,9 @@ table{{width:100%;border-collapse:collapse;font-size:14px}}td,th{{text-align:lef
         except ValueError:
             abort(400, "invalid json")
         cfg = state.config(client_id)
+        if topic.startswith("checkouts/"):
+            with state.lock:
+                return {"checkout": state.followups.checkout(client_id, payload)}
         return state.ingest(client_id, parse_shopify_webhook(topic, payload, client_id, cfg.get("costs", {})))
 
     @flask.post("/webhooks/shopify-compliance")
@@ -5745,7 +5962,7 @@ def _start_worker(state: App, every: int) -> None:
                     state.enforce_ads_trials()
             except Exception:
                 log.exception("ad test check failed")
-            for job in ("sync_all_launch_status", "tiktok_push_all", "windsor_sync_all", "tiktok_ads_sync_all", "retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees", "audience_sync_all"):
+            for job in ("sync_all_launch_status", "tiktok_push_all", "windsor_sync_all", "tiktok_ads_sync_all", "retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees", "audience_sync_all", "digest_all"):
                 try:
                     if getattr(state, job, None):
                         getattr(state, job)()

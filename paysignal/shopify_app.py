@@ -217,6 +217,11 @@ class ShopifyClient:
                 problems += [f"{topic}: {e['message']}" for e in errs if "taken" not in e["message"].lower()]
             except ShopifyError as e:
                 problems.append(f"{topic}: {e}")
+        for topic in ("CHECKOUTS_CREATE", "CHECKOUTS_UPDATE"):      # Follow-ups (abandoned checkouts): optional
+            try:
+                self.graphql(m, {"topic": topic, "sub": {"uri": callback_url}})
+            except ShopifyError:
+                pass
         return problems
 
 

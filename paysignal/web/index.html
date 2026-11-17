@@ -657,6 +657,22 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     pw.focus();
   }
 
+  const PROADS_VERSION = "2.0";
+  function whatsNewCard() {
+    try { if (localStorage.getItem("proads.seen2")) return null; } catch (e) {}
+    const card = h("section", { class: "card", "aria-labelledby": "wn-h", style: "background: var(--violet-card); border-color: var(--violet-edge)" });
+    const close = () => { try { localStorage.setItem("proads.seen2", "1"); } catch (e) {} card.remove(); };
+    const item = (title, text, href) => h("a", { href, onclick: close, style: "display:flex;flex-direction:column;gap:2px;text-decoration:none;color:inherit;flex:1 1 200px;min-width:0" },
+      h("b", { style: "font-size:15px" }, title, " \u2192"), h("span", { class: "small" }, text));
+    card.append(h("div", { class: "between" }, h("h2", { id: "wn-h" }, "New in ProAds 2.0"), h("button", { class: "btn btn-ghost", type: "button", onclick: close, "aria-label": "Close" }, "Got it")),
+      h("div", { style: "display:flex;gap:16px;flex-wrap:wrap" },
+        item("ProAds Impact", "The difference ProAds makes, in percentages, each with its source. On Home.", "#/home"),
+        item("Follow-ups", "Recover unpaid checkouts, win back past buyers, ask for reviews. One tap on WhatsApp.", "#/followups"),
+        item("Auto buyer audiences", "Your real buyers kept up to date in Meta daily, plus a lookalike.", "#/buyers"),
+        item("Morning summary", "Yesterday's real money in your inbox every morning.", "#/upload")));
+    return card;
+  }
+
   // ---------- layout ----------
   const NAV = [
     ["#/home", "Home", "M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"],
@@ -671,6 +687,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     ["#/learning", "Meta learning", "M4 19V5M4 19h16M8 15l3-4 3 2 5-7"],
     ["#/engines", "Profit engine", "M12 3v3M12 18v3M4.6 6.6l2.1 2.1M17.3 15.3l2.1 2.1M3 12h3M18 12h3M4.6 17.4l2.1-2.1M17.3 8.7l2.1-2.1M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"],
     ["#/competitors", "Competitor X-ray", "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM16 16l5 5M8 11h6M11 8v6", "Premium"],
+    ["#/followups", "Follow-ups", "M4 4h16v12H7l-3 3zM8 9h8M8 12h5", "Premium"],
   ];
   function statusRows() {
     if (!status) return [];
@@ -693,7 +710,8 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("div", { class: "navlinks" }, NAV.concat(status && status.admin ? [["#/admin", "Admin", "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"]] : [["#/billing", "Plan & billing", "M3 7h18v10H3zM3 11h18"]]).map(([href, label, d, tag]) =>
           h("a", { href, "aria-current": href === active ? "page" : null }, icon(d), label, tag ? h("span", { class: "navtag" }, tag) : null))),
         h("div", { class: "statusbox" }, statusRows(), themeToggle(),
-          h("button", { class: "btn btn-ghost", style: "margin-top:6px", onclick: () => signOut() }, "Sign out"))),
+          h("button", { class: "btn btn-ghost", style: "margin-top:6px", onclick: () => signOut() }, "Sign out"),
+          h("a", { href: "#/home", class: "small", style: "margin-top:4px;color: var(--muted);text-decoration:none", onclick: () => { try { localStorage.removeItem("proads.seen2"); } catch (e) {} } }, "ProAds " + PROADS_VERSION + " · What's new"))),
       mobileTop(),
       h("main", {}, h("div", { class: "wrap" }, ...(status && status.viewer ? [h("div", { class: "viewbar", role: "status" },
         h("span", {}, "You're viewing ", h("b", {}, status.name), " as admin · view only (you can connect their Facebook with your own login)"),
@@ -721,7 +739,8 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("div", { class: "sect" }, "More"),
         ...rest.map(([href, label, d, tag]) => h("a", { href, "aria-current": href === active ? "page" : null, onclick: close }, icon(d), label, tag ? h("span", { class: "navtag", style: "margin-left:auto" }, tag) : null)),
         h("div", { class: "sect" }, "Settings"), h("div", { style: "padding:4px 10px" }, themeToggle()),
-        h("button", { class: "row-btn", type: "button", onclick: () => { close(); signOut(); } }, icon("M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 17l5-5-5-5M15 12H3"), "Sign out"));
+        h("button", { class: "row-btn", type: "button", onclick: () => { close(); signOut(); } }, icon("M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 17l5-5-5-5M15 12H3"), "Sign out"),
+        h("a", { class: "row-btn", href: "#/home", onclick: () => { close(); try { localStorage.removeItem("proads.seen2"); } catch (e) {} } }, icon("M12 3l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5z"), "ProAds " + PROADS_VERSION + " · What's new"));
       bg.classList.add("open"); sheet.classList.add("open"); document.body.style.overflow = "hidden";
     };
     const tabs = h("nav", { class: "tabbar", "aria-label": "Main" },
@@ -919,6 +938,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("li", {}, "In Shopify admin, open ", h("b", {}, "Settings → Notifications → Webhooks"), " (at the bottom of the page)."),
         h("li", {}, "Click ", h("b", {}, "Create webhook"), ": Event ", h("b", {}, "Order payment"), ", Format ", h("b", {}, "JSON"), ", the newest API version, and this URL:", copyRow(url)),
         h("li", {}, "Create a second one the same way with Event ", h("b", {}, "Refund create"), "."),
+        h("li", {}, "For Follow-ups (Premium), also add ", h("b", {}, "Checkout creation"), " and ", h("b", {}, "Checkout update"), " the same way, so ProAds sees checkouts that weren't paid."),
         h("li", {}, "Under the list Shopify shows ", h("i", {}, "\"Your webhooks will be signed with …\""), ". Copy that key and paste it here.")),
       h("form", { style: "display:flex;gap:8px;flex-wrap:wrap", onsubmit: async (e) => {
         e.preventDefault(); go.disabled = true;
@@ -1343,6 +1363,27 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
               h("button", { class: "btn btn-primary", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => viewBusiness(a.client_id) }, "Open"),
               h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => makeLink(a) }, "Reset link"), delButton(a))))))))
           : h("p", { class: "sub", style: "margin:0" }, "No one has signed up yet. Share pro.ezdevsoft.net or start your first ad.")));
+  }
+
+  function digestCard() {
+    const card = h("section", { class: "card", "aria-labelledby": "dg-h" }, h("h2", { id: "dg-h" }, "Morning summary email"), loading());
+    const draw = (d) => {
+      const sw = h("button", { class: "btn " + (d.enabled ? "btn-ghost" : "btn-primary"), type: "button", onclick: async () => {
+        sw.disabled = true; try { draw(await api("/digest/" + cid(), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: !d.enabled }) })); } catch (e) { toast(e.message); sw.disabled = false; } } }, d.enabled ? "Turn off" : "Turn on");
+      const prev = h("div", {});
+      const show = h("button", { class: "btn btn-ghost", type: "button", onclick: async () => {
+        show.disabled = true;
+        try { const p = (await api("/digest/" + cid() + "?preview=1")).preview;
+          prev.replaceChildren(p ? h("div", { class: "adset", style: "gap:6px" }, h("b", { style: "font-size:14px" }, p.subject), h("p", { class: "small", style: "margin:0;white-space:pre-wrap" }, p.text))
+            : h("p", { class: "small", style: "margin:0" }, "No paid orders in the last week, so there's nothing to send today.")); }
+        catch (e) { toast(e.message); } show.disabled = false; } }, "Preview today's");
+      card.replaceChildren(h("h2", { id: "dg-h" }, "Morning summary email"),
+        h("p", { class: "sub", style: "margin:0" }, "Every morning around 8:00: yesterday's money really paid, the last 7 days, ad spend and money back per 1 spent, what's waiting in Follow-ups, and one thing to fix."),
+        d.email_on ? null : h("p", { class: "small", style: "margin:0" }, "Email isn't set up on the server yet (SMTP settings), so nothing is sent for now."),
+        h("div", { style: "display:flex;gap:8px;flex-wrap:wrap;align-items:center" }, h("span", { class: "badge " + (d.enabled ? "b-measured" : "b-neutral") }, d.enabled ? "On" : "Off"), sw, show), prev);
+    };
+    api("/digest/" + cid()).then(draw).catch((e) => { if (e.message !== "signed out") card.replaceChildren(errorCard(e.message)); });
+    return card;
   }
 
   function clearSalesCard() {
@@ -2060,6 +2101,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("section", { class: "card", "aria-labelledby": "s3" },
           h("div", { class: "srow", style: "gap:12px" }, h("span", { class: "num-dot" }, "3"), h("h2", { id: "s3" }, "Track every new post")),
           tForm, tOut, h("h3", { style: "margin:8px 0 0;font-size:15px" }, "Your codes"), tList)),
+      digestCard(),
       clearSalesCard(),
       status && status.self_serve ? deleteCard() : null,
     ]));
@@ -3945,6 +3987,116 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     return box;
   }
 
+  // ---------- Follow-ups (Premium): recover checkouts, reviews, win-back ----------
+  async function viewFollowups() {
+    const head = h("header", {}, h("h1", {}, "Follow-ups"),
+      h("p", { class: "sub" }, "The cheapest sales come from people who almost bought or already bought. Tap Send to open WhatsApp with the message ready, from your own number."));
+    root.replaceChildren(layout("#/followups", [head, loading()]));
+    let F;
+    try { F = await api("/followups/" + cid()); } catch (e) { if (e.message !== "signed out") root.replaceChildren(layout("#/followups", [head, errorCard(e.message)])); return; }
+    const cur = F.currency, st = F.stats;
+    const post = (url, body) => api(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const ago = (t) => { const d = (Date.now() / 1000 - t) / 86400; return d < 1 ? Math.max(1, Math.round(d * 24)) + "h ago" : Math.round(d) + "d ago"; };
+    const tot = st.checkout.money + st.winback.money;
+    const summary = h("section", { class: "card estrip" },
+      h("div", { class: "elead" }, h("span", { class: "label" }, "Brought back by follow-ups"), h("b", { class: "ebig" }, money0(tot, cur)),
+        h("span", { class: "small" }, fmt.format(st.checkout.recovered + st.winback.recovered) + " paid orders from people you messaged (last 30 days for checkouts)")),
+      h("div", { class: "ek" }, h("span", { class: "label" }, "Checkouts recovered"), h("b", {}, st.checkout.sent ? Math.round(100 * st.checkout.recovered / st.checkout.sent) + "%" : "–"),
+        h("span", { class: "small" }, fmt.format(st.checkout.recovered) + " of " + fmt.format(st.checkout.sent) + " messaged" + (st.checkout.came_back_alone ? " · " + st.checkout.came_back_alone + " paid without a message" : ""))),
+      h("div", { class: "ek" }, h("span", { class: "label" }, "Won back"), h("b", {}, st.winback.sent ? Math.round(100 * st.winback.recovered / st.winback.sent) + "%" : "–"),
+        h("span", { class: "small" }, fmt.format(st.winback.recovered) + " of " + fmt.format(st.winback.sent) + " messaged")),
+      h("div", { class: "ek" }, h("span", { class: "label" }, "Reviews asked"), h("b", {}, fmt.format(st.review.sent)), h("span", { class: "small" }, "customers")));
+    const blocks = [head, summary];
+    if (!F.premium) {
+      blocks.push(h("section", { class: "card", style: "background: var(--violet-card); border-color: var(--violet-edge)" }, h("h2", {}, "Waiting for you right now"),
+        h("ul", { class: "list", style: "margin:0" }, h("li", {}, h("b", {}, fmt.format(st.checkout.waiting)), " unpaid checkouts to recover"),
+          h("li", {}, h("b", {}, fmt.format(st.winback.waiting)), " past buyers due to buy again"), h("li", {}, h("b", {}, fmt.format(st.review.waiting)), " happy customers to ask for a review")),
+        h("p", { class: "sub", style: "margin:0" }, "Follow-ups is part of Premium."), h("a", { class: "btn btn-primary", href: "#/billing", style: "align-self:flex-start" }, "See Premium")));
+      root.replaceChildren(layout("#/followups", blocks)); return;
+    }
+    const row = (kind, x, line) => {
+      const send = h("a", { class: "btn btn-primary", href: x.wa, target: "_blank", rel: "noopener", onclick: () => { post("/followups/" + cid() + "/mark", { kind, ref: x.ref, action: "sent" }).catch(() => {}); setTimeout(() => item.remove(), 400); } }, "Send on WhatsApp");
+      const skip = h("button", { class: "btn btn-ghost", type: "button", onclick: async () => { try { await post("/followups/" + cid() + "/mark", { kind, ref: x.ref, action: "dismissed" }); item.remove(); } catch (e) { toast(e.message); } } }, "Skip");
+      const item = h("div", { class: "adset", style: "gap:6px" }, h("div", { class: "between", style: "gap:8px" }, h("b", {}, x.name), h("span", { class: "small" }, ago(x.at))),
+        h("span", { style: "font-size:14px" }, line), h("details", {}, h("summary", { class: "small", style: "cursor:pointer" }, "Message"), h("p", { class: "small", style: "margin:6px 0 0;white-space:pre-wrap" }, x.text)),
+        h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, send, skip));
+      return item;
+    };
+    const L = F.lists, S = F.settings;
+    const sec = (title, sub, items, empty, waiting) => {
+      const list = h("div", { style: "display:flex;flex-direction:column;gap:10px" }, items.slice(0, 5));
+      const more = items.length > 5 ? h("button", { class: "btn btn-ghost", type: "button", style: "align-self:flex-start", onclick: () => { list.replaceChildren(...items); more.remove(); } }, "Show all " + items.length) : null;
+      return h("section", { class: "card" }, h("div", { class: "between" }, h("h2", {}, title), h("span", { class: "badge b-neutral" }, fmt.format(waiting != null ? waiting : items.length))),
+        h("p", { class: "sub", style: "margin:0" }, sub), items.length ? list : h("p", { class: "small", style: "margin:0" }, empty), more);
+    };
+    blocks.push(sec("Recover checkouts", "Started checkout but didn't pay (1 hour to 7 days ago).",
+      L.checkout.map((x) => row("checkout", x, money0(x.amount, x.currency || cur) + (x.items ? " · " + x.items : ""))),
+      F.checkouts_seen ? "None waiting. Nice." : h("span", {}, "No checkouts yet. In Shopify, Settings → Notifications → Webhooks, add ", h("b", {}, "Checkout creation"), " and ", h("b", {}, "Checkout update"), " (JSON) with this address: ", h("code", {}, F.webhook_url), ". Shops connected with the ProAds app get them automatically.")));
+    blocks.push(sec("Win back", "Bought " + S.winback_days + "+ days ago and haven't bought since.",
+      L.winback.map((x) => row("winback", x, fmt.format(x.orders) + " order" + (x.orders === 1 ? "" : "s") + " before")), S.shop_link ? "Nobody due right now." : (st.winback.waiting ? fmt.format(st.winback.waiting) + " buyers are due. " : "") + "Add your shop link under Links and messages to start.", st.winback.waiting));
+    blocks.push(sec("Ask for a review", "Paid 5 to 30 days ago.", L.review.map((x) => row("review", x, "Last order " + ago(x.at))), S.review_link ? "Nobody to ask right now." : (st.review.waiting ? fmt.format(st.review.waiting) + " customers to ask. " : "") + "Add your review link under Links and messages to start.", st.review.waiting));
+    const inp = (k, ph, v) => h("input", { name: k, value: v || "", placeholder: ph, style: "width:100%" });
+    const shop = inp("shop_link", "https://yourshop.com", S.shop_link), review = inp("review_link", "Google review link, Judge.me page or product page", S.review_link);
+    const days = h("input", { name: "winback_days", type: "number", min: 14, max: 365, value: S.winback_days, style: "max-width:100px" });
+    const code = inp("winback_code", "Optional code, e.g. COMEBACK10", S.winback_code);
+    const tpl = (k, label) => h("label", { style: "display:flex;flex-direction:column;gap:4px;font-size:14px" }, label,
+      h("textarea", { name: "t_" + k, rows: 3, dir: "auto", style: "width:100%" }, S.templates[k]));
+    const form = h("form", { style: "display:flex;flex-direction:column;gap:10px", onsubmit: async (e) => {
+      e.preventDefault(); const f = new FormData(form);
+      try { await post("/followups/" + cid() + "/settings", { shop_link: f.get("shop_link"), review_link: f.get("review_link"), winback_days: +f.get("winback_days"), winback_code: f.get("winback_code"),
+        templates: { checkout: f.get("t_checkout"), winback: f.get("t_winback"), review: f.get("t_review") } }); toast("Saved"); viewFollowups(); }
+      catch (er) { toast(er.message); } } },
+      h("label", { style: "font-size:14px" }, "Shop link", shop), h("label", { style: "font-size:14px" }, "Review link", review),
+      h("div", { style: "display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end" }, h("label", { style: "font-size:14px" }, "Win back after (days) ", days), h("label", { style: "font-size:14px;flex:1 1 200px" }, "Win-back code", code)),
+      tpl("checkout", "Checkout message"), tpl("winback", "Win-back message"), tpl("review", "Review message"),
+      h("p", { class: "small", style: "margin:0" }, "You can use {name}, {shop}, {items}, {link} and {code_line}. Write in any language."),
+      h("button", { class: "btn btn-primary", type: "submit", style: "align-self:flex-start" }, "Save"));
+    blocks.push(h("section", { class: "card" }, h("details", {}, h("summary", { style: "cursor:pointer;font-weight:600" }, "Links and messages"), h("div", { style: "margin-top:10px" }, form))));
+    blocks.push(h("p", { class: "small" }, "A sale counts as brought back when the same email or phone pays within 7 days of a checkout message or 14 days of a win-back message. Messages go from your own WhatsApp, one by one; only message people who bought from you or gave you their number."));
+    root.replaceChildren(layout("#/followups", blocks));
+  }
+
+  // ---------- ProAds Impact: the difference ProAds makes ----------
+  async function impactCard() {
+    let I;
+    try { I = await api("/impact/" + cid()); } catch (e) { return null; }
+    const c = I.coverage || {}, m = I.meta || {}, ch = I.change || {};
+    if (!c.orders && !ch.ready && m.error) return null;
+    const pc = (x, plus) => x == null ? "–" : (plus && x > 0 ? "+" : "") + (Math.abs(x) < 0.1 && x !== 0 ? (100 * x).toFixed(1) : Math.round(100 * x)) + "%";
+    const tile = (label, big, lines, src) => h("div", { class: "adset", style: "gap:6px;flex:1 1 220px;min-width:0" },
+      h("span", { class: "small", style: "text-transform:uppercase;letter-spacing:.06em" }, label),
+      h("b", { style: "font-size:26px;font-family: var(--head)" }, big),
+      ...lines.filter(Boolean).map((t) => h("span", { style: "font-size:14px" }, t)),
+      h("span", { class: "small", style: "margin-top:auto" }, src));
+    const metaTile = m.error ? tile("What Meta says", "–", [m.error], "Source: Meta") :
+      tile("What Meta says", m.acr != null ? pc(m.acr / 100, true) : "–", [
+        m.acr != null ? "more purchases Meta measures because of server events (ACR)" : "Meta hasn't reported ACR yet",
+        m.match_quality != null ? "Match quality " + m.match_quality.toFixed(1) + " / 10" : null,
+        m.coverage != null ? "Event coverage " + Math.round(m.coverage) + "%" : null], "Source: Meta Events Manager (Dataset Quality)");
+    const notSending = !c.sent_meta && !(ch && ch.started_at);
+    const sentTile = notSending ? tile("What ProAds sent", "Not yet", [
+      "ProAds isn't sending your sales to Meta yet.",
+      c.outside_checkout ? pc(c.outside_share) + " of your " + fmt.format(c.orders) + " real orders were paid outside your website, where no browser pixel can see them. ProAds can send them." : null,
+      h("a", { href: "#/upload" }, "Connect your Meta Pixel →")], "Source: ProAds (your verified orders)") :
+      tile("What ProAds sent", c.orders ? pc(c.sent_meta_share) : "–", [
+      c.orders ? "of your " + fmt.format(c.orders) + " real paid orders reached Meta (30 days)" : "No paid orders in the last 30 days",
+      c.sent_tiktok_share != null ? pc(c.sent_tiktok_share) + " reached TikTok" : null,
+      c.outside_checkout ? pc(c.outside_share) + " were paid outside your website, where no browser pixel can see them" : null,
+      c.with_email != null && c.sent_meta ? "Email on " + pc(c.with_email) + ", phone on " + pc(c.with_phone) + " for matching" : null], "Source: ProAds (your verified orders)");
+    const since = ch.started_at ? new Date(ch.started_at * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null;
+    const rng = (x) => x ? " (likely " + pc(x.low, true) + " to " + pc(x.high, true) + ")" : "";
+    const changeTile = ch.ready ? tile("Since ProAds started", pc(ch.money && ch.money.change, true), [
+      "money really paid a day, " + ch.days + " days after vs " + ch.days + " days before " + since + rng(ch.money),
+      ch.orders ? pc(ch.orders.change, true) + " real orders a day" + rng(ch.orders) : null,
+      ch.return ? "Back per 1 spent on ads: " + ch.return.before.toFixed(2) + " → " + ch.return.after.toFixed(2) : null], "Before vs after, not a controlled test: seasons, offers and ad changes also move it") :
+      tile("Since ProAds started", "Soon", [ch.not_started ? "Starts counting when ProAds begins sending your sales to Meta or TikTok."
+        : ch.too_few_before ? "Too few orders before " + since + " to compare fairly." : "Needs " + ch.needs_days + " more day" + (ch.needs_days === 1 ? "" : "s") + " of data after " + since + "."], "Before vs after, compared over equal days");
+    return h("section", { class: "card", "aria-labelledby": "impact-h" },
+      h("div", { class: "between" }, h("h2", { id: "impact-h" }, "ProAds Impact"), h("span", { class: "badge b-measured" }, "New in 2.0")),
+      h("div", { style: "display:flex;gap:12px;flex-wrap:wrap" }, metaTile, sentTile, changeTile),
+      h("p", { class: "small", style: "margin:0" }, "Every number says where it comes from. ProAds never counts a sale the platforms claim but your shop didn't get paid for."));
+  }
+
   // ---------- leads from Meta Business Suite (Messenger sales) ----------
   async function leadsCard() {
     let L;
@@ -4096,14 +4248,14 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       draw();
       return;
     }
-    const [adsBox, fcBox, lk, leadsBox] = await Promise.all([adsSection(homePeriod), forecastSection(), api("/leaks/" + cid()).catch(() => null), leadsCard()]);
+    const [adsBox, fcBox, lk, leadsBox, impactBox] = await Promise.all([adsSection(homePeriod), forecastSection(), api("/leaks/" + cid()).catch(() => null), leadsCard(), impactCard()]);
     const leakNote = lk && lk.leaks && lk.leaks.length ? h("a", { href: "#/audit", class: "result err", style: "text-decoration:none;color:inherit" },
       h("span", {}, h("b", {}, "Money leaks: "), (lk.measured_per_month ? "about " + fmt.format(Math.round(lk.measured_per_month)) + " " + lk.currency + " a month measured" : "")
         + (lk.at_stake_per_month ? (lk.measured_per_month ? ", " : "") + "up to " + fmt.format(Math.round(lk.at_stake_per_month)) + " " + lk.currency + " more at stake" : "")
         + ". Biggest: " + lk.leaks[0].title + "."), h("span", { class: "ok" }, "See all →")) : null;
     body.replaceChildren(
       ...[adsBanner(d.ads_access), leakNote].filter(Boolean),
-      strip, adsBox,
+      ...[whatsNewCard()].filter(Boolean), strip, ...[impactBox].filter(Boolean), adsBox,
       h("section", { class: "card", "aria-label": "Chart" },
         h("div", { class: "between" }, h("h2", {}, label + " over time"),
           h("div", { style: "display:flex;gap:14px" }, h("span", { class: "key" }, h("i"), "This period"), h("span", { class: "key" }, h("i", { class: "prev" }), "Previous period"))),
@@ -4220,7 +4372,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   }
 
   // ---------- router ----------
-  const VIEWS = { "#/platforms": viewPlatforms, "#/home": viewHome, "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling, "#/competitors": viewCompetitors, "#/engines": viewEngines, "#/learning": viewLearning, "#/buyers": viewBuyers, "#/experiments": viewExperiments, "#/funnel": viewFunnel };
+  const VIEWS = { "#/platforms": viewPlatforms, "#/home": viewHome, "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling, "#/competitors": viewCompetitors, "#/engines": viewEngines, "#/learning": viewLearning, "#/buyers": viewBuyers, "#/experiments": viewExperiments, "#/funnel": viewFunnel, "#/followups": viewFollowups };
   function go(hash) { if (location.hash !== hash) location.hash = hash; else route(); }
   async function route() {
     const [path, query] = location.hash.split("?");
