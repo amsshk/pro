@@ -364,7 +364,8 @@ class App:
             if request.method not in ("GET", "HEAD", "OPTIONS") and self.accounts.session_viewer(given) and \
                     request.path not in (f"/competitors/{client_id}/scan", f"/competitors/{client_id}/conquest",
                                          f"/meta/connect/{client_id}", f"/meta/{client_id}/select", f"/meta/{client_id}/disconnect",
-                                         f"/connect/{client_id}/meta-pixel", f"/connect/{client_id}/meta-pixel/disconnect"):
+                                         f"/connect/{client_id}/meta-pixel", f"/connect/{client_id}/meta-pixel/disconnect",
+                                         f"/meta/{client_id}/token"):
                 abort(403, "You're viewing this business as admin, so it's view only. Switch back to your account to make changes.")
             return
         if expected and given and hmac.compare_digest(expected, given):
@@ -5186,6 +5187,28 @@ table{{width:100%;border-collapse:collapse;font-size:14px}}td,th{{text-align:lef
             state.store.db.execute("DELETE FROM meta_pixel_links WHERE client_id=?", (client_id,))
             state.store.db.commit()
         return {"connected": False}
+
+    @flask.post("/meta/<client_id>/token")
+    def meta_token_connect(client_id):
+        """Connect Facebook & Instagram with a System User token (Business settings > System users > Generate token),
+        the way agencies run client ad accounts. Works without Facebook Login and doesn't expire. Then the client picks
+        the ad account, Page and Pixel exactly as after a login."""
+        state.require_key(client_id)
+        tok = re.sub(r"\s+", "", str((request.get_json(silent=True) or {}).get("token") or ""))
+        if len(tok) < 50 or not tok.startswith("EA"):
+            abort(400, "Paste the System User token (it starts with EAA): Business settings > System users > Generate new token.")
+        try:
+            assets = meta_connect.discover(state.meta_http, tok)
+        except Exception as e:
+            abort(400, "Meta didn't accept this token: " + redact(str(e))[:200])
+        if not assets["ad_accounts"]:
+            abort(400, "This token can't see any ad account. In Business settings > System users > Assign assets, give it the "
+                       "ad account (full control), then generate the token again.")
+        with state.lock:
+            state.meta_conns.save(client_id, {"access_token": tok, "expires_at": None}, assets)
+        log.info("%s connected Facebook with a system user token (%d ad accounts, %d pages)", client_id,
+                 len(assets["ad_accounts"]), len(assets["pages"]))
+        return {"connected": True, "ad_accounts": len(assets["ad_accounts"]), "pages": len(assets["pages"])}
 
     @flask.post("/meta/connect/<client_id>")
     def meta_connect_start(client_id):

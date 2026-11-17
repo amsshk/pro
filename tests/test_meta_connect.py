@@ -156,3 +156,14 @@ def test_connect_link_only_works_in_the_browser_that_asked(app):
     victim = app.test_client()                     # someone else's browser, sent the link
     r = victim.get("/meta/callback", query_string={"code": "good", "state": state})
     assert "same browser" in r.headers["Location"].replace("+", " ") and app.extensions["paysignal"].meta_conns.get("glow-clinic") is None
+
+
+def test_agency_connects_with_a_system_user_token(app):
+    c = app.test_client()
+    tok = c.post("/auth/signup", json={"business": "Glow Clinic", "email": "o@glow.ae", "password": "first-password-1", "terms": True}).json["token"]
+    v = {"X-API-Key": c.post("/admin/pro/view-as/glow-clinic", headers={"X-API-Key": "admin-key-0123456789abc"}).json["token"]}
+    assert c.post("/meta/glow-clinic/token", json={"token": "nope"}, headers=v).status_code == 400
+    r = c.post("/meta/glow-clinic/token", json={"token": "EAA" + "s" * 80}, headers=v)
+    assert r.status_code == 200 and r.json["ad_accounts"] == 1 and r.json["pages"] == 2
+    m = c.get("/status/glow-clinic", headers={"X-API-Key": tok}).json["connections"]["meta_login"]
+    assert m["connected"] and not m.get("expired")

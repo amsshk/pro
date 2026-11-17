@@ -1464,7 +1464,28 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       card.replaceChildren(head(expired ? "Reconnect Facebook & Instagram" : "Connect Facebook & Instagram", expired ? "Access expired" : "Needed for ads", false),
         h("p", { class: "sub", style: "margin:0" }, "Approve on Facebook's own page and pick your ad account and Page. Then ProAds can publish campaigns in your ad account (paused until you press Go live) and send your real sale values to your Pixel, so Meta finds people who pay."),
         h("ul", { class: "list" }, h("li", {}, "Nothing spends money until you press Go live"), h("li", {}, "ProAds never sees your Facebook password"), h("li", {}, "Disconnect any time")),
-        btn, pixelTokenBox(), ...(notice ? [notice] : []));
+        btn, systemTokenBox(), pixelTokenBox(), ...(notice ? [notice] : []));
+    }
+    // Agencies: connect the ad account with a System User token (no Facebook Login needed, never expires)
+    function systemTokenBox() {
+      const out = h("div", {});
+      const tok = h("input", { type: "password", autocomplete: "new-password", name: "proads-secret-" + Math.random().toString(36).slice(2), "data-lpignore": "true", "data-1p-ignore": "true",
+        placeholder: "System User token (EAA…)", "aria-label": "System User token" });
+      const go = h("button", { class: "btn btn-primary", type: "submit" }, "Connect with token");
+      return h("details", { style: "border:1px solid var(--line);border-radius:12px;padding:12px 14px" },
+        h("summary", { style: "cursor:pointer;font-weight:600" }, "Agency? Connect the ad account with a System User token"),
+        h("ol", { style: "margin:10px 0;padding-left:20px;font-size:14px;display:flex;flex-direction:column;gap:6px" },
+          h("li", {}, "In ", h("a", { href: "https://business.facebook.com/settings/system-users", target: "_blank", rel: "noopener" }, "Business settings → Users → System users"), ", add one named ProAds (Admin)."),
+          h("li", {}, h("b", {}, "Assign assets"), ": this business's ad account, Page and Pixel, with full control."),
+          h("li", {}, h("b", {}, "Generate new token"), " for the ProAds app, with ads_management, ads_read, business_management, pages_show_list and pages_read_engagement. Choose ", h("b", {}, "Never"), " for expiry."),
+          h("li", {}, "Paste it here, then pick the ad account, Page and Pixel.")),
+        h("form", { style: "display:flex;gap:8px;flex-wrap:wrap", onsubmit: async (e) => {
+          e.preventDefault(); go.disabled = true; out.replaceChildren();
+          try { await api("/meta/" + cid() + "/token", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: tok.value }) });
+            tok.value = ""; toast("Connected. Now pick the ad account, Page and Pixel."); status = await api("/status/" + cid()); route(); }
+          catch (er) { if (er.message !== "signed out") out.replaceChildren(errorCard(er.message)); }
+          go.disabled = false;
+        } }, tok, go), out);
     }
     // Facebook login not available? Send sales to the Pixel with its own Conversions API token instead
     function pixelTokenBox() {
