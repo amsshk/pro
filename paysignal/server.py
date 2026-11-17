@@ -46,7 +46,7 @@ from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
-from . import affiliates, audiences, leads, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
+from . import affiliates, audience_sync, audiences, leads, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
 from .identity import hash_phone, normalize_phone
 from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
@@ -189,6 +189,7 @@ class App:
         self.conquest = competitors.ConquestStore(self.store.db)
         self.partners = affiliates.PartnerStore(self.store.db)
         self.leads = leads.LeadStore(self.store.db)
+        self.audience_sync = audience_sync.AudienceSyncStore(self.store.db)
         self.store.db.execute("CREATE TABLE IF NOT EXISTS meta_pixel_links (client_id TEXT PRIMARY KEY, pixel_id TEXT NOT NULL,"
                               " name TEXT, token_enc TEXT NOT NULL, added_at INTEGER NOT NULL)")
         self.store.db.commit()
@@ -383,7 +384,7 @@ class App:
                     request.path not in (f"/competitors/{client_id}/scan", f"/competitors/{client_id}/conquest",
                                          f"/meta/connect/{client_id}", f"/meta/{client_id}/select", f"/meta/{client_id}/disconnect",
                                          f"/connect/{client_id}/meta-pixel", f"/connect/{client_id}/meta-pixel/disconnect",
-                                         f"/meta/{client_id}/token"):
+                                         f"/meta/{client_id}/token", f"/audiences/{client_id}/meta-sync"):
                 abort(403, "You're viewing this business as admin, so it's view only. Switch back to your account to make changes.")
             return
         if expected and given and hmac.compare_digest(expected, given):
@@ -2261,6 +2262,69 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         log.info("buyer list %s downloaded for %s (%d buyers)", fmt, client_id, len(rows))
         return resp
 
+    # ---------------- Auto buyer audiences in Meta (Premium) ----------------
+    def run_audience_sync(client_id: str) -> dict:
+        s = state.ads_settings(client_id, is_admin(client_id))
+        if not s or not s.get("ad_account"):
+            return {"ok": False, "error": "Connect Facebook and choose an ad account first (Connect & upload)."}
+        cfg = state.config(client_id)
+        with state.lock:
+            rows = audiences.buyers(state.store, client_id)
+            row = state.audience_sync.get(client_id) or {}
+        country = row.get("country") or audience_sync.country_for(cfg.get("currency", "AED"))
+        api = audience_sync.MetaAudiences(state.ads_http, s["token"], s.get("version") or meta_ads.settings()["version"])
+        res = audience_sync.sync(api, state.audience_sync, client_id, str(s["ad_account"]).replace("act_", ""), rows,
+                                 cfg.get("name") or client_id, country)
+        log.info("buyer audience sync %s: %s", client_id, {k: v for k, v in res.items() if k != "error"} | ({"error": res["error"][:120]} if res.get("error") else {}))
+        return res
+
+    def audience_sync_all() -> None:
+        with state.lock:
+            due = state.audience_sync.due()
+        for cid in due:
+            try:
+                if state.known(cid) and (is_admin(cid) or state.billing.tier(cid) == "premium"):
+                    run_audience_sync(cid)
+            except Exception:
+                log.exception("buyer audience sync failed for %s", cid)
+    state.audience_sync_all = audience_sync_all
+
+    @flask.get("/audiences/<client_id>/meta-sync")
+    def audience_sync_status(client_id):
+        state.require_key(client_id)
+        with state.lock:
+            n = len(audiences.buyers(state.store, client_id))
+            out = audience_sync.view(state.audience_sync.get(client_id), n)
+        out["premium"] = is_admin(client_id) or bool(state.accounts.session_viewer(request.headers.get("X-API-Key", ""))) \
+            or state.billing.tier(client_id) == "premium"
+        return out
+
+    @flask.post("/audiences/<client_id>/meta-sync")
+    def audience_sync_run(client_id):
+        """{"enable": true[, "country": "AE"]} turns on the daily sync and syncs now; {"enable": false} stops it
+        (the audiences stay in Meta)."""
+        state.require_key(client_id)
+        body = request.get_json(silent=True) or {}
+        if body.get("enable") is False:
+            with state.lock:
+                state.audience_sync.save(client_id, enabled=False)
+            return audience_sync_status(client_id)
+        require_premium(client_id, "Auto buyer audiences")
+        country = str(body.get("country") or "").strip().upper()
+        if country:
+            if not (len(country) == 2 and country.isalpha()):
+                abort(400, "country must be a 2-letter code like AE")
+            with state.lock:
+                row = state.audience_sync.get(client_id)
+                if row and row.get("country") != country:
+                    state.audience_sync.save(client_id, country=country, lookalike_id=None)   # new country: new lookalike
+                elif not row:
+                    state.audience_sync.save(client_id, country=country)
+        res = run_audience_sync(client_id)
+        out = audience_sync_status(client_id)
+        out["result"] = res
+        return out
+
     @flask.get("/export/<client_id>")
     def export_report(client_id):
         """Download the report for a period: ?format=csv (orders) | xlsx (every table) | pdf (ProAds-branded)."""
@@ -2597,13 +2661,13 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         return {"deleted": True}
 
     # ---------------- Competitor X-ray (Premium) ----------------
-    def require_premium(client_id):
+    def require_premium(client_id, feature: str = "Competitor X-ray"):
         if is_admin(client_id) or state.accounts.session_viewer(request.headers.get("X-API-Key", "")):
             return                                       # ProAds' own account, or the admin looking at a business
         with state.lock:
             tier = state.billing.tier(client_id)
         if tier != "premium":
-            resp = jsonify({"error": "Competitor X-ray is part of Premium. Upgrade on Plan & billing.",
+            resp = jsonify({"error": f"{feature} is part of Premium. Upgrade on Plan & billing.",
                             "needs_plan": True, "needs_tier": "premium"})
             resp.status_code = 402
             abort(resp)
@@ -5681,7 +5745,7 @@ def _start_worker(state: App, every: int) -> None:
                     state.enforce_ads_trials()
             except Exception:
                 log.exception("ad test check failed")
-            for job in ("sync_all_launch_status", "tiktok_push_all", "windsor_sync_all", "tiktok_ads_sync_all", "retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees"):
+            for job in ("sync_all_launch_status", "tiktok_push_all", "windsor_sync_all", "tiktok_ads_sync_all", "retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees", "audience_sync_all"):
                 try:
                     if getattr(state, job, None):
                         getattr(state, job)()

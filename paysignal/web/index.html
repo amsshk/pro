@@ -2865,6 +2865,30 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       btn.disabled = false;
     };
     const b = (fmt_, label) => h("button", { class: "btn btn-ghost", type: "button", onclick: (e) => get(fmt_, e.currentTarget) }, label);
+    const syncBox = h("div", { class: "adset", style: "gap:8px" });
+    const drawSync = (st, res) => {
+      const when = st.last_sync ? new Date(st.last_sync * 1000).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : null;
+      const country = h("input", { value: st.country || "", placeholder: "AE", maxlength: 2, "aria-label": "Lookalike country (2 letters)", style: "max-width:70px;text-transform:uppercase" });
+      const run = (enable) => async (e) => {
+        e.currentTarget.disabled = true;
+        try { const r = await api("/audiences/" + cid() + "/meta-sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(enable ? { enable: true, country: country.value.trim() || undefined } : { enable: false }) }); drawSync(r, r.result); }
+        catch (err) { if (err.message !== "signed out") { if (err.data && err.data.needs_plan) { drawSync(st, { ok: false, error: err.message, upgrade: true }); } else toast(err.message); } }
+      };
+      const err = (res && res.ok === false && res.error) || (st.enabled && st.last_error);
+      syncBox.replaceChildren(
+        h("div", { class: "between", style: "gap:8px" }, h("b", { style: "font-size:15px" }, "Keep it in Meta automatically"), h("span", { class: "badge " + (st.enabled ? "b-measured" : "b-neutral") }, st.enabled ? "On · daily" : "Premium")),
+        h("p", { class: "small", style: "margin:0" }, "ProAds creates a \u201cProAds buyers\u201d audience in your Meta ad account and refreshes it every day, so new buyers are added and fully refunded ones drop out. Once there are " + st.lookalike_min + "+ buyers it also makes a 1% lookalike. Use them in ad sets: exclude buyers for new-customer ads, or target the lookalike."),
+        st.enabled && st.audience_id ? h("div", { style: "display:flex;gap:14px;flex-wrap:wrap;font-size:14px" },
+          h("a", { href: st.audience_link, target: "_blank", rel: "noopener" }, "Buyers audience \u2197"),
+          st.lookalike_id ? h("a", { href: st.lookalike_link, target: "_blank", rel: "noopener" }, "Lookalike 1% " + (st.country || "") + " \u2197") : h("span", { class: "small" }, "Lookalike: from " + st.lookalike_min + " buyers"),
+          when ? h("span", { class: "small" }, "Last update " + when + (st.last_count != null ? " \u00b7 " + fmt.format(st.last_count) + " sent" : "")) : null) : null,
+        err ? h("div", { class: "result err", role: "alert" }, h("span", {}, err), res && res.upgrade ? h("a", { href: "#/billing", class: "ok" }, "See Premium \u2192") : null) : null,
+        h("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" },
+          h("button", { class: "btn btn-primary", type: "button", onclick: run(true) }, st.enabled ? "Sync now" : "Turn on"),
+          h("label", { class: "small", style: "display:flex;gap:6px;align-items:center" }, "Lookalike country", country),
+          st.enabled ? h("button", { class: "btn btn-ghost", type: "button", onclick: run(false) }, "Turn off") : null));
+    };
+    api("/audiences/" + cid() + "/meta-sync").then((st) => drawSync(st)).catch(() => syncBox.remove());
     api("/audience/" + cid() + "?format=summary").then((s) => {
       const n = s.buyers;
       card.replaceChildren(h("h2", { id: "bl-h" }, "Your buyer list for ads"),
@@ -2874,6 +2898,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
           h("li", {}, h("b", {}, "Retarget them"), " with a new product or a bigger size."),
           h("li", {}, h("b", {}, "Find similar people"), " (lookalike) once you have about " + fmt.format(s.lookalike_min) + " buyers" + (s.lookalike_ok ? ": you have enough." : ". Not yet."))),
         n < s.meta_min ? h("p", { class: "small", style: "margin:0" }, "Meta needs about " + s.meta_min + " matched people before it can use a customer list, and not every buyer gets matched. With " + n + " buyers it may be too small for now; it grows by itself as sales come in.") : null,
+        n ? syncBox : null,
         n ? h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, b("meta", "Meta list (.csv, with value)"), s.tiktok_email_ok ? b("tiktok_email", "TikTok emails (.txt)") : null, s.tiktok_phone_ok ? b("tiktok_phone", "TikTok phones (.txt)") : null) : null,
         !s.tiktok_email_ok && !s.tiktok_phone_ok ? h("p", { class: "small", style: "margin:0" }, h("b", {}, "TikTok: "), "a customer file needs at least " + fmt.format(s.tiktok_min) + " entries, so use a Pixel audience instead: TikTok Ads Manager → Tools → Audiences → Create audience → Custom audience → Website traffic → your Pixel → Purchase (Complete payment), 180 days. ProAds already sends every paid sale to your Pixel, so it holds the same buyers.") : null,
         h("details", {}, h("summary", { style: "cursor:pointer;font-size:14px" }, "How to upload"),
@@ -3570,7 +3595,8 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     const premItems = h("ul", { class: "list" }, h("li", {}, "Everything in Pro"),
       h("li", {}, h("b", {}, "Competitor X-ray: "), "see every ad your competitors run and which they keep running longest"),
       h("li", {}, "One click: an original campaign built to beat them, ready to publish"),
-      h("li", {}, "AI read of their angles, offers and weak spots"));
+      h("li", {}, "AI read of their angles, offers and weak spots"),
+      h("li", {}, h("b", {}, "Auto buyer audiences: "), "your real buyers kept up to date in Meta every day, plus a 1% lookalike"));
     const premium = h("section", { class: "card", style: "background: var(--violet-card); border-color: var(--violet-edge)" },
       h("div", { class: "between" }, h("h2", {}, "Premium"), mine("premium") || h("span", { class: "badge b-neutral" }, "Most power")),
       priceOf(b.premium_price) ? h("b", { style: "font-family: var(--head); font-size:28px" }, priceOf(b.premium_price)) : null, feeLine, premItems,
