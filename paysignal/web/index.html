@@ -3755,7 +3755,10 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       let r;
       try { r = await api("/ads/" + cid() + "/tiktok?period=" + encodeURIComponent(period)); }
       catch (e) { if (e.message !== "signed out") box.replaceChildren(h("h2", { id: "tt-h" }, "TikTok ads performance"), errorCard(e.message)); return; }
-      const head = h("div", { class: "between" }, h("h2", { id: "tt-h" }, "TikTok ads performance"), h("span", { class: "badge b-measured" }, "Live from TikTok"));
+      const dl = (x) => new Date(x + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+      const span = r.dates && r.dates.length ? (r.dates.length === 1 ? dl(r.dates[0]) : dl(r.dates[0]) + " – " + dl(r.dates[r.dates.length - 1])) : "";
+      const head = h("div", { class: "between" }, h("h2", { id: "tt-h" }, "TikTok ads performance"),
+        h("span", { class: "badge b-measured" }, "Live from TikTok" + (span ? " · " + span : "")));
       if (r.error) { box.replaceChildren(head, errorCard(r.error)); return; }
       const t = r.totals, cur = r.currency, tr = r.truth || {};
       const kpis = h("div", { class: "adkpis" },
