@@ -419,6 +419,13 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   const pct = (x) => Math.round((x || 0) * 100) + "%";
   const signed = (x) => (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(Math.round(x * 100)) + "%";
 
+  // Empty slots (null / undefined / false) are skipped when filling a card, never shown as the word "null"
+  for (const proto of [Element.prototype, DocumentFragment.prototype]) {
+    for (const m of ["replaceChildren", "append", "prepend"]) {
+      const orig = proto[m];
+      if (orig) proto[m] = function (...kids) { return orig.apply(this, kids.filter((k) => k !== null && k !== undefined && k !== false)); };
+    }
+  }
   const SVG_TAGS = new Set(["svg", "path", "rect", "line", "circle", "g", "polyline", "text", "defs", "linearGradient", "stop"]);
   // Build DOM safely: all text goes in as text, never as HTML.
   function h(tag, props, ...kids) {
