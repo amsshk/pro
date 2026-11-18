@@ -667,7 +667,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     card.append(h("div", { class: "between" }, h("h2", { id: "wn-h" }, "New in ProAds 2.0"), h("button", { class: "btn btn-ghost", type: "button", onclick: close, "aria-label": "Close" }, "Got it")),
       h("div", { style: "display:flex;gap:16px;flex-wrap:wrap" },
         item("ProAds Impact", "The difference ProAds makes, in percentages, each with its source. On Home.", "#/home"),
-        item("Follow-ups", "Recover unpaid checkouts, win back past buyers, ask for reviews. One tap on WhatsApp.", "#/followups"),
+        item("Follow-ups in Competitor X-ray", "Recover unpaid checkouts, win back past buyers, ask for reviews. One tap on WhatsApp.", "#/followups"),
         item("Auto buyer audiences", "Your real buyers kept up to date in Meta daily, plus a lookalike.", "#/buyers"),
         item("Morning summary", "Yesterday's real money in your inbox every morning.", "#/upload")));
     return card;
@@ -687,7 +687,6 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     ["#/learning", "Meta learning", "M4 19V5M4 19h16M8 15l3-4 3 2 5-7"],
     ["#/engines", "Profit engine", "M12 3v3M12 18v3M4.6 6.6l2.1 2.1M17.3 15.3l2.1 2.1M3 12h3M18 12h3M4.6 17.4l2.1-2.1M17.3 8.7l2.1-2.1M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"],
     ["#/competitors", "Competitor X-ray", "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM16 16l5 5M8 11h6M11 8v6", "Premium"],
-    ["#/followups", "Follow-ups", "M4 4h16v12H7l-3 3zM8 9h8M8 12h5", "Premium"],
   ];
   function statusRows() {
     if (!status) return [];
@@ -3490,8 +3489,9 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
             h("li", {}, "The ads they've kept running longest come first. That's a strong hint of what works for them"),
             h("li", {}, "The AI estimates what they're doing right and wrong, then builds you an original campaign to compete"),
             h("li", {}, "Publish it to your ad account in one click, like any other campaign"),
-            h("li", {}, h("b", {}, "Win their customers: "), "the searches to bid on, TikTok and Meta targeting, 3 honest comparison video scripts and a creator brief, built from your own sales")),
-          h("a", { class: "btn btn-primary", href: "#/billing", style: "align-self:flex-start" }, "See Premium")), conquestCard(null)]));
+            h("li", {}, h("b", {}, "Win their customers: "), "the searches to bid on, TikTok and Meta targeting, 3 honest comparison video scripts and a creator brief, built from your own sales"),
+            h("li", {}, h("b", {}, "Follow-ups: "), "recover unpaid checkouts, win back past buyers and ask for reviews, one tap on WhatsApp")),
+          h("a", { class: "btn btn-primary", href: "#/billing", style: "align-self:flex-start" }, "See Premium")), conquestCard(null), followupsSection()]));
       return;
     }
     let found = [];
@@ -3593,7 +3593,8 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     };
     country.addEventListener("change", () => loadSug(false));
     loadSug(false);
-    root.replaceChildren(layout("#/competitors", [head, sugCard, conquestCard(() => found), h("section", { class: "card" }, h("h2", {}, "Who do you want to beat?"), form), results]));
+    root.replaceChildren(layout("#/competitors", [head, sugCard, conquestCard(() => found), h("section", { class: "card" }, h("h2", {}, "Who do you want to beat?"), form), results, followupsSection()]));
+    if (location.hash === "#/followups") setTimeout(() => { const f = document.getElementById("followups"); if (f) f.scrollIntoView({ behavior: "smooth" }); }, 300);
   }
 
   // ---------- plan & billing ----------
@@ -3661,7 +3662,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       h("li", {}, "One click: an original campaign built to beat them, ready to publish"),
       h("li", {}, "AI read of their angles, offers and weak spots"),
       h("li", {}, h("b", {}, "Auto buyer audiences: "), "your real buyers kept up to date in Meta every day, plus a 1% lookalike"),
-      h("li", {}, h("b", {}, "Follow-ups: "), "recover unpaid checkouts, win back past buyers and ask for reviews, one tap on WhatsApp, with sales brought back counted"));
+      h("li", {}, h("b", {}, "Follow-ups (in Competitor X-ray): "), "recover unpaid checkouts, win back past buyers and ask for reviews, one tap on WhatsApp, with sales brought back counted"));
     const premium = h("section", { class: "card", style: "background: var(--violet-card); border-color: var(--violet-edge)" },
       h("div", { class: "between" }, h("h2", {}, "Premium"), mine("premium") || h("span", { class: "badge b-neutral" }, "Most power")),
       priceOf(b.premium_price) ? h("b", { style: "font-family: var(--head); font-size:28px" }, priceOf(b.premium_price)) : null, feeLine, premItems,
@@ -4011,12 +4012,15 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   }
 
   // ---------- Follow-ups (Premium): recover checkouts, reviews, win-back ----------
-  async function viewFollowups() {
-    const head = h("header", {}, h("h1", {}, "Follow-ups"),
-      h("p", { class: "sub" }, "The cheapest sales come from people who almost bought or already bought. Tap Send to open WhatsApp with the message ready, from your own number."));
-    root.replaceChildren(layout("#/followups", [head, loading()]));
+  // Follow-ups lives inside Competitor X-ray (Premium): win back your own customers, not just theirs
+  function followupsSection() {
+    const wrap = h("div", { id: "followups", style: "display:flex;flex-direction:column;gap:16px;scroll-margin-top:16px" });
+    const head = h("div", {}, h("h2", { style: "font-size:24px;margin:8px 0 4px" }, "Follow-ups: win back your own customers"),
+      h("p", { class: "sub", style: "margin:0" }, "The cheapest sales come from people who almost bought or already bought. Tap Send to open WhatsApp with the message ready, from your own number."));
+    const fill = async () => {
+    wrap.replaceChildren(head, loading());
     let F;
-    try { F = await api("/followups/" + cid()); } catch (e) { if (e.message !== "signed out") root.replaceChildren(layout("#/followups", [head, errorCard(e.message)])); return; }
+    try { F = await api("/followups/" + cid()); } catch (e) { if (e.message !== "signed out") wrap.replaceChildren(head, errorCard(e.message)); return; }
     const cur = F.currency, st = F.stats;
     const post = (url, body) => api(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const ago = (t) => { const d = (Date.now() / 1000 - t) / 86400; return d < 1 ? Math.max(1, Math.round(d * 24)) + "h ago" : Math.round(d) + "d ago"; };
@@ -4035,7 +4039,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("ul", { class: "list", style: "margin:0" }, h("li", {}, h("b", {}, fmt.format(st.checkout.waiting)), " unpaid checkouts to recover"),
           h("li", {}, h("b", {}, fmt.format(st.winback.waiting)), " past buyers due to buy again"), h("li", {}, h("b", {}, fmt.format(st.review.waiting)), " happy customers to ask for a review")),
         h("p", { class: "sub", style: "margin:0" }, "Follow-ups is part of Premium."), h("a", { class: "btn btn-primary", href: "#/billing", style: "align-self:flex-start" }, "See Premium")));
-      root.replaceChildren(layout("#/followups", blocks)); return;
+      wrap.replaceChildren(...blocks); return;
     }
     const row = (kind, x, line) => {
       const send = h("a", { class: "btn btn-primary", href: x.wa, target: "_blank", rel: "noopener", onclick: () => { post("/followups/" + cid() + "/mark", { kind, ref: x.ref, action: "sent" }).catch(() => {}); setTimeout(() => item.remove(), 400); } }, "Send on WhatsApp");
@@ -4067,7 +4071,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     const form = h("form", { style: "display:flex;flex-direction:column;gap:10px", onsubmit: async (e) => {
       e.preventDefault(); const f = new FormData(form);
       try { await post("/followups/" + cid() + "/settings", { shop_link: f.get("shop_link"), review_link: f.get("review_link"), winback_days: +f.get("winback_days"), winback_code: f.get("winback_code"),
-        templates: { checkout: f.get("t_checkout"), winback: f.get("t_winback"), review: f.get("t_review") } }); toast("Saved"); viewFollowups(); }
+        templates: { checkout: f.get("t_checkout"), winback: f.get("t_winback"), review: f.get("t_review") } }); toast("Saved"); fill(); }
       catch (er) { toast(er.message); } } },
       h("label", { style: "font-size:14px" }, "Shop link", shop), h("label", { style: "font-size:14px" }, "Review link", review),
       h("div", { style: "display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end" }, h("label", { style: "font-size:14px" }, "Win back after (days) ", days), h("label", { style: "font-size:14px;flex:1 1 200px" }, "Win-back code", code)),
@@ -4076,7 +4080,10 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       h("button", { class: "btn btn-primary", type: "submit", style: "align-self:flex-start" }, "Save"));
     blocks.push(h("section", { class: "card" }, h("details", {}, h("summary", { style: "cursor:pointer;font-weight:600" }, "Links and messages"), h("div", { style: "margin-top:10px" }, form))));
     blocks.push(h("p", { class: "small" }, "A sale counts as brought back when the same email or phone pays within 7 days of a checkout message or 14 days of a win-back message. Messages go from your own WhatsApp, one by one; only message people who bought from you or gave you their number."));
-    root.replaceChildren(layout("#/followups", blocks));
+    wrap.replaceChildren(...blocks);
+    };
+    fill();
+    return wrap;
   }
 
   // ---------- ProAds Impact: the difference ProAds makes ----------
@@ -4395,7 +4402,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   }
 
   // ---------- router ----------
-  const VIEWS = { "#/platforms": viewPlatforms, "#/home": viewHome, "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling, "#/competitors": viewCompetitors, "#/engines": viewEngines, "#/learning": viewLearning, "#/buyers": viewBuyers, "#/experiments": viewExperiments, "#/funnel": viewFunnel, "#/followups": viewFollowups };
+  const VIEWS = { "#/platforms": viewPlatforms, "#/home": viewHome, "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling, "#/competitors": viewCompetitors, "#/engines": viewEngines, "#/learning": viewLearning, "#/buyers": viewBuyers, "#/experiments": viewExperiments, "#/funnel": viewFunnel, "#/followups": viewCompetitors };
   function go(hash) { if (location.hash !== hash) location.hash = hash; else route(); }
   async function route() {
     const [path, query] = location.hash.split("?");
