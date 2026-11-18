@@ -2935,6 +2935,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
           st.lookalike_id ? h("a", { href: st.lookalike_link, target: "_blank", rel: "noopener" }, "Lookalike 1% " + (st.country || "") + " \u2197") : h("span", { class: "small" }, "Lookalike: from " + st.lookalike_min + " buyers"),
           when ? h("span", { class: "small" }, "Last update " + when + (st.last_count != null ? " \u00b7 " + fmt.format(st.last_count) + " sent" : "")) : null) : null,
         err ? h("div", { class: "result err", role: "alert" }, h("span", {}, err), res && res.upgrade ? h("a", { href: "#/billing", class: "ok" }, "See Premium \u2192") : null) : null,
+        !st.premium ? h("a", { class: "btn btn-primary", href: "#/billing", style: "align-self:flex-start" }, "See Premium") :
         h("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" },
           h("button", { class: "btn btn-primary", type: "button", onclick: run(true) }, st.enabled ? "Sync now" : "Turn on"),
           h("label", { class: "small", style: "display:flex;gap:6px;align-items:center" }, "Lookalike country", country),
@@ -2948,7 +2949,8 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("ul", { class: "list", style: "margin:0" },
           h("li", {}, h("b", {}, "Exclude them"), " from ads for new customers, so your budget isn't spent on people who already bought."),
           h("li", {}, h("b", {}, "Retarget them"), " with a new product or a bigger size."),
-          h("li", {}, h("b", {}, "Find similar people"), " (lookalike) once you have about " + fmt.format(s.lookalike_min) + " buyers" + (s.lookalike_ok ? ": you have enough." : ". Not yet."))),
+          h("li", {}, h("b", {}, "Find similar people"), " (lookalike): Meta can build one from " + fmt.format(s.meta_min) + " buyers" +
+            (n >= s.meta_min ? " and you have " + fmt.format(n) + ". It gets sharper as you get closer to " + fmt.format(s.lookalike_min) + "." : ". Not yet."))),
         n < s.meta_min ? h("p", { class: "small", style: "margin:0" }, "Meta needs about " + s.meta_min + " matched people before it can use a customer list, and not every buyer gets matched. With " + n + " buyers it may be too small for now; it grows by itself as sales come in.") : null,
         n ? syncBox : null,
         n ? h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, b("meta", "Meta list (.csv, with value)"), s.tiktok_email_ok ? b("tiktok_email", "TikTok emails (.txt)") : null, s.tiktok_phone_ok ? b("tiktok_phone", "TikTok phones (.txt)") : null) : null,
