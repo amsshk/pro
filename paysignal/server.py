@@ -2989,7 +2989,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         body = request.get_json(silent=True) or {}
         pay = conquest_access(client_id)
         if not pay["can_build"]:
-            resp = jsonify({"error": f"Each plan is {pay['price']:g} AED. Buy one to build it.", "needs_purchase": True, **pay})
+            msg = ("You've used this month's Win their customers plans. More next month."
+                   if pay["premium"] else "Win their customers is part of Premium. Upgrade on Plan & billing.")
+            resp = jsonify({"error": msg, "needs_tier": None if pay["premium"] else "premium", **pay})
             resp.status_code = 402
             abort(resp)
         names = [n.strip()[:60] for n in re.split(r"[,\n]", str(body.get("competitors", ""))) if n.strip()][:5]
@@ -3024,7 +3026,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         return out
 
     def conquest_access(client_id: str) -> dict:
-        """Who pays for the next plan: free for ProAds/admins, included for Premium (a few a month), else a bought one."""
+        """Win their customers is part of Premium (a fair-use number of plans a month); free for ProAds/admins.
+        Plans bought earlier, when it was sold on its own, can still be used."""
         prices = competitors.conquest_prices()
         free = is_admin(client_id) or bool(state.accounts.session_viewer(request.headers.get("X-API-Key", "")))
         with state.lock:
@@ -3047,8 +3050,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
 
     @flask.post("/competitors/<client_id>/conquest/checkout")
     def conquest_buy(client_id):
-        """Stripe's payment page for one plan; the webhook adds the plan after payment."""
+        """No longer sold on its own: Win their customers is part of Premium."""
         state.require_key(client_id)
+        abort(410, "Win their customers is now part of Premium. Upgrade on Plan & billing.")
         stripe = stripe_api()
         acc = conquest_access(client_id)
         with state.lock:

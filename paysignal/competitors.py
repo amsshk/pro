@@ -286,7 +286,7 @@ def conquest_prices() -> dict:
         except ValueError:
             return d
     return {"price": num("PROADS_CONQUEST_PRICE", 299), "premium_price": num("PROADS_CONQUEST_PREMIUM_PRICE", 99),
-            "included": int(num("PROADS_CONQUEST_INCLUDED", 3)), "currency": "AED"}
+            "included": int(num("PROADS_CONQUEST_INCLUDED", 20)), "currency": "AED"}
 
 
 class ConquestStore:
