@@ -354,8 +354,9 @@ class App:
             cfg = self.config(client_id)
             promo = {k.upper(): tuple(v) for k, v in cfg.get("promo_map", {}).items()}
             promo.update({r["code"]: (r["platform"], r["post_id"]) for r in self.store.promos(client_id)})
-            self.engines[client_id] = Engine(client_id, store=self.store, promo_map=promo,
-                                             default_margin=cfg.get("default_margin", 0.4))
+            share = self.signals.cost_share(client_id)          # the business's product cost %, when set
+            margin = (1 - share) if share is not None else cfg.get("default_margin", 0.4)
+            self.engines[client_id] = Engine(client_id, store=self.store, promo_map=promo, default_margin=margin)
         return self.engines[client_id]
 
     def posts_for(self, client_id: str) -> list:
@@ -1394,6 +1395,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             eng = state.engine(client_id)
             audit = build_audit(eng, (state.posts_for(client_id) or None), currency=state.config(client_id).get("currency", "AED"))
             state.trained_at[client_id] = time.time()
+            if "error" not in audit:                      # profit only with a real product cost behind it, never a guess
+                audit["profit_known"] = state.signals.cost_share(client_id) is not None or any(
+                    p.cost_of_goods() is not None for p in eng.store.purchases(client_id))
         if "error" in audit:
             return jsonify(audit), 400
         if not is_admin(client_id):
@@ -1783,6 +1787,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 abort(400, "Enter a percentage between 1 and 95.")
             with state.lock:
                 state.signals.set_cost_share(client_id, None if pct is None else pct / 100)
+                state.engines.pop(client_id, None)       # profit everywhere follows the new product cost
                 if pct is None and state.signals.value_mode(client_id) == "profit":
                     state.signals.set_value_mode(client_id, "amount")
         mode = body.get("value_mode")
@@ -2225,7 +2230,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 return proads_dashboard(request.args.get("period", "30"))
         with state.lock:
             out = build_dashboard(state.engine(client_id), request.args.get("period", "30"),
-                                  currency=cfg.get("currency", "AED"))
+                                  currency=cfg.get("currency", "AED"), cost_share=state.signals.cost_share(client_id))
             codes = len(state.store.promos(client_id))
             launches = state.launches.list(client_id)
             conn = meta_connect.public_view(state.meta_conns.get(client_id))
@@ -2552,7 +2557,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         cur = cfg.get("currency", "AED")
         with state.lock:
             eng = state.engine(client_id)
-            dash = build_dashboard(eng, period, currency=cur)
+            dash = build_dashboard(eng, period, currency=cur, cost_share=state.signals.cost_share(client_id))
             orders = []
             if dash.get("dates"):
                 first, last = dash["dates"][0], dash["dates"][-1]
@@ -2932,7 +2937,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         cfg = state.config(client_id)
         cur = cfg.get("currency", "AED")
         with state.lock:
-            d = build_dashboard(state.engine(client_id), "90", currency=cur)
+            d = build_dashboard(state.engine(client_id), "90", currency=cur, cost_share=state.signals.cost_share(client_id))
         facts = {"name": cfg.get("name", client_id), "website": cfg.get("website", ""), "currency": cur,
                  "top_products": [x["product"] for x in (d.get("products") or [])[:8]],
                  "average_order": next((x["value"] for x in d.get("metrics") or [] if x["key"] == "aov"), None)}
@@ -3001,7 +3006,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         cfg = state.config(client_id)
         cur = cfg.get("currency", "AED")
         with state.lock:
-            d = build_dashboard(state.engine(client_id), "90", currency=cur)
+            d = build_dashboard(state.engine(client_id), "90", currency=cur, cost_share=state.signals.cost_share(client_id))
         m = {x["key"]: x["value"] for x in d.get("metrics") or []}
         facts = {"name": cfg.get("name", client_id), "website": cfg.get("website", ""), "currency": cur,
                  "orders_90_days": m.get("orders"), "average_order": m.get("aov"), "refund_rate": d.get("refund_rate"),

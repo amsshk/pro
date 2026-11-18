@@ -127,10 +127,14 @@ def to_xlsx(data: dict) -> bytes:
 
     d = data.get("dashboard") or {}
     s = d.get("series") or {}
-    daily = [[day, (s.get("sales") or {}).get("current", [0] * len(d.get("dates", [])))[i],
-              (s.get("profit") or {}).get("current", [0] * len(d.get("dates", [])))[i],
-              (s.get("orders") or {}).get("current", [0] * len(d.get("dates", [])))[i]] for i, day in enumerate(d.get("dates") or [])]
-    sheet(wb.create_sheet("Daily"), ["Date", "Sales", "Real profit", "Orders"], daily, money=("Sales", "Real profit"))
+    n = len(d.get("dates") or [])
+    col = lambda k: (s.get(k) or {}).get("current", [0] * n)
+    if "profit" in s:                                   # profit only when the product cost is known
+        daily = [[day, col("sales")[i], col("profit")[i], col("orders")[i]] for i, day in enumerate(d.get("dates") or [])]
+        sheet(wb.create_sheet("Daily"), ["Date", "Sales", "Profit after product cost", "Orders"], daily, money=("Sales", "Profit after product cost"))
+    else:
+        daily = [[day, col("sales")[i], col("orders")[i]] for i, day in enumerate(d.get("dates") or [])]
+        sheet(wb.create_sheet("Daily"), ["Date", "Sales", "Orders"], daily, money=("Sales",))
     sheet(wb.create_sheet("Where sales came from"), ["Source", "Sales", "Orders"],
           [[x["source"], x["sales"], x["orders"]] for x in d.get("sources") or []], money=("Sales",))
     sheet(wb.create_sheet("Top products"), ["Product", "Sales", "Units"],
@@ -212,7 +216,7 @@ def to_pdf(data: dict) -> bytes:
         if d.get("returning_rate") is not None:
             extra.append(f"returning customers {d['returning_rate'] * 100:.0f}% of orders")
         story.append(Spacer(1, 2 * mm))
-        story.append(Paragraph(" · ".join(extra) + ". Real profit is sales minus refunds and product costs where ProAds knows them.", st["note"]))
+        story.append(Paragraph(" · ".join(extra) + (". Profit is sales minus refunds and product cost; delivery, payment fees and ad spend aren't taken off." if "profit" in (d.get("series") or {}) else "."), st["note"]))
 
         # daily sales chart
         sales = ((d.get("series") or {}).get("sales") or {}).get("current") or []

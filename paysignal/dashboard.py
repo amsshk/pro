@@ -15,16 +15,24 @@ PLATFORM_NAMES = {"tiktok": "TikTok", "youtube": "YouTube", "whatsapp": "WhatsAp
 PERIODS = {"today": 1, "7": 7, "30": 30, "90": 90, "365": 365}
 
 
-def _realized(engine: Engine, p, refunded: float) -> float:
+def _realized(engine: Engine, p, refunded: float, cost_share: Optional[float] = None) -> tuple[float, str]:
+    """Money kept after product cost and refunds, and what the product cost came from:
+    the order's own item costs, the business's product cost % setting, or an assumed margin (an estimate)."""
     keep = 1 - min(refunded / p.amount, 1.0) if p.amount else 0.0
-    return engine.scorer.margin(p) * keep
+    cogs = p.cost_of_goods()
+    if cogs is not None:
+        return max(p.amount - cogs, 0.0) * keep, "items"
+    if cost_share is not None:
+        return p.amount * (1 - cost_share) * keep, "cost_share"
+    return engine.scorer.margin(p) * keep, "assumed"
 
 
 def _change(now: float, before: float) -> Optional[float]:
     return round((now - before) / before, 3) if before else None
 
 
-def build_dashboard(engine: Engine, period: str = "30", now: Optional[datetime] = None, currency: str = "AED") -> dict:
+def build_dashboard(engine: Engine, period: str = "30", now: Optional[datetime] = None, currency: str = "AED",
+                    cost_share: Optional[float] = None) -> dict:
     days = PERIODS.get(period, 30)
     now = now or datetime.now(timezone.utc)
     cid = engine.client_id
@@ -52,6 +60,7 @@ def build_dashboard(engine: Engine, period: str = "30", now: Optional[datetime] 
     sources, products = defaultdict(lambda: [0.0, 0]), defaultdict(lambda: [0.0, 0])
     methods = defaultdict(lambda: [0.0, 0])
     returning = [0, 0]
+    basis: dict[str, int] = defaultdict(int)
     for p in purchases:
         d = p.occurred_at.date()
         if prev_start <= d < start:
@@ -61,7 +70,9 @@ def build_dashboard(engine: Engine, period: str = "30", now: Optional[datetime] 
         else:
             continue
         refunded = engine.store.refunded_amount(cid, p.external_id)
-        profit = _realized(engine, p, refunded)
+        profit, how = _realized(engine, p, refunded, cost_share)
+        if bucket is cur:
+            basis[how] += 1
         bucket["sales"][idx] += p.amount
         bucket["profit"][idx] += profit
         bucket["orders"][idx] += 1
@@ -91,12 +102,14 @@ def build_dashboard(engine: Engine, period: str = "30", now: Optional[datetime] 
 
     c, pv = totals["cur"], totals["prev"]
     aov = lambda t: t["sales"] / t["orders"] if t["orders"] else 0.0
-    metrics = [
-        ("sales", "Total sales", c["sales"], pv["sales"]),
-        ("profit", "Real profit", c["profit"], pv["profit"]),
-        ("orders", "Orders", c["orders"], pv["orders"]),
-        ("aov", "Average order value", aov(c), aov(pv)),
-    ]
+    n = sum(basis.values())
+    known = bool(n) and basis["assumed"] / n <= 0.5          # most orders have a real product cost behind them
+    out["profit_basis"] = {"source": (max(basis, key=basis.get) if n else None), "known": known, "cost_share": cost_share,
+                           "note": "Sales minus product cost and refunds. Delivery, payment fees and ad spend aren't taken off."}
+    metrics = [("sales", "Total sales", c["sales"], pv["sales"])]
+    if known:                                                    # no real product cost: no profit number, not a guess
+        metrics.append(("profit", "Profit after product cost", c["profit"], pv["profit"]))
+    metrics += [("orders", "Orders", c["orders"], pv["orders"]), ("aov", "Average order value", aov(c), aov(pv))]
     out["metrics"] = [{"key": k, "label": l, "value": round(v, 2), "previous": round(b, 2), "change": _change(v, b)}
                       for k, l, v, b in metrics]
     out["refund_rate"] = round(c["refunds"] / c["sales"], 3) if c["sales"] else 0.0
@@ -104,7 +117,7 @@ def build_dashboard(engine: Engine, period: str = "30", now: Optional[datetime] 
     out["dates"] = [(start + timedelta(days=i)).isoformat() for i in range(days)]
     out["series"] = {
         "sales": {"current": series(cur, "sales"), "previous": series(prev, "sales")},
-        "profit": {"current": series(cur, "profit"), "previous": series(prev, "profit")},
+        **({"profit": {"current": series(cur, "profit"), "previous": series(prev, "profit")}} if known else {}),
         "orders": {"current": series(cur, "orders"), "previous": series(prev, "orders")},
     }
     out["sources"] = sorted(({"source": k, "sales": round(v[0], 2), "orders": v[1]} for k, v in sources.items()),

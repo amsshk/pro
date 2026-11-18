@@ -658,6 +658,14 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   }
 
   const PROADS_VERSION = "2.0";
+  // what the profit number on Home is based on
+  function profitNote(d) {
+    const b = d.profit_basis;
+    if (!b || !b.source) return null;
+    return h("p", { class: "small", style: "margin:-6px 0 0" }, b.known
+      ? h("span", {}, "Profit = sales minus " + (b.source === "items" ? "each order's item costs" : "your product cost (" + Math.round(100 * b.cost_share) + "% of the price)") + " and refunds. Delivery, payment fees and ad spend aren't taken off. ", h("a", { href: "#/learning" }, "Change"))
+      : h("span", {}, "Want profit here too? ProAds doesn't know your product cost yet: ", h("a", { href: "#/learning" }, "set your product cost %"), "."));
+  }
   function whatsNewCard() {
     try { if (localStorage.getItem("proads.seen2")) return null; } catch (e) {}
     const card = h("section", { class: "card", "aria-labelledby": "wn-h", style: "background: var(--violet-card); border-color: var(--violet-edge)" });
@@ -852,21 +860,24 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       h("section", { class: "kpis", "aria-label": "Key numbers" },
         h("div", { class: "kpi" }, h("span", { class: "label" }, "Sales"), h("span", { class: "num" }, money(a.gross, cur)), h("span", { class: "note" }, fmt.format(a.orders) + " paid orders")),
         h("div", { class: "kpi" }, h("span", { class: "label" }, "Refunds"), h("span", { class: "num", style: "color: var(--amber)" }, money(a.refunds, cur)), h("span", { class: "note" }, pct(a.refund_rate) + " of sales returned")),
-        h("div", { class: "kpi hi" }, h("span", { class: "label" }, "Real profit after refunds"), h("span", { class: "num" }, money(a.real_profit, cur)), h("span", { class: "note" }, "What Meta learns from")),
+        a.profit_known === false
+          ? h("div", { class: "kpi hi" }, h("span", { class: "label" }, "Kept after refunds"), h("span", { class: "num" }, money(a.kept, cur)), h("span", { class: "note" }, h("a", { href: "#/learning" }, "Set your product cost"), " to see profit"))
+          : h("div", { class: "kpi hi" }, h("span", { class: "label" }, "Real profit after refunds"), h("span", { class: "num" }, money(a.real_profit, cur)), h("span", { class: "note" }, "What Meta learns from")),
         c ? h("div", { class: "kpi" }, h("span", { class: "label" }, "Customers who came back"), h("span", { class: "num" }, pct(c.repeat_rate)), h("span", { class: "note" }, "They bring " + pct(c.profit_from_repeat_customers) + " of profit")) : null),
     ];
     if (a.monthly && a.monthly.length > 1) {
-      const max = Math.max(...a.monthly.map((m) => m.real_profit), 1);
+      const pk = a.profit_known === false ? "kept" : "real_profit";
+      const max = Math.max(...a.monthly.map((m) => m[pk]), 1);
       const monthName = (ym) => new Date(ym + "-01T00:00:00").toLocaleString("en-US", { month: "short", year: "numeric" });
       const lastDay = Number((a.period.to || "").slice(8, 10));
       const partial = (m, i) => i === a.monthly.length - 1 && lastDay && lastDay < 28 ? " (so far)" : "";
       blocks.push(h("section", { class: "card", "aria-labelledby": "months" },
-        h("div", { class: "between" }, h("h2", { id: "months" }, "Real profit by month"), h("span", { class: "badge b-measured" }, "Measured")),
+        h("div", { class: "between" }, h("h2", { id: "months" }, pk === "kept" ? "Kept after refunds, by month" : "Real profit by month"), h("span", { class: "badge b-measured" }, "Measured")),
         h("div", { class: "months" }, a.monthly.map((m, i) =>
           h("div", { class: "month" },
-            h("span", {}, fmt.format(m.real_profit)),
-            h("div", { class: "col", role: "img", "aria-label": monthName(m.month) + partial(m, i) + ": " + fmt.format(m.real_profit) + " " + cur,
-              style: "height:" + Math.max(3, Math.round(100 * m.real_profit / max)) + "%" + (partial(m, i) ? ";opacity:.45" : "") }),
+            h("span", {}, fmt.format(m[pk])),
+            h("div", { class: "col", role: "img", "aria-label": monthName(m.month) + partial(m, i) + ": " + fmt.format(m[pk]) + " " + cur,
+              style: "height:" + Math.max(3, Math.round(100 * m[pk] / max)) + "%" + (partial(m, i) ? ";opacity:.45" : "") }),
             h("span", {}, monthName(m.month) + partial(m, i)))))));
     }
     const pair = [];
@@ -4280,7 +4291,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         + ". Biggest: " + lk.leaks[0].title + "."), h("span", { class: "ok" }, "See all →")) : null;
     body.replaceChildren(
       ...[adsBanner(d.ads_access), leakNote].filter(Boolean),
-      ...[whatsNewCard()].filter(Boolean), strip, ...[impactBox].filter(Boolean), adsBox,
+      ...[whatsNewCard()].filter(Boolean), strip, profitNote(d), ...[impactBox].filter(Boolean), adsBox,
       h("section", { class: "card", "aria-label": "Chart" },
         h("div", { class: "between" }, h("h2", {}, label + " over time"),
           h("div", { style: "display:flex;gap:14px" }, h("span", { class: "key" }, h("i"), "This period"), h("span", { class: "key" }, h("i", { class: "prev" }), "Previous period"))),

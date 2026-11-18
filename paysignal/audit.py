@@ -47,12 +47,13 @@ def build_audit(engine: Engine, posts: Optional[list] = None, now: Optional[date
                  "real_profit": round(profit)}
 
     # --- monthly trend
-    monthly = defaultdict(lambda: [0.0, 0.0, 0])
+    monthly = defaultdict(lambda: [0.0, 0.0, 0, 0.0])
     for p, r, v in rows:
         m = monthly[p.occurred_at.strftime("%Y-%m")]
-        m[0] += p.amount; m[1] += v; m[2] += 1
-    out["monthly"] = [{"month": k, "gross": round(g), "real_profit": round(v), "orders": n}
-                      for k, (g, v, n) in sorted(monthly.items())]
+        m[0] += p.amount; m[1] += v; m[2] += 1; m[3] += r
+    out["kept"] = round(gross - refunds)
+    out["monthly"] = [{"month": k, "gross": round(g), "real_profit": round(v), "kept": round(g - rf), "orders": n}
+                      for k, (g, v, n, rf) in sorted(monthly.items())]
 
     # --- discount codes: which ones lose money
     by_code = defaultdict(lambda: [0, 0.0, 0.0, 0.0])
@@ -174,7 +175,7 @@ def audit_text(a: dict) -> str:
     L = [f"FIRST-WEEK AUDIT  {a['period']['from']} to {a['period']['to']} ({a['period']['days']} days of history)",
          "",
          f"Orders {a['orders']:,}   Sales {a['gross']:,} {cur}   Refunds {a['refunds']:,} ({a['refund_rate']:.0%})   "
-         f"Real profit {a['real_profit']:,} {cur}"]
+         + (f"Real profit {a['real_profit']:,} {cur}" if a.get("profit_known", True) else f"Kept after refunds {a['kept']:,} {cur}")]
     if a.get("discount_codes"):
         L += ["", f"DISCOUNT CODES (full-price order = {a['full_price_profit_per_order']:,} {cur} profit)"]
         for c in a["discount_codes"]:

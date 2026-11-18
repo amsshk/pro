@@ -93,3 +93,22 @@ def test_trust_pages_and_company_details(make, monkeypatch):
     assert co["legal_name"] == "EzDevSoft Technology and Solutions" and co["email"] == "support@ezdevsoft.net"
     assert "mailto:support@ezdevsoft.net" in c.get("/.well-known/security.txt").data.decode()
     assert 'href="/terms"' in c.get("/").data.decode()
+
+
+def test_profit_only_with_a_real_product_cost(tmp_path):
+    key = "pc-key-0123456789abcdef"
+    app = create_app({"shop": {"api_key": key, "name": "Shop", "currency": "AED"}}, str(tmp_path / "p.db"), start_worker=False)
+    c = app.test_client()
+    H = {"X-API-Key": key}
+    from datetime import date
+    c.post("/upload/csv/shop", data=f"id,date,amount,currency\n1,{date.today().isoformat()},1000,AED\n".encode(), headers=H)
+    d = c.get("/dashboard/shop", headers=H).json
+    assert "profit" not in {x["key"] for x in d["metrics"]} and "profit" not in d["series"] and d["profit_basis"]["known"] is False
+    a = c.get("/audit/shop", headers=H).json
+    assert a["audit"]["profit_known"] is False and a["audit"]["kept"] == 1000 and "Kept after refunds 1,000" in a["text"]
+    assert c.post("/learning/shop/settings", json={"cost_share": "30"}, headers=H).status_code == 200
+    d = c.get("/dashboard/shop", headers=H).json
+    m = {x["key"]: x for x in d["metrics"]}
+    assert m["profit"]["value"] == 700 and m["profit"]["label"] == "Profit after product cost" and d["profit_basis"]["cost_share"] == 0.3
+    a = c.get("/audit/shop", headers=H).json["audit"]
+    assert a["profit_known"] is True and a["real_profit"] == 700
