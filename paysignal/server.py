@@ -1558,14 +1558,16 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     def tiktok_ads_live(client_id):
         """The TikTok ad account, live: spend → views → clicks → what TikTok counts → what was really paid (ProAds)."""
         state.require_key(client_id)
-        period = request.args.get("period", "30")
+        return tiktok_live_data(client_id, request.args.get("period", "30"), bool(request.args.get("fresh")))
+
+    def tiktok_live_data(client_id: str, period: str = "30", fresh: bool = False) -> dict:
         days_n = {"today": 1, "7": 7, "30": 30, "90": 90, "365": 365}.get(period, 30)
         with state.lock:
             row = state.tiktok_ads.get(client_id)
         if not row or not row["advertiser_id"]:
             return {"connected": False}
         hit = state.ads_cache.get((client_id, "tt", period))
-        if hit and time.time() - hit[0] < 600 and not request.args.get("fresh"):
+        if hit and time.time() - hit[0] < 600 and not fresh:
             return hit[1]
         today = datetime.now(timezone.utc).date()
         start = today - timedelta(days=days_n - 1)
@@ -2642,7 +2644,28 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         except Exception as e:
             log.info("ads summary for the AI skipped: %s", e)
         with state.lock:
-            ctx["campaigns"] = [{k: l.get(k) for k in ("name", "status", "conversion")} for l in state.launches.list(client_id)[:10]]
+            ctx["campaigns_published_through_proads"] = [{k: l.get(k) for k in ("name", "status", "conversion")} for l in state.launches.list(client_id)[:10]]
+            tt_row = state.tiktok_ads.get(client_id)
+            known_cost = state.signals.cost_share(client_id) is not None or any(
+                p.cost_of_goods() is not None for p in state.engine(client_id).store.purchases(client_id)[-200:])
+        ctx["connections"] = {"meta_pixel": bool(state.connected_meta(client_id)), "tiktok_ad_account": bool(tt_row and tt_row["advertiser_id"]),
+                              "meta_ad_account": bool((state.ads_settings(client_id, is_admin(client_id)) or {}).get("ad_account"))}
+        if tt_row and tt_row["advertiser_id"]:                 # every campaign in the TikTok account, wherever it was made
+            for period, label in (("today", "today"), ("7", "last_7_days"), ("30", "last_30_days")):
+                try:
+                    t = tiktok_live_data(client_id, period)
+                except Exception as e:
+                    t = {"error": type(e).__name__}
+                ctx.setdefault("tiktok_ad_account_live", {})[label] = {k: t.get(k) for k in ("error", "currency", "totals", "truth", "campaigns", "countries")
+                                                                       if t.get(k) is not None}
+            ctx["tiktok_ad_account_live"]["note"] = (
+                "Live from the business's TikTok ad account: ALL its campaigns, including ones created in TikTok directly. "
+                "'results' are purchases as TikTok counts them (its own attribution). 'truth' is ProAds' verified paid orders in "
+                "the same days; 'tracked' = those that came with a TikTok click ID. A new campaign is in TikTok's learning phase "
+                "for its first days and about 50 purchases; TikTok can also report purchases a day or two late.")
+        if not known_cost:
+            ctx["profit_note"] = ("The business hasn't given its product cost, so 'real value' / 'real_value' figures are NOT profit "
+                                  "(they assume a margin). Never call them profit. Talk about sales and money kept after refunds instead.")
         if is_admin(client_id):
             d = proads_dashboard("30")
             ctx["your_business"] = {

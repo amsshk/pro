@@ -64,3 +64,31 @@ def test_tiktok_live_card(tmp_path, monkeypatch):
     n = len(st.tiktok_api_http.calls)
     c.get("/ads/bynawi/tiktok?period=7", headers=h)
     assert len(st.tiktok_api_http.calls) == n                        # cached for 10 minutes
+
+
+def test_assistant_sees_the_live_tiktok_campaigns_and_no_fake_profit(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setenv("PROADS_SECRET_KEY", "test-secret-key-for-encryption-0123456789")
+    app = create_app({}, str(tmp_path / "x.db"), start_worker=False)
+    st = app.extensions["paysignal"]
+    st.tiktok_api_http = TT()
+    seen = {}
+
+    class AI:
+        available = True
+
+        def chat(self, task, messages, **kw):
+            seen["msgs"] = messages
+            return SimpleNamespace(text="ok", model="m", cost_usd=0)
+    st.ai = AI()
+    c = app.test_client()
+    h = {"X-API-Key": c.post("/auth/signup", json={"business": "Bynawi", "email": "o@bynawi.ae", "password": "first-password-1", "terms": True}).json["token"]}
+    from paysignal import shopify_app
+    with st.lock:
+        st.tiktok_ads.save("bynawi", shopify_app.encrypt("tok"), None, 0, [{"id": "765", "name": "Bynawi0615", "currency": "AED"}])
+        st.tiktok_ads.choose("bynawi", "765")
+    c.post("/upload/csv/bynawi", data=b"id,date,amount,currency\n1,2026-11-10,340,AED\n", headers=h)
+    assert c.post("/ask/bynawi", json={"question": "why no purchases in my campaign"}, headers=h).status_code == 200
+    blob = json.dumps(seen["msgs"], ensure_ascii=False)
+    assert "BYNAWI GCC Purchase Conversions" in blob and "tiktok_ad_account_live" in blob and "last_7_days" in blob
+    assert "profit_note" in blob and "never call it profit" in blob
