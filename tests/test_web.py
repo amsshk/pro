@@ -100,8 +100,8 @@ def test_profit_only_with_a_real_product_cost(tmp_path):
     app = create_app({"shop": {"api_key": key, "name": "Shop", "currency": "AED"}}, str(tmp_path / "p.db"), start_worker=False)
     c = app.test_client()
     H = {"X-API-Key": key}
-    from datetime import date
-    c.post("/upload/csv/shop", data=f"id,date,amount,currency\n1,{date.today().isoformat()},1000,AED\n".encode(), headers=H)
+    from datetime import date, timedelta
+    c.post("/upload/csv/shop", data=f"id,date,amount,currency\n1,{(date.today() - timedelta(days=2)).isoformat()},1000,AED\n".encode(), headers=H)
     d = c.get("/dashboard/shop", headers=H).json
     assert "profit" not in {x["key"] for x in d["metrics"]} and "profit" not in d["series"] and d["profit_basis"]["known"] is False
     a = c.get("/audit/shop", headers=H).json
@@ -112,3 +112,38 @@ def test_profit_only_with_a_real_product_cost(tmp_path):
     assert m["profit"]["value"] == 700 and m["profit"]["label"] == "Profit after product cost" and d["profit_basis"]["cost_share"] == 0.3
     a = c.get("/audit/shop", headers=H).json["audit"]
     assert a["profit_known"] is True and a["real_profit"] == 700
+
+
+def test_landing_shows_facts_without_javascript_and_llms_txt(tmp_path, monkeypatch):
+    import json as _j
+    import re as _re
+    monkeypatch.setenv("PROADS_COMPANY_LEGAL_NAME", "Example Legal LLC")
+    monkeypatch.setenv("PROADS_TRADE_LICENSE", "CN-0000")
+    monkeypatch.setenv("PROADS_CONTACT_EMAIL", "hi@example.com")
+    c = create_app({}, str(tmp_path / "l.db"), start_worker=False).test_client()
+    h = c.get("/").data.decode()
+    assert "%%" not in h and "AED 299 a month" in h and "AED 799 a month" in h and "CN-0000" in h and "hi@example.com" in h
+    assert "Real profit" not in h
+    ld = _j.loads(_re.search(r'<script type="application/ld\+json">(.*?)</script>', h, _re.S).group(1))
+    assert ld[0]["legalName"] == "Example Legal LLC" and [o["name"] for o in ld[1]["offers"]] == ["Free", "Pro", "Premium"]
+    t = c.get("/llms.txt").data.decode()
+    assert t.startswith("# ProAds") and "Example Legal LLC" in t and "AED 799/month" in t and "SHA-256" in t
+
+
+def test_results_on_the_website_need_approval(tmp_path):
+    c = create_app({"pro": {"api_key": "res-admin-0123456789abcdef", "name": "ProAds"},
+                    "shop": {"api_key": "res-shop-0123456789abcdef", "name": "S"}}, str(tmp_path / "r.db"), start_worker=False).test_client()
+    H = {"X-API-Key": "res-admin-0123456789abcdef"}
+    r = {"business": "888 Clinic", "industry": "Beauty clinic", "country": "Thailand", "period": "Jan 2024 – Oct 2026",
+         "source": "Measured in ProAds from the clinic's Meta leads export", "metrics": [{"value": "614", "label": "buyers found"}],
+         "published": True, "approved": False}
+    assert c.post("/admin/pro/results", json=r, headers=H).status_code == 400            # no approval, no publishing
+    assert c.post("/admin/pro/results", json={**r, "source": ""}, headers=H).status_code == 400
+    assert c.post("/admin/shop/results", json={**r, "approved": True}, headers={"X-API-Key": "res-shop-0123456789abcdef"}).status_code == 403
+    assert "888 Clinic" not in c.get("/").data.decode()
+    saved = c.post("/admin/pro/results", json={**r, "approved": True, "quote": "<b>great</b>"}, headers=H).json["result"]
+    h = c.get("/").data.decode()
+    assert 'id="results"' in h and "888 Clinic" in h and "614" in h and "Source: Measured in ProAds" in h and "<b>great</b>" not in h
+    assert "888 Clinic (Beauty clinic), Jan 2024 – Oct 2026: 614 buyers found" in c.get("/llms.txt").data.decode()
+    c.post(f"/admin/pro/results/{saved['id']}/delete", headers=H)
+    assert 'id="results"' not in c.get("/").data.decode()

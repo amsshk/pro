@@ -1234,6 +1234,59 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       out, list);
   }
 
+  // ---------- Results on the website (admin): client results shown on pro.ezdevsoft.net ----------
+  function resultsCard() {
+    const card = h("section", { class: "card", "aria-labelledby": "res-h" });
+    const base = "/admin/" + cid() + "/results";
+    const listBox = h("div", { style: "display:flex;flex-direction:column;gap:8px" }, loading());
+    const formBox = h("div", {});
+    const post = (url, body) => api(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+    function edit(r) {
+      const v = (k) => (r && r[k]) || "";
+      const inp = (k, ph, max) => h("input", { value: v(k), placeholder: ph, maxlength: max || 80, "aria-label": ph, style: "width:100%" });
+      const f = { business: inp("business", "Business name, e.g. 888 Clinic"), industry: inp("industry", "Industry, e.g. Beauty clinic"),
+        country: inp("country", "Country, e.g. Thailand", 40), period: inp("period", "Period, e.g. Jan 2024 – Oct 2026", 60),
+        source: inp("source", "Where the numbers come from, e.g. Measured in ProAds from the clinic's Meta leads export", 160),
+        summary: h("textarea", { rows: 2, maxlength: 400, placeholder: "One or two sentences: what ProAds showed or changed", style: "width:100%" }, v("summary")),
+        quote: inp("quote", "Client quote (optional, their words only)", 300), quote_by: inp("quote_by", "Who said it, e.g. Owner, 888 Clinic") };
+      const rows = Array.from({ length: 4 }, (_, i) => { const m = (r && r.metrics[i]) || {};
+        return [h("input", { value: m.value || "", placeholder: "Number, e.g. 614", maxlength: 24, style: "max-width:140px" }),
+                h("input", { value: m.label || "", placeholder: "What it is, e.g. buyers found in Messenger chats", maxlength: 60, style: "flex:1;min-width:0" })]; });
+      const approved = h("input", { type: "checkbox", checked: !!(r && r.approved), style: "width:auto;flex:none" }), published = h("input", { type: "checkbox", checked: !!(r && r.published), style: "width:auto;flex:none" });
+      const out = h("div", {});
+      const form = h("form", { style: "display:flex;flex-direction:column;gap:8px", onsubmit: async (e) => { e.preventDefault();
+        try {
+          await post(base, { id: r && r.id, ...Object.fromEntries(Object.entries(f).map(([k, x]) => [k, x.value])),
+            metrics: rows.map(([a, b]) => ({ value: a.value, label: b.value })), approved: approved.checked, published: published.checked });
+          formBox.replaceChildren(); load(); toast(published.checked ? "Saved and shown on the website" : "Saved (not shown yet)");
+        } catch (er) { if (er.message !== "signed out") out.replaceChildren(errorCard(er.message)); } } },
+        f.business, h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, f.industry, f.country), f.period, f.summary,
+        h("b", { style: "font-size:14px" }, "Numbers (up to 4)"), ...rows.map(([a, b]) => h("div", { style: "display:flex;gap:8px" }, a, b)),
+        f.source, f.quote, f.quote_by,
+        h("label", { class: "small", style: "display:flex;gap:8px;align-items:center" }, approved, "The business approved these numbers and its name being shown"),
+        h("label", { class: "small", style: "display:flex;gap:8px;align-items:center" }, published, "Show on the website"), out,
+        h("div", { style: "display:flex;gap:8px" }, h("button", { class: "btn btn-primary", type: "submit" }, "Save"),
+          h("button", { class: "btn btn-ghost", type: "button", onclick: () => formBox.replaceChildren() }, "Cancel")));
+      formBox.replaceChildren(form);
+      form.scrollIntoView({ behavior: "smooth" });
+    }
+    async function load() {
+      try {
+        const L = (await api(base)).results;
+        listBox.replaceChildren(...(L.length ? L.map((r) => h("div", { class: "between", style: "gap:8px;flex-wrap:wrap" },
+          h("span", {}, h("b", {}, r.business), " · " + r.period + " · ", h("span", { class: "badge " + (r.published ? "b-measured" : "b-neutral") }, r.published ? "On the website" : "Hidden")),
+          h("span", { style: "display:flex;gap:6px" }, h("button", { class: "btn btn-ghost", type: "button", onclick: () => edit(r) }, "Edit"),
+            h("button", { class: "btn btn-ghost", type: "button", onclick: async () => { try { await post(base + "/" + r.id + "/delete"); load(); } catch (er) { toast(er.message); } } }, "Delete"))))
+          : [h("p", { class: "small", style: "margin:0" }, "No results yet. Add your first one, like 888 Clinic.")]));
+      } catch (er) { if (er.message !== "signed out") listBox.replaceChildren(errorCard(er.message)); }
+    }
+    card.append(h("div", { class: "between" }, h("h2", { id: "res-h" }, "Results on the website"), h("a", { href: "/#results", target: "_blank", rel: "noopener", class: "small" }, "See it ↗")),
+      h("p", { class: "sub", style: "margin:0" }, "Real numbers from real clients, shown on the home page and to AI assistants. Only results the client approved can be shown, and each one says its period and source."),
+      listBox, h("button", { class: "btn btn-primary", type: "button", style: "align-self:flex-start", onclick: () => edit(null) }, "Add a result"), formBox);
+    load();
+    return card;
+  }
+
   // ---------- ProAds News (admin): articles on pro.ezdevsoft.net/news so ProAds advertises itself on Google ----------
   function newsCard() {
     const card = h("section", { class: "card", "aria-labelledby": "news-h" });
@@ -1352,6 +1405,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("div", { class: "kpi" }, h("span", { class: "label" }, "Engine lessons"), h("span", { class: "num" }, fmt.format(t.lessons_from || 0)), h("span", { class: "note" }, "businesses it has learned from (anonymous)"))),
       linkBox,
       partnersCard(),
+      resultsCard(),
       newsCard(),
       addCompanyCard(),
       h("section", { class: "card", "aria-labelledby": "accts" },

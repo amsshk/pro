@@ -46,7 +46,7 @@ from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
-from . import affiliates, audience_sync, audiences, digest, followups, impact, leads, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
+from . import affiliates, audience_sync, audiences, digest, followups, impact, leads, results, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
 from .identity import hash_phone, normalize_phone
 from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
@@ -194,6 +194,7 @@ class App:
         self.competitor_suggestions = competitors.SuggestionStore(self.store.db)
         self.followups = followups.FollowupStore(self.store.db, shopify_app.encrypt, shopify_app.decrypt)
         self.digests = digest.DigestStore(self.store.db)
+        self.results = results.ResultStore(self.store.db)
         self.store.db.execute("CREATE TABLE IF NOT EXISTS meta_pixel_links (client_id TEXT PRIMARY KEY, pixel_id TEXT NOT NULL,"
                               " name TEXT, token_enc TEXT NOT NULL, added_at INTEGER NOT NULL)")
         self.store.db.commit()
@@ -3648,17 +3649,86 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
 
     @flask.get("/")
     def landing():
-        """Public page: what ProAds does, and free sign-up."""
+        """Public page: what ProAds does, prices, who runs it, and free sign-up. The facts are filled in here, on the
+        server, so people and AI readers that don't run JavaScript see them too."""
+        html = open(os.path.join(web_page_dir("landing.html"), "landing.html"), encoding="utf-8").read()
+        esc = lambda v: (str(v).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;"))
+        co, pr = company(), plan_prices()
+        fee = billing.fee_percent()
+        fee_line = f" + {fee:g}% of the ad spend of campaigns made through ProAds" if fee else ""
+        bits = [f"ProAds is made by {co['legal_name']}" + (f", {co['city']}" if co["city"] else "") + "."]
+        if co["trade_license"]:
+            bits.append(f"Trade licence {co['trade_license']}.")
+        if co["address"]:
+            bits.append(f"Address: {co['address']}.")
+        contact = " · ".join(x for x in (co["email"], co["phone"]) if x)
+        if contact:
+            bits.append(f"Contact: {contact}.")
+        bits.append("Payments are processed by Stripe.")
+        base = "https://" + request.host
+        ld = [{"@context": "https://schema.org", "@type": "Organization", "name": co["name"], "legalName": co["legal_name"],
+               "url": co["website"], **({"email": co["email"]} if co["email"] else {}), **({"telephone": co["phone"]} if co["phone"] else {}),
+               **({"address": co["address"]} if co["address"] else {}), **({"taxID": co["trade_license"]} if co["trade_license"] else {})},
+              {"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "ProAds", "url": base,
+               "applicationCategory": "BusinessApplication", "operatingSystem": "Web",
+               "description": "Sends verified paid sales (refunds removed, each sale counted once) from Shopify, Stripe, Tabby, "
+                              "Ziina and uploads to Meta and TikTok server-side, and shows what was really paid next to what each platform claims.",
+               "publisher": {"@type": "Organization", "name": co["legal_name"]},
+               "offers": [{"@type": "Offer", "name": n, "price": v, "priceCurrency": "AED"} for n, v in
+                          (("Free", "0"), ("Pro", pr["pro_amount"]), ("Premium", pr["premium_amount"])) if v]}]
+        swaps = {"%%PRICE_FREE%%": "AED 0", "%%PRICE_PRO%%": esc(pr["pro"]), "%%PRICE_PREMIUM%%": esc(pr["premium"]),
+                 "%%FEE_LINE%%": esc(fee_line), "%%COMPANY_FACTS%%": esc(" ".join(bits)),
+                 "%%JSONLD%%": '<script type="application/ld+json">' + json.dumps(ld, ensure_ascii=False).replace("</", "<\\/") + "</script>"}
+        with state.lock:
+            shown = state.results.list(public_only=True)
+        swaps["%%RESULTS%%"] = results.html_section(shown, esc)
+        for k, v in swaps.items():
+            html = html.replace(k, v)
         code = re.sub(r"[^A-Za-z0-9_\-]", "", os.environ.get("GOOGLE_SITE_VERIFICATION", "").replace("google-site-verification=", ""))
-        if not code:
-            return page("landing.html", referrer="strict-origin-when-cross-origin")
-        # Google Search Console "HTML tag" ownership check
-        html = open(os.path.join(web_page_dir("landing.html"), "landing.html"), encoding="utf-8").read().replace(
-            "<head>", f'<head>\n<meta name="google-site-verification" content="{code}">', 1)
+        if code:                                         # Google Search Console "HTML tag" ownership check
+            html = html.replace("<head>", f'<head>\n<meta name="google-site-verification" content="{code}">', 1)
         resp = flask.response_class(html, mimetype="text/html")
         resp.headers.update({"Cache-Control": "no-cache", "X-Frame-Options": "DENY", "X-Content-Type-Options": "nosniff",
                              "Referrer-Policy": "strict-origin-when-cross-origin"})
         return resp
+
+    def plan_prices() -> dict:
+        """Plan prices as shown publicly (Stripe holds the real ones; set these to match)."""
+        e = lambda k, d: (os.environ.get(k) or d).strip()
+        pro, prem = e("PROADS_PRO_PRICE_AED", "299"), e("PROADS_PREMIUM_PRICE_AED", "799")
+        return {"pro_amount": pro, "premium_amount": prem, "pro": f"AED {pro}", "premium": f"AED {prem}"}
+
+    @flask.get("/llms.txt")
+    def llms_txt():
+        """A plain, factual summary for AI assistants and search tools (the llms.txt convention)."""
+        co, pr = company(), plan_prices()
+        fee = billing.fee_percent()
+        lines = [
+            "# ProAds", "",
+            "> ProAds is web software for online shops and service businesses that advertise on Meta (Facebook, Instagram) and TikTok. "
+            "It collects the business's real, paid sales (Shopify, Stripe, Tabby, Ziina, uploaded sales files), removes refunds, "
+            "counts each sale once across systems, and sends them to Meta's Conversions API and TikTok's Events API from its server, "
+            "so the ad platforms learn from people who really paid. It shows what was really paid next to what each platform claims.", "",
+            f"- Made by: {co['legal_name']}" + (f", {co['city']}" if co["city"] else ""),
+            *([f"- Trade licence: {co['trade_license']}"] if co["trade_license"] else []),
+            *([f"- Address: {co['address']}"] if co["address"] else []),
+            *([f"- Contact: {co['email']}"] if co["email"] else []),
+            f"- Website: https://{request.host}",
+            f"- Pricing: Free (AED 0); Pro AED {pr['pro_amount']}/month; Premium AED {pr['premium_amount']}/month"
+            + (f"; plus {fee:g}% of the ad spend of campaigns created through ProAds" if fee else "") + ". Card payments by Stripe.",
+            "- Data: customer emails and phones are SHA-256 hashed before they are sent to Meta or TikTok; the built-in AI sees totals, "
+            "never names, emails or phones; businesses can delete their data at any time.", ""]
+        with state.lock:
+            shown = state.results.list(public_only=True)
+        if shown:
+            lines += ["## Results (shared with each business's permission)", "", *results.text_lines(shown), ""]
+        lines += [
+            "## Pages", "",
+            f"- [How fees work](https://{request.host}/fees): plans and the ad spend fee, itemised",
+            f"- [Security](https://{request.host}/security): how data is stored and protected",
+            f"- [Privacy](https://{request.host}/privacy)", f"- [Terms](https://{request.host}/terms)",
+            f"- [About](https://{request.host}/about)", f"- [News](https://{request.host}/news): product updates and guides", ""]
+        return flask.response_class("\n".join(lines), mimetype="text/plain")
 
     @flask.get("/app")
     def web_app():
@@ -3766,6 +3836,31 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         except ValueError as e:
             abort(400, str(e))
         return {"post": p, "url": f"{public_base()}/news/{p['slug']}"}
+
+    @flask.get("/admin/<admin_id>/results")
+    def admin_results(admin_id):
+        require_admin(admin_id)
+        with state.lock:
+            return {"results": state.results.list()}
+
+    @flask.post("/admin/<admin_id>/results")
+    def admin_results_save(admin_id):
+        """Create or update a result for the website. It shows only when published and approved by the client."""
+        require_admin(admin_id)
+        b = request.get_json(silent=True) or {}
+        try:
+            with state.lock:
+                r = state.results.save(b, int(b["id"]) if b.get("id") else None)
+        except (ValueError, TypeError) as e:
+            abort(400, str(e))
+        return {"result": r}
+
+    @flask.post("/admin/<admin_id>/results/<int:rid>/delete")
+    def admin_results_delete(admin_id, rid):
+        require_admin(admin_id)
+        with state.lock:
+            state.results.delete(rid)
+        return {"deleted": True}
 
     @flask.post("/admin/<admin_id>/news/<int:pid>/delete")
     def admin_news_delete(admin_id, pid):
