@@ -116,4 +116,4 @@ def test_ai_sees_proads_own_growth_and_ads(tmp_path, monkeypatch):
     c.post("/ask/pro", json={"question": "what should I fix?"}, headers=ADMIN)
     data = json.loads(s.calls[0]["body"]["messages"][1]["content"].split("\n", 1)[1])
     assert data["your_business"]["last_30_days"]["Sign-ups"] == 1 and "subscriptions" in data["your_business"]["how_it_makes_money"]
-    assert data["ads_last_30_days"]["totals"]["spend"] > 0 and data["campaigns"][0]["name"] == "Sign-ups UAE"
+    assert data["ads_last_30_days"]["totals"]["spend"] > 0 and data["campaigns_published_through_proads"][0]["name"] == "Sign-ups UAE"
