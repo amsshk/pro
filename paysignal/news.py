@@ -200,7 +200,7 @@ def _shell(base: str, title: str, desc: str, canonical: str, body: str, head_ext
 <link rel="alternate" type="application/rss+xml" title="ProAds News" href="{base}/news/rss.xml">
 <link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="48x48" href="/favicon-48.png"><link rel="apple-touch-icon" href="/favicon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap" onload="this.onload=null;this.rel='stylesheet'"><noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap"></noscript>
 <style>{CSS}</style>{head_extra}</head><body>
 <header class="top"><a class="brand" href="/">{LOGO_SVG}ProAds</a>
 <nav class="nav" aria-label="Main"><a class="pill" href="/news">News</a>
