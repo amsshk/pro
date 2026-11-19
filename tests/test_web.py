@@ -122,12 +122,12 @@ def test_landing_shows_facts_without_javascript_and_llms_txt(tmp_path, monkeypat
     monkeypatch.setenv("PROADS_CONTACT_EMAIL", "hi@example.com")
     c = create_app({}, str(tmp_path / "l.db"), start_worker=False).test_client()
     h = c.get("/").data.decode()
-    assert "%%" not in h and "AED 299 a month" in h and "AED 799 a month" in h and "CN-0000" in h and "hi@example.com" in h
-    assert "Real profit" not in h
+    assert "%%" not in h and "AED 299 a month" in h and "AED 799 a month" in h
+    assert "Real profit" not in h and "Example Legal LLC" not in h and "CN-0000" not in h and 'id="company"' not in h
     ld = _j.loads(_re.search(r'<script type="application/ld\+json">(.*?)</script>', h, _re.S).group(1))
-    assert ld[0]["legalName"] == "Example Legal LLC" and [o["name"] for o in ld[1]["offers"]] == ["Free", "Pro", "Premium"]
+    assert [o["name"] for o in ld[0]["offers"]] == ["Free", "Pro", "Premium"] and "Example Legal LLC" not in _j.dumps(ld)
     t = c.get("/llms.txt").data.decode()
-    assert t.startswith("# ProAds") and "Example Legal LLC" in t and "AED 799/month" in t and "SHA-256" in t
+    assert t.startswith("# ProAds") and "Example Legal LLC" not in t and "AED 799/month" in t and "SHA-256" in t and "hi@example.com" in t
 
 
 def test_results_on_the_website_need_approval(tmp_path):

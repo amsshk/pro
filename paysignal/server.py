@@ -3656,28 +3656,15 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         co, pr = company(), plan_prices()
         fee = billing.fee_percent()
         fee_line = f" + {fee:g}% of the ad spend of campaigns made through ProAds" if fee else ""
-        bits = [f"ProAds is made by {co['legal_name']}" + (f", {co['city']}" if co["city"] else "") + "."]
-        if co["trade_license"]:
-            bits.append(f"Trade licence {co['trade_license']}.")
-        if co["address"]:
-            bits.append(f"Address: {co['address']}.")
-        contact = " · ".join(x for x in (co["email"], co["phone"]) if x)
-        if contact:
-            bits.append(f"Contact: {contact}.")
-        bits.append("Payments are processed by Stripe.")
         base = "https://" + request.host
-        ld = [{"@context": "https://schema.org", "@type": "Organization", "name": co["name"], "legalName": co["legal_name"],
-               "url": co["website"], **({"email": co["email"]} if co["email"] else {}), **({"telephone": co["phone"]} if co["phone"] else {}),
-               **({"address": co["address"]} if co["address"] else {}), **({"taxID": co["trade_license"]} if co["trade_license"] else {})},
-              {"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "ProAds", "url": base,
+        ld = [{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "ProAds", "url": base,
                "applicationCategory": "BusinessApplication", "operatingSystem": "Web",
                "description": "Sends verified paid sales (refunds removed, each sale counted once) from Shopify, Stripe, Tabby, "
                               "Ziina and uploads to Meta and TikTok server-side, and shows what was really paid next to what each platform claims.",
-               "publisher": {"@type": "Organization", "name": co["legal_name"]},
                "offers": [{"@type": "Offer", "name": n, "price": v, "priceCurrency": "AED"} for n, v in
                           (("Free", "0"), ("Pro", pr["pro_amount"]), ("Premium", pr["premium_amount"])) if v]}]
         swaps = {"%%PRICE_FREE%%": "AED 0", "%%PRICE_PRO%%": esc(pr["pro"]), "%%PRICE_PREMIUM%%": esc(pr["premium"]),
-                 "%%FEE_LINE%%": esc(fee_line), "%%COMPANY_FACTS%%": esc(" ".join(bits)),
+                 "%%FEE_LINE%%": esc(fee_line),
                  "%%JSONLD%%": '<script type="application/ld+json">' + json.dumps(ld, ensure_ascii=False).replace("</", "<\\/") + "</script>"}
         with state.lock:
             shown = state.results.list(public_only=True)
@@ -3709,9 +3696,6 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             "It collects the business's real, paid sales (Shopify, Stripe, Tabby, Ziina, uploaded sales files), removes refunds, "
             "counts each sale once across systems, and sends them to Meta's Conversions API and TikTok's Events API from its server, "
             "so the ad platforms learn from people who really paid. It shows what was really paid next to what each platform claims.", "",
-            f"- Made by: {co['legal_name']}" + (f", {co['city']}" if co["city"] else ""),
-            *([f"- Trade licence: {co['trade_license']}"] if co["trade_license"] else []),
-            *([f"- Address: {co['address']}"] if co["address"] else []),
             *([f"- Contact: {co['email']}"] if co["email"] else []),
             f"- Website: https://{request.host}",
             f"- Pricing: Free (AED 0); Pro AED {pr['pro_amount']}/month; Premium AED {pr['premium_amount']}/month"
