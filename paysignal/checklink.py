@@ -27,6 +27,8 @@ class CheckLinkStore:
         self.db = db
         self.db.execute("CREATE TABLE IF NOT EXISTS check_links (token_hash TEXT PRIMARY KEY, client_id TEXT NOT NULL,"
                         " created_by TEXT, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, opened INTEGER NOT NULL DEFAULT 0)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS shopify_hook_log (client_id TEXT NOT NULL, at INTEGER NOT NULL, topic TEXT,"
+                        " ok INTEGER NOT NULL, note TEXT)")
         self.db.commit()
 
     def create(self, client_id: str, created_by: str, hours: int = HOURS) -> tuple[str, int]:
@@ -46,6 +48,25 @@ class CheckLinkStore:
         self.db.execute("UPDATE check_links SET opened=opened+1 WHERE token_hash=?", (_h(token),))
         self.db.commit()
         return r[0]
+
+    def hook(self, client_id: str, topic: str, ok: bool, note: str = "") -> None:
+        """One line per Shopify webhook that arrives (topic and whether its signature matched), kept 14 days."""
+        now = int(time.time())
+        self.db.execute("INSERT INTO shopify_hook_log VALUES (?,?,?,?,?)", (client_id, now, topic, int(ok), note[:120]))
+        self.db.execute("DELETE FROM shopify_hook_log WHERE at<?", (now - 14 * 86400,))
+        self.db.commit()
+
+    def hooks(self, client_id: str) -> dict:
+        since = int(time.time()) - DAYS * 86400
+        rows = self.db.execute("SELECT at, topic, ok, note FROM shopify_hook_log WHERE client_id=? AND at>=? ORDER BY at",
+                               (client_id, since)).fetchall()
+        topics: dict = {}
+        for _, t, ok, _ in rows:
+            topics.setdefault(t or "?", [0, 0])[0 if ok else 1] += 1
+        last_ok = max((r[0] for r in rows if r[2]), default=None)
+        bad = [r for r in rows if not r[2]]
+        return {"hooks_ok": sum(1 for r in rows if r[2]), "hooks_rejected": len(bad), "hook_topics": topics,
+                "last_hook_ok": last_ok, "last_rejected": {"at": bad[-1][0], "why": bad[-1][3]} if bad else None}
 
     def cancel_all(self, client_id: str) -> int:
         n = self.db.execute("DELETE FROM check_links WHERE client_id=?", (client_id,)).rowcount
@@ -118,7 +139,8 @@ def build(db, client_id: str, purchases, refunded: Callable, tz: str = "Asia/Dub
 def verdict(d: dict) -> str:
     t = d["totals"]
     if not t["orders"]:
-        return "No paid orders in the last 7 days, so there was nothing to send."
+        return ("ProAds received no paid orders in the last 7 days. If the shop did sell, the sales aren't reaching ProAds: "
+                "check the Shopify connection below.")
     parts = []
     if d["meta_connected"]:
         share = t["meta_accepted"] / t["orders"] if t["orders"] else 0
@@ -154,8 +176,24 @@ th:first-child,td:first-child{{text-align:left}}.v{{font-size:18px;font-weight:7
 <p>Last 7 days ({esc(d['tz'])}): {t['orders']} paid orders, {t['money']:,.0f} {esc(cur)} really paid (refunds taken off).</p>
 <p>Last sale: {when(d['last_sale'])} · Last accepted by Meta: {when(d['last_meta_accepted'])} · Last accepted by TikTok: {when(d['last_tiktok_accepted'])}</p>
 {errs}
+{shopify_html(d.get("shopify"), when, esc)}
 <table><thead><tr><th>Day</th><th>Paid orders</th><th>Paid ({esc(cur)})</th><th>Sent to Meta</th><th>Meta accepted</th><th>TikTok accepted</th><th>Practice only</th></tr></thead>
 <tbody>{rows}<tr><th>Total</th><th>{t['orders']}</th><th>{t['money']:,.0f}</th><th>{t['meta_sent']}</th><th>{t['meta_accepted']}</th><th>{t['tiktok_accepted']}</th><th>{t['practice']}</th></tr></tbody></table>
 <p class="s">A sale is sent after it's paid, usually within minutes, so today's last orders may not be sent yet. Meta counts are
 purchases in batches Meta confirmed it received. Checked {when(d['as_of'])}{(' · this link stops working ' + when(expires_at)) if expires_at else ''}.</p>
 </body></html>"""
+
+
+def shopify_html(sh: Optional[dict], when, esc) -> str:
+    if not sh:
+        return ""
+    lines = [f"Shopify app: {'connected since ' + esc(sh['app_connected_at'] or '') + ', last sync ' + esc(sh['app_last_sync'] or 'never') + ' (' + esc(sh['app_sync'] or '') + ')' if sh['app'] else 'not connected'}",
+             f"Webhook signing key saved: {'yes' if sh['signing_key'] else 'no'}",
+             f"Shopify webhooks in the last 7 days: {sh['hooks_ok']} accepted, {sh['hooks_rejected']} rejected"
+             + (f" · last accepted {when(sh['last_hook_ok'])}" if sh["last_hook_ok"] else "")]
+    if sh["hook_topics"]:
+        lines.append("By topic: " + ", ".join(f"{esc(k)} {v[0]} ok" + (f" / {v[1]} rejected" if v[1] else "") for k, v in sorted(sh["hook_topics"].items())))
+    if sh["last_rejected"]:
+        lines.append(f"<span class='err'>Last rejected {when(sh['last_rejected']['at'])}: {esc(sh['last_rejected']['why'])}</span>")
+    return "<h2>Shopify connection</h2>" + "".join(f"<p>{l}</p>" for l in lines) + \
+        "<p class='s'>Webhook counting started 20 Nov 2026, so earlier days show none.</p>"

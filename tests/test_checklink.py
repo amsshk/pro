@@ -50,3 +50,15 @@ def test_check_link_expired(app):
     db.commit()
     assert c.get(link.replace("https://pro.example.net", "")).status_code == 404
     assert "/check/" in c.get("/robots.txt").get_data(as_text=True)
+
+
+def test_check_page_shows_shopify_webhooks(app):
+    import base64, hashlib, hmac, json
+    c = app.test_client()
+    c.post("/auth/signup", json=ACCT)
+    st = app.extensions["paysignal"]
+    r = c.post("/webhooks/shopify/glow-clinic", data=b"{}", headers={"X-Shopify-Topic": "orders/paid", "X-Shopify-Hmac-Sha256": "x"})
+    assert r.status_code == 401
+    link = c.post("/admin/pro/check-link/glow-clinic", headers=ADMIN, json={}).json["link"]
+    body = c.get(link.replace("https://pro.example.net", "")).get_data(as_text=True)
+    assert "0 accepted, 1 rejected" in body and "no signing key saved" in body and "Shopify app: not connected" in body

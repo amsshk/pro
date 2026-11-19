@@ -1266,9 +1266,12 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         cfg = state.config(client_id)
         secret = cfg.get("shopify_webhook_secret")
         body = request.get_data()
+        topic0 = request.headers.get("X-Shopify-Topic", "")[:40]
         if not secret or not verify_hmac(body, request.headers.get("X-Shopify-Hmac-Sha256", ""), secret):
             log.warning("rejected shopify webhook for %s: bad hmac", client_id)
+            state.check_links.hook(client_id, topic0, False, "no signing key saved" if not secret else "signature didn't match the saved key")
             abort(401, "bad signature")
+        state.check_links.hook(client_id, topic0, True)
         try:
             payload = json.loads(body)
         except ValueError:
@@ -4426,6 +4429,11 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             refunded = {p.external_id: eng.store.refunded_amount(client_id, p.external_id) for p in purchases}
             d = checklink.build(state.store.db, client_id, purchases, lambda p: refunded.get(p.external_id, 0.0),
                                 cfg.get("timezone") or "Asia/Dubai")
+            db = state.store.db
+            shop = db.execute("SELECT connected_at, sync_status, last_sync FROM shopify_shops WHERE client_id=?", (client_id,)).fetchone()
+            d["shopify"] = {"app": bool(shop), "app_connected_at": shop[0] if shop else None, "app_sync": shop[1] if shop else None,
+                            "app_last_sync": shop[2] if shop else None, "signing_key": bool(cfg.get("shopify_webhook_secret")),
+                            **state.check_links.hooks(client_id)}
         page = checklink.render(cfg.get("name") or client_id, cfg.get("currency", "AED"), d, exp, html.escape)
         r = Response(page, mimetype="text/html")
         r.headers["Cache-Control"] = "no-store"
