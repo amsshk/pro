@@ -160,7 +160,7 @@ class NewsStore:
 CSS = """
 :root{color-scheme:light}
 body{margin:0;background:#fff;color:#141414;font-family:Inter,system-ui,sans-serif;line-height:1.7;font-size:17px}
-a{color:#4A7600}a:hover{color:#5E9400}
+a{color:#4A7600}a:hover{color:#3B5F00}
 .top{max-width:1100px;margin:0 auto;padding:18px clamp(16px,4vw,40px);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .brand{display:inline-flex;align-items:center;gap:10px;font-family:'Space Grotesk',Inter,sans-serif;font-weight:700;font-size:20px;color:#141414;text-decoration:none}
 .nav{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
