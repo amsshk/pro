@@ -1383,6 +1383,20 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         linkBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
       } catch (e) { if (e.message !== "signed out") toast(e.message); }
     }
+    async function checkLink(a) {
+      try {
+        const r = await api("/admin/" + cid() + "/check-link/" + encodeURIComponent(a.client_id), { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        const stop = h("button", { class: "btn btn-ghost", type: "button", onclick: async () => {
+          try { await api("/admin/" + cid() + "/check-link/" + encodeURIComponent(a.client_id), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cancel: true }) });
+            toast("Check links for " + a.name + " stopped"); linkBox.replaceChildren(); } catch (e) { toast(e.message); } } }, "Stop all links");
+        linkBox.replaceChildren(h("section", { class: "card", style: "background: var(--violet-card); border-color: var(--violet-edge)" },
+          h("h2", {}, "Check link for " + a.name),
+          h("p", { class: "sub", style: "margin:0" }, "Read-only totals for the last 7 days: paid orders, sent to Meta, accepted by Meta and TikTok. No customer details. Works for 24 hours; anyone with the link can open it."),
+          h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, h("code", { class: "box" }, r.link), h("button", { class: "btn btn-primary", type: "button", onclick: () => copy(r.link) }, "Copy"),
+            h("a", { class: "btn btn-ghost", href: r.link, target: "_blank", rel: "noopener noreferrer" }, "Open"), stop)));
+        linkBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      } catch (e) { if (e.message !== "signed out") toast(e.message); }
+    }
     function delButton(a) {
       let armed = false;
       return h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px;color: var(--loss-txt)", onclick: async (ev) => {
@@ -1423,7 +1437,8 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
             h("td", {}, a.last_data ? when(a.last_data) : "–"),
             h("td", {}, h("div", { style: "display:flex;gap:6px;justify-content:flex-end" },
               h("button", { class: "btn btn-primary", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => viewBusiness(a.client_id) }, "Open"),
-              h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => makeLink(a) }, "Reset link"), delButton(a))))))))
+              h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => makeLink(a) }, "Reset link"),
+              h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => checkLink(a) }, "Check link"), delButton(a))))))))
           : h("p", { class: "sub", style: "margin:0" }, "No one has signed up yet. Share pro.ezdevsoft.net or start your first ad.")));
   }
 

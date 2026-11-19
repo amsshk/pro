@@ -46,7 +46,7 @@ from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
-from . import affiliates, audience_sync, audiences, digest, followups, impact, leads, results, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
+from . import affiliates, audience_sync, checklink, audiences, digest, followups, impact, leads, results, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
 from .identity import hash_phone, normalize_phone
 from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
@@ -195,6 +195,7 @@ class App:
         self.followups = followups.FollowupStore(self.store.db, shopify_app.encrypt, shopify_app.decrypt)
         self.digests = digest.DigestStore(self.store.db)
         self.results = results.ResultStore(self.store.db)
+        self.check_links = checklink.CheckLinkStore(self.store.db)
         self.store.db.execute("CREATE TABLE IF NOT EXISTS meta_pixel_links (client_id TEXT PRIMARY KEY, pixel_id TEXT NOT NULL,"
                               " name TEXT, token_enc TEXT NOT NULL, added_at INTEGER NOT NULL)")
         self.store.db.commit()
@@ -3802,7 +3803,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     @flask.get("/robots.txt")
     def robots_txt():
         b = public_base()
-        return html_resp(f"User-agent: *\nAllow: /\nDisallow: /app\nDisallow: /admin/\n\nSitemap: {b}/sitemap.xml\nSitemap: {b}/news-sitemap.xml\n",
+        return html_resp(f"User-agent: *\nAllow: /\nDisallow: /app\nDisallow: /admin/\nDisallow: /check/\n\nSitemap: {b}/sitemap.xml\nSitemap: {b}/news-sitemap.xml\n",
                          "text/plain; charset=utf-8", cache=3600)
 
     @flask.get("/manifest.webmanifest")
@@ -4394,6 +4395,44 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         log.info("admin %s made a reset link for %s", admin_id, client_id)
         return {"link": reset_link(token), "expires_in_minutes": 60}
 
+    @flask.post("/admin/<admin_id>/check-link/<client_id>")
+    def admin_check_link(admin_id, client_id):
+        """A private read-only page of one business's tracking totals (no customer details) for 24 hours, for
+        someone who can't sign in. {"cancel": true} stops every check link of that business."""
+        require_admin(admin_id)
+        if state.clients.get(client_id) is None and not state.accounts.get(client_id):
+            abort(404, "unknown account")
+        body = request.get_json(silent=True) or {}
+        with state.lock:
+            if body.get("cancel"):
+                return {"cancelled": state.check_links.cancel_all(client_id)}
+            token, exp = state.check_links.create(client_id, admin_id, int(body.get("hours") or checklink.HOURS))
+        log.info("admin %s made a check link for %s", admin_id, client_id)
+        return {"link": f"{public_base()}/check/{token}", "expires_at": exp}
+
+    @flask.get("/check/<token>")
+    def check_page(token):
+        with state.lock:
+            client_id = state.check_links.resolve(token)
+            if not client_id:
+                r = Response("<!doctype html><meta name=robots content=noindex><p>This check link has expired or was cancelled. "
+                             "Ask the ProAds admin for a new one.</p>", status=404, mimetype="text/html")
+                r.headers["Cache-Control"] = "no-store"
+                return r
+            exp = state.store.db.execute("SELECT MAX(expires_at) FROM check_links WHERE client_id=?", (client_id,)).fetchone()[0]
+            cfg = state.config(client_id)
+            eng = state.engine(client_id)
+            purchases = eng.store.purchases(client_id)
+            refunded = {p.external_id: eng.store.refunded_amount(client_id, p.external_id) for p in purchases}
+            d = checklink.build(state.store.db, client_id, purchases, lambda p: refunded.get(p.external_id, 0.0),
+                                cfg.get("timezone") or "Asia/Dubai")
+        page = checklink.render(cfg.get("name") or client_id, cfg.get("currency", "AED"), d, exp, html.escape)
+        r = Response(page, mimetype="text/html")
+        r.headers["Cache-Control"] = "no-store"
+        r.headers["X-Robots-Tag"] = "noindex, nofollow"
+        r.headers["Referrer-Policy"] = "no-referrer"
+        return r
+
     @flask.post("/admin/<admin_id>/delete/<client_id>")
     def admin_delete(admin_id, client_id):
         require_admin(admin_id)
@@ -4403,6 +4442,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             abort(404, "unknown account")
         with state.lock:
             state.accounts.delete_everything(client_id)
+            state.check_links.cancel_all(client_id)
             state.learnings.forget(client_id)
             state.learnings.forget(client_id + ":archived")
             for cache in (state.engines, state.posts, state.trained_at):
