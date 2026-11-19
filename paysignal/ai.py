@@ -111,19 +111,43 @@ class MetaAI:
 
     # ---------- backup AI: used when Meta's AI is blocked (billing, outage) or not set up ----------
     @staticmethod
-    def fallback_config() -> Optional[dict]:
-        """Any OpenAI-compatible service: PAYSIGNAL_FALLBACK_URL (base URL ending in /v1 or similar),
-        PAYSIGNAL_FALLBACK_KEY and PAYSIGNAL_FALLBACK_MODEL."""
-        url, key, model = (os.environ.get(k, "").strip() for k in
-                           ("PAYSIGNAL_FALLBACK_URL", "PAYSIGNAL_FALLBACK_KEY", "PAYSIGNAL_FALLBACK_MODEL"))
-        cheap = os.environ.get("PAYSIGNAL_FALLBACK_CHEAP_MODEL", "").strip() or model
-        return {"url": url.rstrip("/"), "key": key, "model": model, "cheap": cheap} if url and key and model else None
+    def fallback_configs() -> list[dict]:
+        """Backup AIs, tried in order: any OpenAI-compatible service. The first is PAYSIGNAL_FALLBACK_URL (base URL
+        ending in /v1 or similar), PAYSIGNAL_FALLBACK_KEY and PAYSIGNAL_FALLBACK_MODEL; more can be added with the
+        same names ending in _2, _3 ... _5 (e.g. PAYSIGNAL_FALLBACK_URL_2), each on its own service and key."""
+        out = []
+        for sfx in ("", "_2", "_3", "_4", "_5"):
+            url, key, model = (os.environ.get(k + sfx, "").strip() for k in
+                               ("PAYSIGNAL_FALLBACK_URL", "PAYSIGNAL_FALLBACK_KEY", "PAYSIGNAL_FALLBACK_MODEL"))
+            cheap = os.environ.get("PAYSIGNAL_FALLBACK_CHEAP_MODEL" + sfx, "").strip() or model
+            if url and key and model:
+                out.append({"url": url.rstrip("/"), "key": key, "model": model, "cheap": cheap,
+                            "name": "PAYSIGNAL_FALLBACK_*" + sfx})
+        return out
+
+    @classmethod
+    def fallback_config(cls) -> Optional[dict]:
+        cfgs = cls.fallback_configs()
+        return cfgs[0] if cfgs else None
 
     def _fallback_chat(self, messages: list[dict], max_completion_tokens: int, why: str,
                        task: str = "chat", reasoning_effort: Optional[str] = None) -> Reply:
+        """Each backup service in turn: when one fails or is busy, the next is asked."""
+        errors = []
+        for cfg in self.fallback_configs():
+            try:
+                return self._fallback_one(cfg, messages, max_completion_tokens, why, task, reasoning_effort)
+            except RuntimeError as e:
+                log.warning("backup AI %s failed: %s", cfg["name"], str(e)[:200])
+                errors.append(str(e))
+        if not errors:
+            raise RuntimeError("No backup AI is set up. Add PAYSIGNAL_FALLBACK_URL, _KEY and _MODEL in Render.")
+        raise RuntimeError(errors[-1] if len(errors) == 1 else "Every backup AI failed: " + " || ".join(e[:200] for e in errors))
+
+    def _fallback_one(self, cfg: dict, messages: list[dict], max_completion_tokens: int, why: str,
+                      task: str = "chat", reasoning_effort: Optional[str] = None) -> Reply:
         """Same instructions and data as Meta's models get, so the backup knows ProAds' job. Planning and
         explaining use the smart model and think as hard as Muse Wonder would; labelling uses the cheap one."""
-        cfg = self.fallback_config()
         effort = reasoning_effort or DEFAULT_ROUTES.get(task, DEFAULT_ROUTES["chat"])[1]
         # PAYSIGNAL_FALLBACK_MODEL may list several models, comma-separated: the next is tried when one is busy
         first = [m.strip() for m in (cfg["cheap"] if effort == "low" else cfg["model"]).split(",") if m.strip()]
@@ -132,7 +156,7 @@ class MetaAI:
         # "developer" is Meta/OpenAI's name for the instructions; most other services only know "system"
         msgs = [{**m, "role": "system"} if m.get("role") == "developer" else m for m in messages]
         headers = {"Authorization": f"Bearer {cfg['key']}", "Content-Type": "application/json"}
-        help_ = "Check PAYSIGNAL_FALLBACK_URL, _KEY and _MODEL in Render. (Meta's AI is also unavailable.)"
+        help_ = f"Check {cfg['name'].replace('*', 'URL/KEY/MODEL')} in Render. (Meta's AI is also unavailable.)"
         busy: list[str] = []
         for model in models:
             log.warning("Meta AI unavailable (%s); using the backup AI %s", why[:200], model)

@@ -154,3 +154,24 @@ def test_timeout_moves_to_next_model(monkeypatch):
     http.post = post
     r = ai.MetaAI(api_key="k", session=http).chat("campaign_builder", [{"role": "user", "content": "x"}])
     assert r.model == "backup:lite"
+
+
+def test_second_backup_service_when_the_first_fails(monkeypatch):
+    monkeypatch.setenv("PAYSIGNAL_FALLBACK_URL", "https://first.example/v1")
+    monkeypatch.setenv("PAYSIGNAL_FALLBACK_KEY", "k1")
+    monkeypatch.setenv("PAYSIGNAL_FALLBACK_MODEL", "gemini-x")
+    monkeypatch.setenv("PAYSIGNAL_FALLBACK_URL_2", "https://backup.example/v1/openai")
+    monkeypatch.setenv("PAYSIGNAL_FALLBACK_KEY_2", "k2")
+    monkeypatch.setenv("PAYSIGNAL_FALLBACK_MODEL_2", "meta-models/Muse-Glimmer-30B")
+
+    class H(Http):
+        def post(self, url, timeout=None, json=None, headers=None):
+            if "first.example" in url:
+                self.calls.append((url, json, headers))
+                return R(401, {"error": {"message": "API key not valid"}})
+            return super().post(url, timeout, json, headers)
+    http = H(402)
+    m = ai.MetaAI(api_key="k", session=http)
+    r = m.chat("chat", [{"role": "user", "content": "hi"}])
+    assert r.text == "from backup" and r.model == "backup:meta-models/Muse-Glimmer-30B"
+    assert http.calls[-1][2]["Authorization"] == "Bearer k2"
