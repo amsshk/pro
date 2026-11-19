@@ -96,6 +96,8 @@ class SignalLog:
         return {
             "days": days, "mode": "live" if live else ("practice" if rows else "none"),
             "purchases": sum(r[2] or 0 for r in rows), "refunds": sum(r[3] or 0 for r in rows),
+            "purchases_live": sum(r[2] or 0 for r in live),
+            "purchases_practice": sum(r[2] or 0 for r in rows if r[1] != "live"),
             "sent": sum(r[4] or 0 for r in live), "accepted": sum(r[5] or 0 for r in live),
             "no_identifier": sum(r[6] or 0 for r in rows), "too_old": sum(r[7] or 0 for r in rows),
             "last_accepted_at": last_ok, "last_error": {"at": last_err[0], "message": last_err[1]} if last_err else None,
