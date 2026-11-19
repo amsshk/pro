@@ -342,10 +342,12 @@ html[dir=rtl] h1,html[lang=hi] h1,html[lang=th] h1{line-height:1.3}
     }
   }
   // Count this page load for the funnel: only the campaign tags in the link, nothing about the visitor.
-  try {
+  // sent after the page has loaded, so it never delays what the visitor sees
+  const sendVisit = () => { try {
     fetch("/t/visit", { method: "POST", keepalive: true, headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ utm_source: params.get("utm_source") || "", utm_medium: params.get("utm_medium") || "", utm_campaign: params.get("utm_campaign") || "" }) }).catch(() => {});
-  } catch (e) {}
+  } catch (e) {} };
+  if (document.readyState === "complete") setTimeout(sendVisit, 0); else window.addEventListener("load", () => setTimeout(sendVisit, 0));
   function utm() {
     let out = {};
     try { const x = JSON.parse(get("proads.utm") || "null"); out = x && Date.now() - x.t < 90 * 864e5 ? { ...x.v } : {}; } catch (e) {}
@@ -444,7 +446,8 @@ html[dir=rtl] h1,html[lang=hi] h1,html[lang=th] h1{line-height:1.3}
 
   let socialList = null;
   proadsOnLang(() => { if (socialList) showSocial(socialList); });
-  fetch("/public-config").then((r) => r.json()).then((cfg) => {
+  const inlineCfg = (() => { try { const el = document.getElementById("pubcfg"); return el ? JSON.parse(el.textContent) : null; } catch (e) { return null; } })();
+  (inlineCfg ? Promise.resolve(inlineCfg) : fetch("/public-config").then((r) => r.json())).then((cfg) => {
     proadsCountry(cfg.country);
     if (cfg.google_source) document.querySelectorAll(".prefsrc-top,.prefsrc-wrap").forEach((el) => el.classList.add("on"));
     if (cfg.company) {

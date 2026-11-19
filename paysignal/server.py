@@ -3672,7 +3672,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         with state.lock:
             shown = state.results.list(public_only=True)
         swaps["%%RESULTS%%"] = results.html_section(shown, esc)
-        swaps["%%JSONLD%%"] = (f'<link rel="canonical" href="{public_base()}/">\n'                         # one address for Google
+        cfg_json = json.dumps(public_config_data(), ensure_ascii=False).replace("</", "<\\/")
+        swaps["%%JSONLD%%"] = (f'<script type="application/json" id="pubcfg">{cfg_json}</script>\n'   # no extra request on load
+                               f'<link rel="canonical" href="{public_base()}/">\n'                         # one address for Google
                                f'<meta property="og:image" content="{public_base()}/proads-logo-full.png">\n'
                                f'<meta property="og:image:width" content="1000"><meta property="og:image:height" content="1068">\n' + swaps["%%JSONLD%%"])
         for k, v in swaps.items():
@@ -3938,9 +3940,14 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     @flask.get("/public-config")
     def public_config():
         """Values the public pages need: the Pixel ID (public by nature) and contact email."""
+        return public_config_data()
+
+    def public_config_data() -> dict:
         # Cloudflare (in front of the site) says which country the visitor is in: the page picks its language from it
         country = (request.headers.get("CF-IPCountry") or "").strip().upper()
-        return {"version": PROADS_VERSION, "pixel_id": growth.pixel_id(), "tiktok_pixel": tiktok.proads_settings()["pixel"], "company": company(), "contact": os.environ.get("PROADS_CONTACT_EMAIL", ""),
+        co = company()                                   # only what the page shows: no legal name, licence or address
+        return {"version": PROADS_VERSION, "pixel_id": growth.pixel_id(), "tiktok_pixel": tiktok.proads_settings()["pixel"],
+                "company": {k: co[k] for k in ("name", "website", "city")}, "contact": os.environ.get("PROADS_CONTACT_EMAIL", ""),
                 "sign_in": social.configured(),
                 "google_source": news.google_source_on(),
                 "country": country if len(country) == 2 and country.isalpha() and country not in ("XX", "T1") else ""}

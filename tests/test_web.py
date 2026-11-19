@@ -163,3 +163,12 @@ def test_favicon_for_browsers_and_google(tmp_path):
         h = c.get(path).data.decode()
         assert 'href="/favicon.ico"' in h and 'sizes="48x48" href="/favicon-48.png"' in h, path
         assert "/proads-mark.svg" in h and 'stroke="#0A0A0A"' not in h, path
+
+
+def test_home_page_carries_its_settings_so_it_needs_no_extra_request(tmp_path):
+    import json as _j
+    import re as _re
+    c = create_app({}, str(tmp_path / "p.db"), start_worker=False).test_client()
+    h = c.get("/", headers={"CF-IPCountry": "AE"}).data.decode()
+    cfg = _j.loads(_re.search(r'<script type="application/json" id="pubcfg">(.*?)</script>', h, _re.S).group(1))
+    assert cfg["country"] == "AE" and "version" in cfg and cfg == c.get("/public-config", headers={"CF-IPCountry": "AE"}).json
