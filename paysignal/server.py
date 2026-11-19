@@ -3669,6 +3669,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         with state.lock:
             shown = state.results.list(public_only=True)
         swaps["%%RESULTS%%"] = results.html_section(shown, esc)
+        swaps["%%JSONLD%%"] = f'<link rel="canonical" href="{public_base()}/">\n' + swaps["%%JSONLD%%"]   # one address for Google
         for k, v in swaps.items():
             html = html.replace(k, v)
         code = re.sub(r"[^A-Za-z0-9_\-]", "", os.environ.get("GOOGLE_SITE_VERIFICATION", "").replace("google-site-verification=", ""))

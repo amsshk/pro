@@ -305,7 +305,7 @@ def rss(base: str, posts: list[dict]) -> str:
 
 
 def sitemap(base: str, posts: list[dict]) -> str:
-    pages = [("/", None), ("/news", posts[0]["updated_at"] if posts else None), ("/about", None), ("/terms", None),
+    pages = [("/", None), ("/news", posts[0]["updated_at"] if posts else None), ("/fees", None), ("/about", None), ("/terms", None),
              ("/privacy", None), ("/security", None)] + [(f"/news/{p['slug']}", max(p["updated_at"], p["published_at"])) for p in posts]
     urls = "".join(f"<url><loc>{base}{path}</loc>" + (f"<lastmod>{_iso(ts)}</lastmod>" if ts else "") + "</url>" for path, ts in pages)
     return f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{urls}</urlset>'
