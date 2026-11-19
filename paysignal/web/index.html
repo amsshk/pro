@@ -4167,12 +4167,12 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     const notSending = !c.sent_meta && !(ch && ch.started_at);
     const sentTile = notSending ? tile("What ProAds sent", "Not yet", [
       "ProAds isn't sending your sales to Meta yet.",
-      c.outside_checkout ? pc(c.outside_share) + " of your " + fmt.format(c.orders) + " real orders were paid outside your website, where no browser pixel can see them. ProAds can send them." : null,
+      c.outside_checkout ? pc(c.outside_share) + " of your " + fmt.format(c.orders) + " real orders were in-store or offline sales, which no browser pixel can see. ProAds can send them." : null,
       h("a", { href: "#/upload" }, "Connect your Meta Pixel →")], "Source: ProAds (your verified orders)") :
-      tile("What ProAds sent", c.orders ? pc(c.sent_meta_share) : "–", [
-      c.orders ? "of your " + fmt.format(c.orders) + " real paid orders reached Meta (30 days)" : "No paid orders in the last 30 days",
-      c.sent_tiktok_share != null ? pc(c.sent_tiktok_share) + " reached TikTok" : null,
-      c.outside_checkout ? pc(c.outside_share) + " were paid outside your website, where no browser pixel can see them" : null,
+      tile("What ProAds sent", c.sent_meta_share != null ? pc(c.sent_meta_share) : "–", [
+      c.meta_orders ? "of your " + fmt.format(c.meta_orders) + " real paid orders since " + new Date(c.meta_from * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) + " reached Meta" : "No paid orders since ProAds started sending to Meta",
+      c.sent_tiktok_share != null ? pc(c.sent_tiktok_share) + " of " + fmt.format(c.tiktok_orders) + " since " + new Date(c.tiktok_from * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) + " reached TikTok" : null,
+      c.outside_checkout ? pc(c.outside_share) + " were in-store or offline sales, which no browser pixel can see" : null,
       c.with_email != null && c.sent_meta ? "Email on " + pc(c.with_email) + ", phone on " + pc(c.with_phone) + " for matching" : null], "Source: ProAds (your verified orders)");
     const since = ch.started_at ? new Date(ch.started_at * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null;
     const rng = (x) => x ? " (likely " + pc(x.low, true) + " to " + pc(x.high, true) + ")" : "";

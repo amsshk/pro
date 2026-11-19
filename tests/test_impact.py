@@ -35,10 +35,13 @@ def test_refunds_are_not_counted():
     assert out["money"]["after"] == 0 and out["money"]["change"] == -1.0
 
 
-def test_coverage_counts_sales_no_pixel_can_see():
-    ps = [pay(1), pay(2, source="csv"), pay(3, source="stripe"), pay(4, source="stripe", fbclid="x"), pay(40)]
-    c = impact.coverage(ps, lambda p: 0, NOW - timedelta(days=30), sent_meta=4, match={"em": 0.9, "ph": 0.5})
-    assert c["orders"] == 4 and c["sent_meta_share"] == 1.0 and c["outside_checkout"] == 2 and c["outside_share"] == 0.5
+def test_coverage_counts_only_since_each_platform_was_connected():
+    ps = [pay(1), pay(2, source="csv"), pay(3, source="stripe"), pay(4, channel="physical_store"), pay(20), pay(25), pay(40)]
+    c = impact.coverage(ps, lambda p: 0, NOW - timedelta(days=30), sent_meta=3, match={"em": 0.9, "ph": 0.5},
+                        sent_tiktok=1, meta_since=NOW - timedelta(days=5), tiktok_since=None)
+    assert c["orders"] == 6 and c["meta_orders"] == 4 and c["sent_meta_share"] == 0.75     # 4 paid since Meta was connected
+    assert c["sent_tiktok_share"] is None                                                   # never sent to TikTok
+    assert c["outside_checkout"] == 1 and c["outside_share"] == round(1 / 6, 4)             # only in-store sales, no guessing
 
 
 class R:
@@ -72,6 +75,6 @@ def test_endpoint(tmp_path):
     rows = "\n".join(f"{i},{(today - timedelta(days=i % 40)).isoformat()},200,AED,b{i}@x.com" for i in range(80))
     c.post("/upload/csv/shop", data=("id,date,amount,currency,email\n" + rows + "\n").encode(), headers={"X-API-Key": key})
     r = c.get("/impact/shop", headers={"X-API-Key": key}).json
-    assert r["coverage"]["orders"] > 0 and r["coverage"]["outside_share"] == 1.0 and r["change"]["not_started"]
+    assert r["coverage"]["orders"] > 0 and r["coverage"]["outside_share"] == 1.0 and r["coverage"]["sent_meta_share"] is None and r["change"]["not_started"]
     assert "Connect your Meta Pixel" in r["meta"]["error"]
     assert c.get("/impact/shop").status_code == 401

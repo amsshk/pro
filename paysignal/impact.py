@@ -25,10 +25,9 @@ OUTSIDE_SOURCES = ("csv", "upload")
 
 
 def outside_checkout(p) -> bool:
-    """Paid where a website pixel can't see it: uploads, in-store, or a Stripe payment with no website trace."""
-    if p.source in OUTSIDE_SOURCES or p.channel == "physical_store":
-        return True
-    return p.source == "stripe" and not (p.event_source_url or p.fbclid or getattr(p, "utm_source", None))
+    """Paid where a website pixel can't see it. Only sales marked as in-store/offline count: a Stripe, Tabby or Ziina
+    payment is usually made in the shop's own website checkout, so ProAds doesn't guess that it wasn't."""
+    return p.channel == "physical_store"
 
 
 def _day(dt: datetime) -> str:
@@ -88,14 +87,25 @@ def before_after(purchases, refunded, started_at: datetime, now: datetime,
     return out
 
 
-def coverage(purchases, refunded, since: datetime, sent_meta: int, match: dict, sent_tiktok: Optional[int] = None) -> dict:
-    real = [p for p in purchases if p.occurred_at >= since and p.amount - refunded(p) > 0.005]
+def coverage(purchases, refunded, since: datetime, sent_meta: int, match: dict, sent_tiktok: Optional[int] = None,
+             meta_since: Optional[datetime] = None, tiktok_since: Optional[datetime] = None) -> dict:
+    """Shares are counted only over the days ProAds was sending to each platform, so orders from before it was
+    connected (or uploaded history) don't make the share look low."""
+    paid = [p for p in purchases if p.amount - refunded(p) > 0.005]
+    real = [p for p in paid if p.occurred_at >= since]
     n = len(real)
     outside = sum(1 for p in real if outside_checkout(p))
-    pct = lambda x: round(min(x / n, 1), 4) if n else None
-    return {"orders": n, "sent_meta": sent_meta, "sent_meta_share": pct(sent_meta),
-            "sent_tiktok": sent_tiktok, "sent_tiktok_share": pct(sent_tiktok) if sent_tiktok is not None else None,
-            "outside_checkout": outside, "outside_share": pct(outside),
+    def share(sent, start):
+        if sent is None or start is None:
+            return None, 0, None
+        frm = max(since, start)
+        base = sum(1 for p in paid if p.occurred_at >= frm)
+        return (round(min(sent / base, 1), 4) if base else None), base, int(frm.timestamp())
+    ms, mbase, mfrom = share(sent_meta, meta_since)
+    ts, tbase, tfrom = share(sent_tiktok, tiktok_since)
+    return {"orders": n, "sent_meta": sent_meta, "sent_meta_share": ms, "meta_orders": mbase, "meta_from": mfrom,
+            "sent_tiktok": sent_tiktok, "sent_tiktok_share": ts, "tiktok_orders": tbase, "tiktok_from": tfrom,
+            "outside_checkout": outside, "outside_share": round(outside / n, 4) if n else None,
             "with_email": match.get("em"), "with_phone": match.get("ph")}
 
 

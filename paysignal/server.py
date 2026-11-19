@@ -2334,12 +2334,19 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                                         " AND sent_at>=? AND event_id NOT LIKE '%refund%'", (client_id, int(since30.timestamp()))).fetchone()[0]
             has_tt = state.store.db.execute("SELECT 1 FROM tiktok_pixels WHERE client_id=? LIMIT 1", (client_id,)).fetchone()
             started = impact_started_at(client_id)
+            db = state.store.db
+            m0 = db.execute("SELECT MIN(at) FROM capi_log WHERE client_id=? AND mode='live' AND COALESCE(received,0)>0 AND error IS NULL",
+                            (client_id,)).fetchone()[0]
+            t0 = db.execute("SELECT MIN(sent_at) FROM tiktok_delivered WHERE client_id=? AND status='accepted'", (client_id,)).fetchone()[0]
         ref = lambda p: refunded.get(p.external_id, 0.0)
+        ts = lambda x: datetime.fromtimestamp(x, timezone.utc) if x else None
         out = {"currency": cfg.get("currency", "AED"), "as_of": int(now.timestamp()),
-               "coverage": impact.coverage(purchases, ref, since30, sent_meta, keys, tt if has_tt else None)}
-        meta = state.connected_meta(client_id)
-        out["meta"] = impact.meta_quality(state.ads_http, meta["access_token"], meta["dataset_id"], meta_ads.settings()["version"]) \
-            if meta else {"error": "Connect your Meta Pixel to see Meta's own figures."}
+               "coverage": impact.coverage(purchases, ref, since30, sent_meta, keys, tt if has_tt else None, ts(m0), ts(t0))}
+        meta = cfg.get("meta") or {}                     # the same Pixel and token the sales are sent with
+        if meta.get("dataset_id") and meta.get("access_token"):
+            out["meta"] = impact.meta_quality(state.ads_http, meta["access_token"], meta["dataset_id"], meta_ads.settings()["version"])
+        else:
+            out["meta"] = {"error": "Connect your Meta Pixel to see Meta's own figures."}
         if started:
             days = min(impact.WINDOW_DAYS, (now.date() - started.date()).days)
             sb = sa = None
