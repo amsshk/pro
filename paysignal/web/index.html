@@ -3,7 +3,7 @@
 <head>
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48.png">
-<link rel="apple-touch-icon" href="/favicon-192.png">
+<link rel="apple-touch-icon" href="/proads-icon-square.png">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -443,9 +443,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     }
     return el;
   }
-  const logo = () => h("svg", { width: 28, height: 28, viewBox: "0 0 28 28", "aria-hidden": "true" },
-    h("rect", { width: 28, height: 28, rx: 5, fill: "#5E9400" }),
-    h("path", { d: "M5 19l6-6 4 3 8-9", stroke: "#0A0A0A", "stroke-width": "2.6", fill: "none", "stroke-linecap": "square", "stroke-linejoin": "miter" }));
+  const logo = () => h("img", { src: "/proads-mark.svg", width: 30, height: 30, alt: "", style: "display:block" });
   const icon = (d) => h("svg", { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": 2, "aria-hidden": "true" }, h("path", { d }));
   const isArabic = (s) => /[؀-ۿ]/.test(s || "");
   function toast(text) {

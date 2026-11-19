@@ -179,8 +179,7 @@ h2{font-family:'Space Grotesk',Inter,sans-serif;font-size:23px;margin:34px 0 8px
 .cta{margin-top:40px;padding:20px 22px;border-radius:14px;background:#F3F7EA;border:1px solid #DCE8C4}
 footer{max-width:760px;margin:0 auto;padding:24px clamp(16px,4vw,40px) 40px;color:#5C5C5C;font-size:14px;border-top:1px solid #E8E9E3}
 """
-LOGO_SVG = ('<svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="5" fill="#5E9400"/>'
-            '<path d="M5 19l6-6 4 3 8-9" stroke="#0A0A0A" stroke-width="2.4" fill="none" stroke-linecap="square"/></svg>')
+LOGO_SVG = '<img src="/proads-mark.svg" width="30" height="30" alt="" style="display:block">'
 STAR = ('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">'
         '<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg>')
 

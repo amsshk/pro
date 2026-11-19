@@ -3658,6 +3658,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         fee_line = f" + {fee:g}% of the ad spend of campaigns made through ProAds" if fee else ""
         base = "https://" + request.host
         ld = [{"@context": "https://schema.org", "@type": "WebSite", "name": "ProAds", "alternateName": "ProAds by EzDevSoft", "url": base + "/"},
+              {"@context": "https://schema.org", "@type": "Organization", "name": "ProAds", "url": base + "/", "logo": base + "/proads-logo.png",
+               **({"email": co["email"]} if co["email"] else {})},
               {"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "ProAds", "url": base,
                "applicationCategory": "BusinessApplication", "operatingSystem": "Web",
                "description": "Sends verified paid sales (refunds removed, each sale counted once) from Shopify, Stripe, Tabby, "
@@ -3670,7 +3672,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         with state.lock:
             shown = state.results.list(public_only=True)
         swaps["%%RESULTS%%"] = results.html_section(shown, esc)
-        swaps["%%JSONLD%%"] = f'<link rel="canonical" href="{public_base()}/">\n' + swaps["%%JSONLD%%"]   # one address for Google
+        swaps["%%JSONLD%%"] = (f'<link rel="canonical" href="{public_base()}/">\n'                         # one address for Google
+                               f'<meta property="og:image" content="{public_base()}/proads-logo-full.png">\n'
+                               f'<meta property="og:image:width" content="1000"><meta property="og:image:height" content="1068">\n' + swaps["%%JSONLD%%"])
         for k, v in swaps.items():
             html = html.replace(k, v)
         code = re.sub(r"[^A-Za-z0-9_\-]", "", os.environ.get("GOOGLE_SITE_VERIFICATION", "").replace("google-site-verification=", ""))
@@ -3797,7 +3801,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         """Lets phones add ProAds to the home screen and open it full screen, like an app."""
         return html_resp(json.dumps({"name": "ProAds", "short_name": "ProAds", "start_url": "/app#/home", "scope": "/",
                                      "display": "standalone", "background_color": "#FAFAF7", "theme_color": "#FAFAF7",
-                                     "icons": [{"src": "/proads-logo.png", "sizes": "512x512", "type": "image/png", "purpose": "any"}]}),
+                                     "icons": [{"src": "/proads-logo.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+                                               {"src": "/proads-icon-square.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}]}),
                          "application/manifest+json", cache=86400)
 
     @flask.get("/favicon.ico")
@@ -3810,6 +3815,21 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if size not in (48, 192):
             abort(404)
         return send_from_directory(WEB_DIR, f"favicon-{size}.png", max_age=7 * 86400)
+
+    @flask.get("/proads-mark.svg")
+    def proads_mark():
+        """The cube mark used in page headers."""
+        return send_from_directory(WEB_DIR, "proads-mark.svg", max_age=7 * 86400, mimetype="image/svg+xml")
+
+    @flask.get("/proads-icon-square.png")
+    def proads_icon_square():
+        """Full-bleed icon for phone home screens (the phone rounds the corners)."""
+        return send_from_directory(WEB_DIR, "proads-icon-square.png", max_age=7 * 86400)
+
+    @flask.get("/proads-logo-full.png")
+    def proads_logo_full():
+        """The full logo: cube, name and tagline."""
+        return send_from_directory(WEB_DIR, "proads-logo-full.png", max_age=7 * 86400)
 
     @flask.get("/proads-logo.png")
     def proads_logo():

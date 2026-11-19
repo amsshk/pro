@@ -125,7 +125,9 @@ def test_landing_shows_facts_without_javascript_and_llms_txt(tmp_path, monkeypat
     assert "%%" not in h and "AED 299 a month" in h and "AED 799 a month" in h
     assert "Real profit" not in h and "Example Legal LLC" not in h and "CN-0000" not in h and 'id="company"' not in h
     ld = _j.loads(_re.search(r'<script type="application/ld\+json">(.*?)</script>', h, _re.S).group(1))
-    assert ld[0]["@type"] == "WebSite" and ld[0]["name"] == "ProAds" and [o["name"] for o in ld[1]["offers"]] == ["Free", "Pro", "Premium"] and "Example Legal LLC" not in _j.dumps(ld)
+    assert ld[0]["@type"] == "WebSite" and ld[0]["name"] == "ProAds" and [o["name"] for o in ld[2]["offers"]] == ["Free", "Pro", "Premium"]
+    assert ld[1]["@type"] == "Organization" and ld[1]["logo"].endswith("/proads-logo.png") and "legalName" not in ld[1]
+    assert 'og:image" content="' in h and "/proads-logo-full.png" in h and "Example Legal LLC" not in _j.dumps(ld)
     t = c.get("/llms.txt").data.decode()
     assert t.startswith("# ProAds") and "Example Legal LLC" not in t and "AED 799/month" in t and "SHA-256" in t and "hi@example.com" in t
 
@@ -154,6 +156,10 @@ def test_favicon_for_browsers_and_google(tmp_path):
     r = c.get("/favicon.ico")
     assert r.status_code == 200 and r.mimetype == "image/x-icon" and len(r.data) > 500
     assert c.get("/favicon-48.png").status_code == 200 and c.get("/favicon-192.png").status_code == 200 and c.get("/favicon-7.png").status_code == 404
+    for f in ("/proads-mark.svg", "/proads-icon-square.png", "/proads-logo-full.png", "/proads-logo.png"):
+        assert c.get(f).status_code == 200, f
+    assert c.get("/proads-mark.svg").mimetype == "image/svg+xml"
     for path in ("/", "/terms", "/privacy", "/fees", "/about", "/security", "/news"):
         h = c.get(path).data.decode()
         assert 'href="/favicon.ico"' in h and 'sizes="48x48" href="/favicon-48.png"' in h, path
+        assert "/proads-mark.svg" in h and 'stroke="#0A0A0A"' not in h, path
