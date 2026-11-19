@@ -3940,14 +3940,14 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     @flask.get("/public-config")
     def public_config():
         """Values the public pages need: the Pixel ID (public by nature) and contact email."""
-        return public_config_data()
+        return public_config_data(full=True)       # About, Terms, Privacy and Security name the operator
 
-    def public_config_data() -> dict:
+    def public_config_data(full: bool = False) -> dict:
         # Cloudflare (in front of the site) says which country the visitor is in: the page picks its language from it
         country = (request.headers.get("CF-IPCountry") or "").strip().upper()
-        co = company()                                   # only what the page shows: no legal name, licence or address
+        co = company()                         # the home page only needs name, website and city: no legal name or licence
         return {"version": PROADS_VERSION, "pixel_id": growth.pixel_id(), "tiktok_pixel": tiktok.proads_settings()["pixel"],
-                "company": {k: co[k] for k in ("name", "website", "city")}, "contact": os.environ.get("PROADS_CONTACT_EMAIL", ""),
+                "company": co if full else {k: co[k] for k in ("name", "website", "city")}, "contact": os.environ.get("PROADS_CONTACT_EMAIL", ""),
                 "sign_in": social.configured(),
                 "google_source": news.google_source_on(),
                 "country": country if len(country) == 2 and country.isalpha() and country not in ("XX", "T1") else ""}
