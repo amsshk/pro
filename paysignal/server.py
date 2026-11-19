@@ -3657,7 +3657,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         fee = billing.fee_percent()
         fee_line = f" + {fee:g}% of the ad spend of campaigns made through ProAds" if fee else ""
         base = "https://" + request.host
-        ld = [{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "ProAds", "url": base,
+        ld = [{"@context": "https://schema.org", "@type": "WebSite", "name": "ProAds", "alternateName": "ProAds by EzDevSoft", "url": base + "/"},
+              {"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "ProAds", "url": base,
                "applicationCategory": "BusinessApplication", "operatingSystem": "Web",
                "description": "Sends verified paid sales (refunds removed, each sale counted once) from Shopify, Stripe, Tabby, "
                               "Ziina and uploads to Meta and TikTok server-side, and shows what was really paid next to what each platform claims.",
@@ -3798,6 +3799,17 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                                      "display": "standalone", "background_color": "#FAFAF7", "theme_color": "#FAFAF7",
                                      "icons": [{"src": "/proads-logo.png", "sizes": "512x512", "type": "image/png", "purpose": "any"}]}),
                          "application/manifest+json", cache=86400)
+
+    @flask.get("/favicon.ico")
+    def favicon():
+        """The green ProAds logo: what browsers and Google show next to the site."""
+        return send_from_directory(WEB_DIR, "favicon.ico", max_age=7 * 86400, mimetype="image/x-icon")
+
+    @flask.get("/favicon-<int:size>.png")
+    def favicon_png(size):
+        if size not in (48, 192):
+            abort(404)
+        return send_from_directory(WEB_DIR, f"favicon-{size}.png", max_age=7 * 86400)
 
     @flask.get("/proads-logo.png")
     def proads_logo():

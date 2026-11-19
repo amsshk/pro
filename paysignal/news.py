@@ -199,7 +199,7 @@ def _shell(base: str, title: str, desc: str, canonical: str, body: str, head_ext
 <meta property="og:type" content="{og_type}"><meta property="og:title" content="{e(title)}"><meta property="og:description" content="{e(desc)}">
 <meta property="og:url" content="{e(canonical)}"><meta property="og:site_name" content="ProAds">{f'<meta property="og:image" content="{e(og_image)}"><meta name="twitter:card" content="summary_large_image">' if og_image else ''}
 <link rel="alternate" type="application/rss+xml" title="ProAds News" href="{base}/news/rss.xml">
-<link rel="icon" href="/proads-logo.png">
+<link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="48x48" href="/favicon-48.png"><link rel="apple-touch-icon" href="/favicon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
 <style>{CSS}</style>{head_extra}</head><body>
