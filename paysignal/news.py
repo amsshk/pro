@@ -311,11 +311,14 @@ def sitemap(base: str, posts: list[dict]) -> str:
 
 
 def news_sitemap(base: str, posts: list[dict]) -> str:
-    """Google News sitemap: articles from the last 2 days only (Google's rule)."""
+    """Google News sitemap: articles from the last 2 days (Google's rule). With none that new, the latest article is
+    listed anyway: Google ignores it if it's older, but an empty list is reported as an error in Search Console."""
     since = time.time() - 2 * 86400
+    fresh = [p for p in posts if p["published_at"] >= since]
+    posts = fresh or sorted(posts, key=lambda p: -p["published_at"])[:1]
     urls = "".join(f"<url><loc>{base}/news/{p['slug']}</loc><news:news><news:publication><news:name>ProAds News</news:name>"
                    f"<news:language>en</news:language></news:publication><news:publication_date>{_iso(p['published_at'])}</news:publication_date>"
-                   f"<news:title>{html.escape(p['title'], quote=False)}</news:title></news:news></url>" for p in posts if p["published_at"] >= since)
+                   f"<news:title>{html.escape(p['title'], quote=False)}</news:title></news:news></url>" for p in posts)
     return ('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" '
             f'xmlns:news="http://www.google.com/schemas/sitemap-news/0.9">{urls}</urlset>')
 

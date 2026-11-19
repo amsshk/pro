@@ -53,3 +53,16 @@ def test_admin_writes_and_drafts_stay_hidden(c):
 def test_render_body_lists_and_paragraphs():
     out = news.render_body("Para one\nstill one\n\n1. a\n2. b\n\n- c\nafter")
     assert out == "<p>Para one still one</p>\n<ol><li>a</li><li>b</li></ol>\n<ul><li>c</li></ul>\n<p>after</p>"
+
+
+def test_news_sitemap_is_never_empty():
+    import time as _t
+    from paysignal import news as N
+    old = [{"slug": "a", "title": "Old one", "published_at": _t.time() - 10 * 86400, "updated_at": 0},
+           {"slug": "b", "title": "Older", "published_at": _t.time() - 20 * 86400, "updated_at": 0}]
+    x = N.news_sitemap("https://x", old)
+    assert x.count("<url>") == 1 and "/news/a</loc>" in x
+    new = old + [{"slug": "c", "title": "New", "published_at": _t.time() - 3600, "updated_at": 0}]
+    y = N.news_sitemap("https://x", new)
+    assert y.count("<url>") == 1 and "/news/c</loc>" in y
+    assert "<url>" not in N.news_sitemap("https://x", [])
