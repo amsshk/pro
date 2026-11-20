@@ -34,7 +34,7 @@ def test_check_link_shows_totals_only_and_expires(app):
     page = c.get(link.replace("https://pro.example.net", ""))
     body = page.get_data(as_text=True)
     assert page.status_code == 200 and "noindex" in page.headers["X-Robots-Tag"] and page.headers["Cache-Control"] == "no-store"
-    assert "Meta accepted 2 of 2 paid orders (100%)" in body and "350" in body
+    assert "Sent live to Meta: 2 accepted" in body and "350" in body
     assert "secret.buyer" not in body and "A1" not in body and "owner@glow.ae" not in body
     assert c.get("/check/wrong-token").status_code == 404
     assert c.post("/admin/pro/check-link/glow-clinic", headers=ADMIN, json={"cancel": True}).json["cancelled"] == 1

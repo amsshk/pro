@@ -137,21 +137,17 @@ def build(db, client_id: str, purchases, refunded: Callable, tz: str = "Asia/Dub
 
 
 def verdict(d: dict) -> str:
+    """Plain counts (sends can include orders from before the 7 days, so no percentages), plus the one problem to fix."""
     t = d["totals"]
-    if not t["orders"]:
-        return ("ProAds received no paid orders in the last 7 days. If the shop did sell, the sales aren't reaching ProAds: "
-                "check the Shopify connection below.")
-    parts = []
-    if d["meta_connected"]:
-        share = t["meta_accepted"] / t["orders"] if t["orders"] else 0
-        parts.append(f"Meta accepted {t['meta_accepted']} of {t['orders']} paid orders ({round(min(share, 1) * 100)}%).")
-    else:
-        parts.append("Meta isn't sending live sales.")
-    if d["tiktok_connected"]:
-        share = t["tiktok_accepted"] / t["orders"] if t["orders"] else 0
-        parts.append(f"TikTok accepted {t['tiktok_accepted']} of {t['orders']} ({round(min(share, 1) * 100)}%).")
-    if t["practice"]:
-        parts.append(f"{t['practice']} were sent in practice mode only (Meta Test events), not to the ads.")
+    parts = [f"ProAds received {t['orders']} paid order{'s' if t['orders'] != 1 else ''} in the last 7 days.",
+             f"Sent live to Meta: {t['meta_accepted']} accepted.", f"TikTok accepted: {t['tiktok_accepted']}."]
+    last = d["days"][-1], d["days"][-2]
+    if any(r["practice"] for r in last) and not any(r["meta_accepted"] for r in last):
+        parts.append("PROBLEM: the latest sales went to Meta in practice mode only (not to the ads), so ProAds has no "
+                     "working Meta connection for this business. Reconnect the Meta Pixel in Connect & upload; the waiting "
+                     "sales are then sent (Meta takes sales up to 7 days old).")
+    elif not t["orders"]:
+        parts.append("If the shop did sell, the sales aren't reaching ProAds: check the Shopify connection below.")
     return " ".join(parts)
 
 
