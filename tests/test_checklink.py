@@ -62,3 +62,10 @@ def test_check_page_shows_shopify_webhooks(app):
     link = c.post("/admin/pro/check-link/glow-clinic", headers=ADMIN, json={}).json["link"]
     body = c.get(link.replace("https://pro.example.net", "")).get_data(as_text=True)
     assert "0 accepted, 1 rejected" in body and "no signing key saved" in body and "Shopify app: not connected" in body
+
+
+def test_check_page_second_address(app):
+    c = app.test_client()
+    c.post("/auth/signup", json=ACCT)
+    link = c.post("/admin/pro/check-link/glow-clinic", headers=ADMIN, json={}).json["link"]
+    assert c.get(link.replace("https://pro.example.net/check/", "/tracking-check/")).status_code == 200

@@ -4429,6 +4429,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         return {"link": f"{public_base()}/check/{token}", "expires_at": exp}
 
     @flask.get("/check/<token>")
+    @flask.get("/tracking-check/<token>")      # same page; some readers saved an older robots.txt that blocked /check/
     def check_page(token):
         with state.lock:
             client_id = state.check_links.resolve(token)
