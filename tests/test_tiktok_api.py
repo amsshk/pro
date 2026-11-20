@@ -162,6 +162,7 @@ def test_publish_creates_campaign_off_with_tracking_link_and_rolls_back_on_failu
     assert calls["campaign/create"]["operation_status"] == "DISABLE" and calls["campaign/create"]["objective_type"] == "WEB_CONVERSIONS"
     g = calls["adgroup/create"]
     assert g["pixel_id"] == "777" and g["optimization_event"] == "ON_WEB_CART" and g["location_ids"] == ["290557"] and g["budget"] == 100
+    assert g["skip_learning_phase"] is False                            # TikTok must learn who buys
     assert [x["call_to_action"] for x in calls["ad/create"]["creatives"]] == ["SHOP_NOW", "SHOP_NOW"]    # BUY_NOW isn't a TikTok button
     cr = calls["ad/create"]["creatives"][0]
     assert "utm_source=tiktok" in cr["landing_page_url"] and cr["video_id"] == "V1" and cr["image_ids"] == ["I1"] and cr["identity_id"] == "ID1"

@@ -413,7 +413,8 @@ def publish(http, token: str, advertiser_id: str, plan: dict, videos: dict, land
                     "bid_type": "BID_TYPE_NO_BID", "budget_mode": "BUDGET_MODE_DAY", "budget": round(total * share, 2),
                     "schedule_type": "SCHEDULE_FROM_NOW",
                     "schedule_start_time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-                    "pacing": "PACING_MODE_SMOOTH", "operation_status": "ENABLE"}
+                    "pacing": "PACING_MODE_SMOOTH", "operation_status": "ENABLE",
+                    "skip_learning_phase": False}       # always learn: skipping it leaves TikTok with no buyer signal
             if ages:
                 body["age_groups"] = ages
             g = _post(http, token, "adgroup/create", body, f"creating ad group {i + 1}")

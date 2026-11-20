@@ -2692,8 +2692,10 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     };
     api("/tiktok/" + cid() + "/pixels").then((d) => {
       if (!d.pixels.length) { manualPixel("TikTok shows no Pixel in this ad account."); return; }
-      pixelSel.replaceChildren(...d.pixels.map((p) => h("option", { value: p.pixel_id }, (p.name || "Pixel") + " · " + p.code +
+      pixelSel.replaceChildren(...d.pixels.map((p) => h("option", { value: p.pixel_id, selected: p.code === d.receives_sales }, (p.name || "Pixel") + " · " + p.code +
         (p.code === d.receives_sales ? " · gets ProAds' verified sales" : ""))));
+      const good = d.pixels.find((p) => p.code === d.receives_sales);      // default to the Pixel ProAds sends real sales to
+      if (good) pixelSel.value = good.pixel_id;
     }).catch((e) => manualPixel(e.message));
     const pixelValue = () => (pixelIn.hidden ? pixelSel.value : pixelIn.value.replace(/\D/g, ""));
     sets.forEach((s, i) => (Array.isArray(s.ads) ? s.ads : []).forEach((ad, j) => {
