@@ -244,3 +244,17 @@ def test_premium_from_a_product_id(monkeypatch):
     assert billing.premium_price_id(S()) == "price_prem_799"
     assert billing.tier_of_price("price_prem_799") == "premium"          # cached: no second lookup
     assert billing.tier_of_price("price_pro") == "pro"
+
+
+def test_admin_gives_one_more_ad_test_day(tmp_path, monkeypatch):
+    import time as _t
+    from paysignal.server import create_app
+    monkeypatch.setenv("PROADS_ADS_TRIAL_DAYS", "3")
+    app = create_app({"pro": {"api_key": "admin-key-0123456789abc"}}, str(tmp_path / "b.db"), start_worker=False)
+    c = app.test_client()
+    c.post("/auth/signup", json={"business": "Glow Clinic", "email": "o@glow.ae", "password": "first-password-1", "terms": True, "phone": "0501234567"})
+    st = app.extensions["paysignal"]
+    st.billing.upsert("glow-clinic", ads_trial_started=int(_t.time()) - 10 * 86400)     # test ended a week ago
+    assert not st.billing.ads_access("glow-clinic")["allowed"]
+    r = c.post("/admin/pro/ads-trial/glow-clinic", headers={"X-API-Key": "admin-key-0123456789abc"}, json={"days": 1}).json
+    assert r["allowed"] and r["in_trial"] and 0.9 * 86400 < r["trial_ends"] - _t.time() <= 86400 + 5

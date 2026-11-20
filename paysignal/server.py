@@ -4398,6 +4398,21 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         log.info("admin %s made a reset link for %s", admin_id, client_id)
         return {"link": reset_link(token), "expires_in_minutes": 60}
 
+    @flask.post("/admin/<admin_id>/ads-trial/<client_id>")
+    def admin_ads_trial(admin_id, client_id):
+        """Give a business extra days of the free ad test (1 by default, up to 30)."""
+        require_admin(admin_id)
+        if state.clients.get(client_id) is None and not state.accounts.get(client_id):
+            abort(404, "unknown account")
+        try:
+            days = float((request.get_json(silent=True) or {}).get("days") or 1)
+        except (TypeError, ValueError):
+            abort(400, "days must be a number")
+        with state.lock:
+            a = state.billing.extend_ads_trial(client_id, days)
+        log.info("admin %s gave %s %.1f more ad-test days", admin_id, client_id, days)
+        return a
+
     @flask.post("/admin/<admin_id>/check-link/<client_id>")
     def admin_check_link(admin_id, client_id):
         """A private read-only page of one business's tracking totals (no customer details) for 24 hours, for

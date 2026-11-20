@@ -296,6 +296,16 @@ class BillingStore:
         if not (self.get(client_id) or {}).get("ads_trial_started"):
             self.upsert(client_id, ads_trial_started=int(time.time()))
 
+    def extend_ads_trial(self, client_id: str, days: float) -> dict:
+        """Admin: give a business more free ad-test time. The test then ends `days` from now (or from its current
+        end, if that is later)."""
+        days = max(0.0, min(float(days), 30.0))
+        now = int(time.time())
+        cur = self.ads_access(client_id)
+        base = max(now, cur["trial_ends"] or 0)
+        self.upsert(client_id, ads_trial_started=int(base + days * 86400 - ads_trial_days() * 86400))
+        return self.ads_access(client_id)
+
     def ads_access(self, client_id: str) -> dict:
         b = self.get(client_id) or {}
         plan = b.get("status") in ACTIVE
