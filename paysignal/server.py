@@ -3806,7 +3806,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     @flask.get("/robots.txt")
     def robots_txt():
         b = public_base()
-        return html_resp(f"User-agent: *\nAllow: /\nDisallow: /app\nDisallow: /admin/\nDisallow: /check/\n\nSitemap: {b}/sitemap.xml\nSitemap: {b}/news-sitemap.xml\n",
+        return html_resp(f"User-agent: *\nAllow: /\nDisallow: /app\nDisallow: /admin/\n\nSitemap: {b}/sitemap.xml\nSitemap: {b}/news-sitemap.xml\n",
                          "text/plain; charset=utf-8", cache=3600)
 
     @flask.get("/manifest.webmanifest")

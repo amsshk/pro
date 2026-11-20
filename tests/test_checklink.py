@@ -49,7 +49,7 @@ def test_check_link_expired(app):
     db.execute("UPDATE check_links SET expires_at=?", (int(time.time()) - 1,))
     db.commit()
     assert c.get(link.replace("https://pro.example.net", "")).status_code == 404
-    assert "/check/" in c.get("/robots.txt").get_data(as_text=True)
+    assert "/check/" not in c.get("/robots.txt").get_data(as_text=True)   # noindex header + meta keep it off Google; readers can open it
 
 
 def test_check_page_shows_shopify_webhooks(app):
