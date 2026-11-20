@@ -1441,12 +1441,16 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
               h("button", { class: "btn btn-primary", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => viewBusiness(a.client_id) }, "Open"),
               h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => makeLink(a) }, "Reset link"),
               h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => checkLink(a) }, "Check link"),
-              h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: async (ev) => {
-                const b = ev.currentTarget; b.disabled = true;
-                try { const r = await api("/admin/" + cid() + "/ads-trial/" + encodeURIComponent(a.client_id), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ days: 1 }) });
-                  toast(a.name + " can run ads until " + new Date(r.trial_ends * 1000).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })); }
-                catch (e) { if (e.message !== "signed out") toast(e.message); }
-                b.disabled = false; } }, "+1 ad day"), delButton(a))))))))
+              (() => {
+                const n = h("input", { type: "number", min: "1", max: "30", value: "7", "aria-label": "Ad test days to add", style: "width:56px;min-height:36px" });
+                const b = h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: async () => {
+                  b.disabled = true;
+                  try { const r = await api("/admin/" + cid() + "/ads-trial/" + encodeURIComponent(a.client_id), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ days: Number(n.value) || 7 }) });
+                    toast(a.name + " can run ads until " + new Date(r.trial_ends * 1000).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) + ". Ask them to refresh ProAds."); }
+                  catch (e) { if (e.message !== "signed out") toast(e.message); }
+                  b.disabled = false; } }, "Give ad days");
+                return h("span", { style: "display:inline-flex;gap:4px;align-items:center" }, n, b);
+              })(), delButton(a))))))))
           : h("p", { class: "sub", style: "margin:0" }, "No one has signed up yet. Share pro.ezdevsoft.net or start your first ad.")));
   }
 
