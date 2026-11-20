@@ -243,9 +243,17 @@ def build_campaign(ai: MetaAI, context: dict, daily_budget: float, goal: str = "
         for s_ in plan.get("ad_sets") or []:             # TikTok ads have a hook, not a headline: fill it first
             for ad in s_.get("ads") or []:
                 ad.setdefault("headline", ad.get("hook") or "")
+    notes = []
+    try:                                                   # the budget box is the limit: an AI that copied a bigger
+        if daily_budget and float(plan.get("daily_budget") or 0) > daily_budget * 1.001:   # number from the notes is
+            notes.append(f"Budget set to {daily_budget:g} a day, the amount in the budget box (the plan asked for "   # brought back,
+                         f"{float(plan['daily_budget']):g}). Change the budget box and build again to spend more.")    # not blocked
+            plan["daily_budget"] = daily_budget
+    except (TypeError, ValueError):
+        pass
     problems = validate_campaign(plan, daily_budget)
     if not problems:
         plan = tidy_tiktok(plan) if tiktok else tidy_plan(plan, conversion)
         plan["currency"] = brief["currency"]
-    return {"plan": plan, "problems": problems, "model": reply.model, "landing_url": landing_url,
+    return {"plan": plan, "problems": problems, "notes": notes, "model": reply.model, "landing_url": landing_url,
             "cost_usd": reply.cost_usd, "status": "draft - review before launching"}

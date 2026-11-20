@@ -174,3 +174,10 @@ def test_billing_problem_stops_immediately():
     with pytest.raises(PermissionError, match="billing"):
         MetaAI(api_key="k", session=s).chat("chat", [{"role": "user", "content": "x"}])
     assert len(s.calls) == 1
+
+
+def test_plan_over_the_budget_box_is_brought_back_not_blocked(context):
+    s = Session(lambda m, b: ok(json.dumps(good_plan(250))))
+    out = build_campaign(MetaAI(api_key="k", session=s), context, daily_budget=150)
+    assert out["problems"] == [] and out["plan"]["daily_budget"] == 150
+    assert "budget box" in out["notes"][0]

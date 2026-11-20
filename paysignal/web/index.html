@@ -2349,6 +2349,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         r.problems && r.problems.length
           ? h("span", { style: "color: var(--amber-txt); font-size:13px; font-weight:600" }, "Check before using: " + r.problems.join("; "))
           : h("span", { style: "color: var(--violet-txt); font-size:13px; font-weight:600" }, "Checks passed: within budget, splits add up")),
+      (r.notes || []).map((n) => h("span", { style: "color: var(--amber-txt); font-size:13px" }, n)),
       organicSection(p.organic_plan, r.landing_url),
       r.problems && r.problems.length ? null : ((p.platform === "tiktok" || r.platform === "tiktok") ? tiktokPublishSection(r, sets) : publishSection(r, sets)));
   }
