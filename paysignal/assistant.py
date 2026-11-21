@@ -101,9 +101,18 @@ SYSTEM_TIKTOK = (
     "no hashtag spam, at most 2 hashtags), video_brief = what the video should show (for the business to film or "
     "to pick from its videos), call_to_action one of: SHOP_NOW, ORDER_NOW, LEARN_MORE.\n"
     "- Native TikTok style: people, hands, real use, unboxing, before/after, a reason to buy now. No TV-ad tone.\n"
-    "- Optimisation event: 'purchase' if the business has about 25+ verified purchases a week, otherwise "
-    "'add_to_cart' (TikTok needs enough events to learn). Say which and why in rationale.\n"
-    "- 1 ad group (2 only with a big budget), 2-3 ads each, broad targeting: TikTok finds the people.\n"
+    "- Optimisation event: if the notes ask for purchases, use 'purchase'. Otherwise 'purchase' when the business has "
+    "about 20+ verified purchases a week or the daily budget is at least the budget_needed_for_learning in the data; "
+    "below that 'checkout' (checkout started, the closest step to a purchase) so TikTok has enough events to learn. "
+    "Say which and why in rationale, with the numbers.\n"
+    "- Structure: ONE ad group for new buyers (all the budget, so it learns in one place), broad targeting. A second "
+    "ad group only for retargeting and only with a bigger budget; then its name must start with 'RT'. Never split new-buyer "
+    "budget across several ad groups or campaigns.\n"
+    "- 3-5 clearly different ads (different hook, person, angle or format) in that ad group, plus the business's best "
+    "organic posts as Spark Ads when they exist (source_post_id). TikTok needs variety to find what sells.\n"
+    "- When the data has the price, free delivery or instalments (Tabby/Tamara), say them in the first seconds or the "
+    "caption: buyers who know the price before clicking are the ones who pay. Never invent any of them.\n"
+    "- Learning is ON (never 'skip learning'). Tell the business not to edit the ad group for 7 days after launch.\n"
     "- Build on proven winners in the data; anything not proven is labelled a test. Avoid what lost money.\n"
     "- Never invent prices, results, reviews, discounts or numbers that are not in the data.\n"
     "- Write the ads in English unless the notes ask for Arabic (then Arabic).\n"
@@ -111,7 +120,7 @@ SYSTEM_TIKTOK = (
     "- organic_plan: 5-7 posts for the next 7 days (TikTok first, Instagram Reels too) that test different hooks; "
     "each asks people to use its own link or code (ProAds creates them).\n"
     "Reply with only a JSON object in this shape:\n"
-    '{"name": str, "objective": "WEB_CONVERSIONS", "optimization": "purchase" or "add_to_cart", "daily_budget": number, '
+    '{"name": str, "objective": "WEB_CONVERSIONS", "optimization": "purchase" or "checkout" or "add_to_cart", "daily_budget": number, '
     '"currency": str, "rationale": str, "targeting": {"countries": [two-letter codes], "age_min": number}, '
     '"ad_sets": [{"name": str, "audience": str, "budget_share": number, "placements": "TikTok", '
     '"ads": [{"source_post_id": str or null, "format": "video", "hook": str, "video_brief": str, '
@@ -200,7 +209,8 @@ def tidy_plan(plan: dict, conversion: str) -> dict:
 def tidy_tiktok(plan: dict) -> dict:
     plan["objective"] = "WEB_CONVERSIONS"
     plan["platform"] = "tiktok"
-    plan["optimization"] = "purchase" if str(plan.get("optimization")).lower() == "purchase" else "add_to_cart"
+    o = str(plan.get("optimization")).lower()
+    plan["optimization"] = o if o in ("purchase", "checkout", "add_to_cart") else "purchase"
     t = plan.get("targeting") if isinstance(plan.get("targeting"), dict) else {}
     countries = [c.upper() for c in t.get("countries") or [] if isinstance(c, str) and len(c) == 2] or ["AE"]
     try:

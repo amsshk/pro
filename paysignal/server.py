@@ -3050,6 +3050,17 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                     sp = state.windsor.spend_by_ad(client_id, (datetime.now(timezone.utc) - timedelta(days=90)).date().isoformat())
                 if sp:
                     ctx["tiktok_ads_last_90_days"] = [{k: a[k] for k in ("campaign", "ad_name", "spend", "clicks", "impressions")} for a in sp][:20]
+                hit = state.ads_cache.get(("results", client_id))      # what learning needs, from ProAds' own numbers (Home)
+                res = hit[1] if hit else None
+                wk = datetime.now(timezone.utc) - timedelta(days=7)
+                with state.lock:
+                    eng = state.engine(client_id)
+                    paid7 = sum(1 for p in eng.store.purchases(client_id) if p.occurred_at >= wk
+                                and p.amount - eng.store.refunded_amount(client_id, p.external_id) > 0.005)
+                ctx["verified_paid_orders_last_7_days"] = paid7
+                if res and res.get("cost_per_order"):
+                    ctx["cost_per_paid_order_from_proads_campaigns"] = res["cost_per_order"]
+                    ctx["budget_needed_for_learning"] = res.get("learning_budget")
             out = build_campaign(ai, ctx, budget, body.get("goal", ""), body.get("notes", ""),
                                  conversion=conversion, product=product, landing_url=landing,
                                  budget_currency=budget_currency, platform=platform)
@@ -3118,7 +3129,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 videos[k] = {"url": v["video_url"]}
         try:
             launch = tiktok_api.publish(tt_http(), tt_token(client_id, row), row["advertiser_id"], plan, videos, landing, pixel_id,
-                                        str(body.get("event") or plan.get("optimization") or "add_to_cart"),
+                                        str(body.get("event") or plan.get("optimization") or "purchase"),
                                         state.config(client_id).get("name", ""))
         except tiktok_api.TikTokAPIError as e:
             abort(502, str(e))

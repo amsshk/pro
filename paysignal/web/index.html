@@ -2795,9 +2795,27 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     const landing = h("input", { id: "tt-url", value: r.landing_url || "", placeholder: "https://your-website.com", required: true });
     const pixelSel = h("select", { "aria-label": "Pixel" }, h("option", { value: "" }, "Loading your Pixels…"));
     const eventSel = h("select", { "aria-label": "Optimise for" },
-      h("option", { value: "add_to_cart", selected: r.plan.optimization !== "purchase" ? true : null }, "Add to cart (best until you have ~25+ purchases a week)"),
-      h("option", { value: "checkout" }, "Checkout started"),
-      h("option", { value: "purchase", selected: r.plan.optimization === "purchase" ? true : null }, "Purchase"));
+      h("option", { value: "purchase", selected: r.plan.optimization === "purchase" ? true : null }, "Purchase (real paid orders)"),
+      h("option", { value: "checkout", selected: r.plan.optimization === "checkout" ? true : null }, "Checkout started (until ~20 purchases a week)"),
+      h("option", { value: "add_to_cart", selected: r.plan.optimization === "add_to_cart" ? true : null }, "Add to cart"));
+    // ProAds' verified-sales Pixel only receives Purchase. Checkout / add to cart come from the website's own Pixel
+    // (e.g. TikTok's Shopify app), so the Pixel follows the event: otherwise the campaign would have nothing to learn from.
+    const pixelNote = h("span", { class: "small", style: "color: var(--muted)" });
+    let pixelInfo = null;
+    const pickPixel = () => {
+      if (!pixelInfo || pixelIn.hidden === false) return;
+      const verified = pixelInfo.pixels.find((p) => p.code === pixelInfo.receives_sales);
+      const site = pixelInfo.pixels.find((p) => p.code !== pixelInfo.receives_sales);
+      if (eventSel.value === "purchase") {
+        if (verified) pixelSel.value = verified.pixel_id;
+        pixelNote.textContent = verified ? "Purchase uses the Pixel that gets ProAds' verified paid orders." : "";
+      } else {
+        if (site) pixelSel.value = site.pixel_id;
+        pixelNote.textContent = site ? "Checkout and add to cart come from your website's Pixel, so that one is used. Switch to Purchase once you reach ~20 purchases a week."
+          : "Your website has no other TikTok Pixel sending checkouts, so use Purchase.";
+      }
+    };
+    eventSel.addEventListener("change", pickPixel);
     // if TikTok won't list the Pixels, the owner types the Pixel's number (Events Manager shows it next to the name)
     const pixelIn = h("input", { inputmode: "numeric", placeholder: "Pixel number, e.g. 7672779598821212178", "aria-label": "Pixel number", hidden: true });
     const pixelErr = h("span", { class: "small", style: "color:var(--amber)" });
@@ -2809,8 +2827,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       if (!d.pixels.length) { manualPixel("TikTok shows no Pixel in this ad account."); return; }
       pixelSel.replaceChildren(...d.pixels.map((p) => h("option", { value: p.pixel_id, selected: p.code === d.receives_sales }, (p.name || "Pixel") + " · " + p.code +
         (p.code === d.receives_sales ? " · gets ProAds' verified sales" : ""))));
-      const good = d.pixels.find((p) => p.code === d.receives_sales);      // default to the Pixel ProAds sends real sales to
-      if (good) pixelSel.value = good.pixel_id;
+      pixelInfo = d; pickPixel();
     }).catch((e) => manualPixel(e.message));
     const pixelValue = () => (pixelIn.hidden ? pixelSel.value : pixelIn.value.replace(/\D/g, ""));
     sets.forEach((s, i) => (Array.isArray(s.ads) ? s.ads : []).forEach((ad, j) => {
@@ -2888,7 +2905,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     return h("div", { class: "adset", style: "gap:12px" },
       h("b", {}, "Publish to TikTok"),
       h("label", { class: "f", for: "tt-url" }, "Page the ads open (ProAds adds its TikTok tracking tags)", landing),
-      h("div", { class: "grid2" }, h("label", { class: "f" }, "Pixel", pixelSel, pixelIn, pixelErr), h("label", { class: "f" }, "Optimise for", eventSel)),
+      h("div", { class: "grid2" }, h("label", { class: "f" }, "Pixel", pixelSel, pixelIn, pixelErr), h("label", { class: "f" }, "Optimise for", eventSel)), pixelNote,
       h("p", { class: "sub", style: "margin:0;font-size:13px" }, "Every TikTok ad is a vertical video (9:16, 9–30 seconds works best). Choose one per ad; the line under each says what the AI suggests filming."),
       upBar, h("div", { style: "display:flex;gap:14px;flex-wrap:wrap" }, cards), btn, box);
   }
