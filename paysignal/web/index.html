@@ -709,7 +709,6 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   const NAV = [
     ["#/home", "Home", "M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"],
     ["#/assistant", "Campaigns", "M4 5h16v11H8l-4 4z"],
-    ["#/details", "Details", "M4 19V5M4 19h16M8 15V11M12 15V8M16 15v-5"],
     ["#/upload", "Connect", "M12 16V4M6 10l6-6 6 6M4 20h16"],
     ["#/competitors", "Competitor X-ray", "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM16 16l5 5M8 11h6M11 8v6", "Premium"],
   ];
@@ -748,7 +747,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
             NAV_MORE.map(([href, label, d]) => h("a", { href, "aria-current": href === active ? "page" : null }, icon(d), label)))),
         h("div", { class: "statusbox" }, statusRows(), themeToggle(),
           h("button", { class: "btn btn-ghost", style: "margin-top:6px", onclick: () => signOut() }, "Sign out"),
-          h("a", { href: "#/details", class: "small", style: "margin-top:4px;color: var(--muted);text-decoration:none", onclick: () => { try { localStorage.removeItem("proads.seen2"); } catch (e) {} } }, "ProAds " + PROADS_VERSION + " · What's new"))),
+          h("a", { href: "#/home", class: "small", style: "margin-top:4px;color: var(--muted);text-decoration:none", onclick: () => { try { localStorage.removeItem("proads.seen2"); } catch (e) {} } }, "ProAds " + PROADS_VERSION + " · What's new"))),
       mobileTop(),
       h("main", {}, h("div", { class: "wrap" }, ...(status && status.viewer ? [h("div", { class: "viewbar", role: "status" },
         h("span", {}, "You're viewing ", h("b", {}, status.name), " as admin · view only (you can connect their Facebook with your own login)"),
@@ -757,14 +756,14 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   }
 
   // ---------- iPhone navigation ----------
-  const TABS = [["#/home", "Home", NAV[0][2]], ["#/assistant", "Campaigns", NAV[1][2]], ["#/details", "Details", NAV[2][2]], ["#/upload", "Connect", NAV[3][2]]];
+  const TABS = [["#/home", "Home", NAV[0][2]], ["#/assistant", "Campaigns", NAV[1][2]], ["#/upload", "Connect", NAV[2][2]], ["#/audit", "Audit", NAV_MORE[0][2]]];
   function mobileTop() {
     return h("header", { class: "topbar" }, h("a", { class: "brand", href: "#/home", style: "text-decoration:none" }, logo(), "ProAds"),
       h("span", { class: "bizname" }, status ? status.name : session.client));
   }
   function mobileTabs(active) {
     const extra = status && status.admin ? [["#/admin", "Admin", "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"]] : [["#/billing", "Plan & billing", "M3 7h18v10H3zM3 11h18"]];
-    const rest = NAV.filter(([href]) => !TABS.some((t) => t[0] === href)).concat(NAV_MORE, extra);
+    const rest = NAV.concat(NAV_MORE).filter(([href]) => !TABS.some((t) => t[0] === href)).concat(extra);
     const inMore = rest.some(([href]) => href === active);
     const bg = h("div", { class: "sheet-bg", onclick: () => close() });
     const sheet = h("div", { class: "sheet", role: "dialog", "aria-label": "More" });
@@ -777,7 +776,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         ...rest.map(([href, label, d, tag]) => h("a", { href, "aria-current": href === active ? "page" : null, onclick: close }, icon(d), label, tag ? h("span", { class: "navtag", style: "margin-left:auto" }, tag) : null)),
         h("div", { class: "sect" }, "Settings"), h("div", { style: "padding:4px 10px" }, themeToggle()),
         h("button", { class: "row-btn", type: "button", onclick: () => { close(); signOut(); } }, icon("M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 17l5-5-5-5M15 12H3"), "Sign out"),
-        h("a", { class: "row-btn", href: "#/details", onclick: () => { close(); try { localStorage.removeItem("proads.seen2"); } catch (e) {} } }, icon("M12 3l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5z"), "ProAds " + PROADS_VERSION + " · What's new"));
+        h("a", { class: "row-btn", href: "#/home", onclick: () => { close(); try { localStorage.removeItem("proads.seen2"); } catch (e) {} } }, icon("M12 3l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5z"), "ProAds " + PROADS_VERSION + " · What's new"));
       bg.classList.add("open"); sheet.classList.add("open"); document.body.style.overflow = "hidden";
     };
     const tabs = h("nav", { class: "tabbar", "aria-label": "Main" },
@@ -4299,7 +4298,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   }
 
   async function viewDetails(_params, asHome) {
-    const here = asHome ? "#/home" : "#/details";
+    const here = "#/home";
     const body = h("div", { style: "display:contents" }, loading());
     const periods = h("div", { class: "periods", role: "group", "aria-label": "Time period" }, PERIOD_LABELS.map(([v, label]) =>
       h("button", { type: "button", "aria-pressed": v === homePeriod ? "true" : "false", onclick: () => {
@@ -4323,13 +4322,15 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       h("div", { class: "dlpop" }, dlBtn("pdf", "PDF report"), dlBtn("xlsx", "Excel (.xlsx)"), dlBtn("csv", "CSV (orders)")));
     root.replaceChildren(layout(here, [
       h("header", { class: "between homehead", style: "align-items:flex-end;flex-wrap:wrap;gap:12px" },
-        h("div", {}, h("h1", {}, asHome ? "Home" : "Details"), h("p", { class: "sub" }, asHome ? "Compared with the previous period" : "Everything in detail, compared with the previous period")),
+        h("div", {}, h("h1", {}, "Home"), h("p", { class: "sub" }, "Sales compared with the previous period")),
         h("div", { class: "homectl", style: "display:flex;gap:10px;align-items:center;flex-wrap:wrap;min-width:0;max-width:100%" }, periods, download)),
       body]));
-    let d;
-    try { d = await api("/dashboard/" + cid() + "?period=" + encodeURIComponent(homePeriod)); }
+    let d, res = null;
+    try { [d, res] = await Promise.all([api("/dashboard/" + cid() + "?period=" + encodeURIComponent(homePeriod)),
+                                       api("/proads-results/" + cid()).catch(() => null)]); }
     catch (e) { if (e.message !== "signed out") body.replaceChildren(errorCard(e.message)); return; }
     const cur = d.currency;
+    const hero = d.mode !== "proads" && res && !res.error ? resultsHero(res, status ? status.name : session.client) : null;
     const doneN = (d.setup || []).filter((x) => x.done).length;
     const guide = !d.setup || doneN === d.setup.length ? null : h("section", { class: "card", "aria-labelledby": "guide-h" },
       h("div", { class: "between" }, h("h2", { id: "guide-h" }, "Setup guide"), h("span", { class: "sub", style: "font-size:13px" }, doneN + " of " + d.setup.length + " done")),
@@ -4340,7 +4341,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("span", { class: "sr" }, x.done ? "done" : "to do")))));
     if (d.mode !== "proads" && !d.has_data) {
       const [adsEmpty, leadsEmpty] = await Promise.all([adsSection(homePeriod), leadsCard()]);
-      body.replaceChildren(...[adsBanner(d.ads_access), guide, adsEmpty, leadsEmpty].filter(Boolean), h("section", { class: "card empty" }, h("h2", {}, "Your sales will show here"),
+      body.replaceChildren(...[adsBanner(d.ads_access), hero, guide, adsEmpty, leadsEmpty].filter(Boolean), h("section", { class: "card empty" }, h("h2", {}, "Your sales will show here"),
         h("p", { class: "sub" }, "Bring in your sales and this page fills with sales, real profit and orders, day by day."),
         h("a", { class: "btn btn-primary", href: "#/upload" }, "Bring in your sales")));
       return;
@@ -4414,8 +4415,8 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         + (lk.at_stake_per_month ? (lk.measured_per_month ? ", " : "") + "up to " + fmt.format(Math.round(lk.at_stake_per_month)) + " " + lk.currency + " more at stake" : "")
         + ". Biggest: " + lk.leaks[0].title + "."), h("span", { class: "ok" }, "See all →")) : null;
     body.replaceChildren(
-      ...[adsBanner(d.ads_access), leakNote].filter(Boolean),
-      ...[asHome ? null : whatsNewCard()].filter(Boolean), strip, profitNote(d), ...[impactBox].filter(Boolean), adsBox,
+      ...[adsBanner(d.ads_access), leakNote, hero, whatsNewCard()].filter(Boolean),
+      h("h2", { style: "font-size:20px;margin:8px 0 -8px" }, "Sales"), strip, profitNote(d), ...[impactBox].filter(Boolean), adsBox,
       h("section", { class: "card", "aria-label": "Chart" },
         h("div", { class: "between" }, h("h2", {}, label + " over time"),
           h("div", { style: "display:flex;gap:14px" }, h("span", { class: "key" }, h("i"), "This period"), h("span", { class: "key" }, h("i", { class: "prev" }), "Previous period"))),
@@ -4423,7 +4424,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       ...[fcBox].filter(Boolean),
       h("div", { class: "row", style: "align-items:flex-start" },
         h("div", { style: "flex:3 1 420px;display:flex;flex-direction:column;gap:24px;min-width:0" }, ...[sources, leadsBox, methodsCard, products].filter(Boolean)),
-        h("div", { style: "flex:2 1 300px;display:flex;flex-direction:column;gap:24px;min-width:0" }, asHome ? guide : null, camps)));
+        h("div", { style: "flex:2 1 300px;display:flex;flex-direction:column;gap:24px;min-width:0" }, guide, camps)));
     draw();
     let lastW = chartHost.clientWidth, timer = null;
     const onResize = () => {
@@ -4435,7 +4436,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     strip.addEventListener("click", () => { const t = body.querySelector("section[aria-label=Chart] h2"); if (t) t.textContent = (M[homeMetric] || M.sales).label + " over time"; });
   }
 
-  // ---------- Home: only what ProAds did, since the business joined (the details live on #/details) ----------
+  // ---------- Home: ProAds results first, then the sales details ----------
   function setupGuide(d) {
     const doneN = (d.setup || []).filter((x) => x.done).length;
     if (!d.setup || doneN === d.setup.length) return null;
@@ -4478,19 +4479,8 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("div", { class: "bggrid" }, bg.map(([t, v, why]) => h("div", {}, h("span", { style: "font-weight:600" }, t), h("b", { style: "font-size:18px" }, v), h("span", { class: "sub", style: "font-size:12px" }, why))))) : null,
       h("span", { class: "sub", style: "font-size:12px" }, "Paid orders from tracked ad clicks only, refunds deducted."));
   }
-  async function viewHome() {
-    const name = status ? status.name : session.client;
-    const body = h("div", { style: "display:contents" }, loading());
-    root.replaceChildren(layout("#/home", [h("header", {}, h("h1", {}, "Home")), body]));
-    let d, r;
-    try { [d, r] = await Promise.all([api("/dashboard/" + cid() + "?period=30"), api("/proads-results/" + cid()).catch((e) => ({ error: e.message }))]); }
-    catch (e) { if (e.message !== "signed out") body.replaceChildren(errorCard(e.message)); return; }
-    if (d.mode === "proads") return viewDetails(null, true);          // ProAds' own admin home keeps the full view
-    const more = h("section", { class: "card", style: "gap:10px" },
-      h("div", { class: "between" }, h("h2", {}, "Details"), h("a", { class: "btn btn-ghost", href: "#/details" }, "Open")),
-      h("p", { class: "sub", style: "margin:0;font-size:14px" }, "Sales trend, ad results, products, forecast."));
-    body.replaceChildren(...[adsBanner(d.ads_access), r.error ? errorCard(r.error) : resultsHero(r, name), setupGuide(d), more].filter(Boolean));
-  }
+  async function viewHome() { return viewDetails(null, true); }
+
 
   // ---------- where you sell: platforms by country ----------
   const P = {
@@ -4589,7 +4579,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   }
 
   // ---------- router ----------
-  const VIEWS = { "#/platforms": viewPlatforms, "#/home": viewHome, "#/details": viewDetails, "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling, "#/competitors": viewCompetitors, "#/engines": viewEngines, "#/learning": viewLearning, "#/buyers": viewBuyers, "#/experiments": viewExperiments, "#/funnel": viewFunnel, "#/followups": viewCompetitors };
+  const VIEWS = { "#/platforms": viewPlatforms, "#/home": viewHome, "#/details": viewHome, "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling, "#/competitors": viewCompetitors, "#/engines": viewEngines, "#/learning": viewLearning, "#/buyers": viewBuyers, "#/experiments": viewExperiments, "#/funnel": viewFunnel, "#/followups": viewCompetitors };
   function go(hash) { if (location.hash !== hash) location.hash = hash; else route(); }
   async function route() {
     const [path, query] = location.hash.split("?");
