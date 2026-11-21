@@ -46,7 +46,7 @@ from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
-from . import affiliates, audience_sync, checklink, audiences, digest, followups, impact, leads, results, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
+from . import affiliates, audience_sync, checklink, trial_mail, audiences, digest, followups, impact, leads, results, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
 from .identity import hash_phone, normalize_phone
 from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
@@ -196,6 +196,7 @@ class App:
         self.digests = digest.DigestStore(self.store.db)
         self.results = results.ResultStore(self.store.db)
         self.check_links = checklink.CheckLinkStore(self.store.db)
+        self.trial_mails = trial_mail.TrialMailStore(self.store.db)
         self.store.db.execute("CREATE TABLE IF NOT EXISTS meta_pixel_links (client_id TEXT PRIMARY KEY, pixel_id TEXT NOT NULL,"
                               " name TEXT, token_enc TEXT NOT NULL, added_at INTEGER NOT NULL)")
         self.store.db.commit()
@@ -2475,6 +2476,34 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             except Exception:
                 log.exception("morning summary failed for %s", cid)
     state.digest_all = digest_all
+
+    def trial_mail_all() -> None:
+        """Ad-test reminder emails: a day before the end, at the end, and 3 days after (no paid plan only)."""
+        if not mailer.available():
+            return
+        base = os.environ.get("PROADS_PUBLIC_URL", "").strip().rstrip("/") or "https://pro.ezdevsoft.net"
+        with state.lock:
+            rows = state.store.db.execute("SELECT client_id FROM billing WHERE ads_trial_started IS NOT NULL").fetchall()
+        for (cid,) in rows:
+            try:
+                if is_admin(cid):
+                    continue
+                with state.lock:
+                    acc = state.billing.ads_access(cid)
+                    kind = trial_mail.due(acc)
+                    if not kind or state.trial_mails.sent(cid, kind, acc["trial_ends"]):
+                        continue
+                    state.trial_mails.mark(cid, kind, acc["trial_ends"])          # once, even if sending fails
+                acct = state.accounts.get(cid)
+                email = (acct or {}).get("email") or state.config(cid).get("email")
+                if not email:
+                    continue
+                name = state.config(cid).get("name") or (acct or {}).get("business") or cid
+                mailer.send(email, *trial_mail.render(kind, name, plan_prices(), f"{billing.fee_percent():g}%", base))
+                log.info("sent ad-test %s email to %s", kind, cid)
+            except Exception:
+                log.exception("ad-test email failed for %s", cid)
+    state.trial_mail_all = trial_mail_all
 
     @flask.get("/digest/<client_id>")
     def digest_view(client_id):
@@ -6219,7 +6248,7 @@ def _start_worker(state: App, every: int) -> None:
                     state.enforce_ads_trials()
             except Exception:
                 log.exception("ad test check failed")
-            for job in ("sync_all_launch_status", "tiktok_push_all", "windsor_sync_all", "tiktok_ads_sync_all", "retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees", "audience_sync_all", "digest_all"):
+            for job in ("sync_all_launch_status", "tiktok_push_all", "windsor_sync_all", "tiktok_ads_sync_all", "retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees", "audience_sync_all", "digest_all", "trial_mail_all"):
                 try:
                     if getattr(state, job, None):
                         getattr(state, job)()
