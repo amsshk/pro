@@ -368,6 +368,27 @@ main{background:transparent}
   .settingsfold summary h2::after { content: " ▾"; color: var(--muted); font-size: 16px; }
   .settingsfold[open] summary h2::after { content: " ▴"; }
   .settingsfold .card { box-shadow: none; }
+.hiw{display:flex;flex-direction:column;gap:16px}
+.hiw-lane{border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.hiw-bad{background:var(--soft)}
+.hiw-good{background:var(--violet-card);border-color:var(--violet-edge)}
+.hiw-tag{font-weight:700;font-size:14px}
+.hiw-bad .hiw-tag{color:var(--muted)}
+.hiw-good .hiw-tag{color:var(--violet-txt)}
+.hiw-row{display:flex;align-items:stretch;gap:8px;flex-wrap:wrap}
+.hiw-box{flex:1 1 120px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-weight:600;font-size:14px;display:flex;flex-direction:column;justify-content:center;gap:3px;min-width:110px}
+.hiw-box small{font-weight:400;font-size:12px;color:var(--muted)}
+.hiw-core{border:2px solid var(--violet)}
+.hiw-ar{align-self:center;color:var(--dim,#6E6E6E);font-size:18px}
+.hiw-notes{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:13px}
+.hiw-bad .hiw-notes{color:var(--amber-txt)}
+.hiw-good .hiw-notes{color:var(--win-txt,#15803D)}
+.hiw-why{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+.hiw-why div{display:flex;flex-direction:column;gap:3px;font-size:13px;border-left:3px solid var(--violet);padding-left:10px}
+.hiw-why b{font-size:15px}
+@media (max-width:640px){.hiw-row{flex-direction:column}.hiw-ar{transform:rotate(90deg)}.hiw-box{flex:none}}
+.hiw-hub{display:flex;flex-direction:column;gap:4px;align-items:center;text-align:center;padding:14px;border-radius:14px;background:var(--card);border:2px solid var(--violet)}
+.hiw-hub b{font-size:17px}.hiw-hub span{font-size:14px;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -4357,7 +4378,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("span", { class: "sr" }, x.done ? "done" : "to do")))));
     if (d.mode !== "proads" && !d.has_data) {
       const [adsEmpty, leadsEmpty] = await Promise.all([adsSection(homePeriod), leadsCard()]);
-      body.replaceChildren(...[adsBanner(d.ads_access), hero, guide, adsEmpty, leadsEmpty].filter(Boolean), h("section", { class: "card empty" }, h("h2", {}, "Your sales will show here"),
+      body.replaceChildren(...[adsBanner(d.ads_access), hero, howItWorksCard(), guide, adsEmpty, leadsEmpty].filter(Boolean), h("section", { class: "card empty" }, h("h2", {}, "Your sales will show here"),
         h("p", { class: "sub" }, "Bring in your sales and this page fills with sales, real profit and orders, day by day."),
         h("a", { class: "btn btn-primary", href: "#/upload" }, "Bring in your sales")));
       return;
@@ -4431,7 +4452,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         + (lk.at_stake_per_month ? (lk.measured_per_month ? ", " : "") + "up to " + fmt.format(Math.round(lk.at_stake_per_month)) + " " + lk.currency + " more at stake" : "")
         + ". Biggest: " + lk.leaks[0].title + "."), h("span", { class: "ok" }, "See all →")) : null;
     body.replaceChildren(
-      ...[adsBanner(d.ads_access), leakNote, hero, whatsNewCard()].filter(Boolean),
+      ...[adsBanner(d.ads_access), leakNote, hero, d.mode !== "proads" ? howItWorksCard() : null, whatsNewCard()].filter(Boolean),
       h("h2", { style: "font-size:20px;margin:8px 0 -8px" }, "Sales"), strip, profitNote(d), ...[impactBox].filter(Boolean), adsBox,
       h("section", { class: "card", "aria-label": "Chart" },
         h("div", { class: "between" }, h("h2", {}, label + " over time"),
@@ -4462,6 +4483,17 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       h("div", { class: "guide" }, d.setup.filter((x) => !x.done).slice(0, 3).map((x) => h("a", { href: x.href },
         h("span", { class: "tick", "aria-hidden": "true" }),
         h("span", { style: "display:flex;flex-direction:column;gap:2px" }, h("b", { style: "font-size:14px" }, x.label), h("span", { class: "sub", style: "font-size:13px" }, x.how))))));
+  }
+  // "How ProAds works": the usual pixel setup next to ProAds (fixed text, same as the website)
+  const HIW_HTML = "<div class=\"hiw\">\n  <div class=\"hiw-hub\"><b>Everything in one place</b><span>Shopify \u00b7 Stripe \u00b7 Tabby \u00b7 Ziina \u00b7 WhatsApp \u00b7 Instagram \u00b7 Facebook \u00b7 TikTok</span></div>\n  <div class=\"hiw-lane hiw-bad\">\n    <div class=\"hiw-tag\">Usual setup: pixel only</div>\n    <div class=\"hiw-row\">\n      <div class=\"hiw-box\">Ad</div><span class=\"hiw-ar\">\u2192</span>\n      <div class=\"hiw-box\">Website</div><span class=\"hiw-ar\">\u2192</span>\n      <div class=\"hiw-box\">Browser pixel</div><span class=\"hiw-ar\">\u2192</span>\n      <div class=\"hiw-box\">Meta / TikTok</div>\n    </div>\n    <ul class=\"hiw-notes\">\n      <li>\u2717 Misses buyers: iPhone privacy, ad blockers, closed pages</li>\n      <li>\u2717 Can't see Tabby, WhatsApp or in-store payments</li>\n      <li>\u2717 Counts checkouts that were never paid</li>\n    </ul>\n  </div>\n  <div class=\"hiw-lane hiw-good\">\n    <div class=\"hiw-tag\">With ProAds</div>\n    <div class=\"hiw-row\">\n      <div class=\"hiw-box\">Ad</div><span class=\"hiw-ar\">\u2192</span>\n      <div class=\"hiw-box\">Customer pays<small>Shopify \u00b7 Stripe \u00b7 Tabby \u00b7 WhatsApp \u00b7 store</small></div><span class=\"hiw-ar\">\u2192</span>\n      <div class=\"hiw-box hiw-core\">ProAds checks<small>paid \u2713 \u00b7 refunds off \u2713 \u00b7 counted once \u2713</small></div><span class=\"hiw-ar\">\u2192</span>\n      <div class=\"hiw-box\">Meta &amp; TikTok<small>server to server</small></div><span class=\"hiw-ar\">\u2192</span>\n      <div class=\"hiw-box hiw-core\">Ads learn real buyers<small>and find more like them</small></div>\n    </div>\n    <ul class=\"hiw-notes\">\n      <li>\u2713 Every paid order reaches the ads, nothing blocked</li>\n      <li>\u2713 Ads optimize for people who pay, not people who click</li>\n      <li>\u2713 You see real paid orders per ad, next to what the platform claims</li>\n    </ul>\n  </div>\n  <div class=\"hiw-why\">\n    <div><b>Only paid orders</b><span>Unpaid and refunded orders never teach your ads.</span></div>\n    <div><b>Nothing missed</b><span>Sent from the server, so browsers and ad blockers can't stop it.</span></div>\n    <div><b>Every channel, once</b><span>Website, Tabby, WhatsApp and store sales, without double counting.</span></div>\n    <div><b>The real number</b><span>Paid orders and revenue per ad, not the platform's estimate.</span></div>\n    <div><b>One place</b><span>Your shop, payments and every social platform in one dashboard, not five apps.</span></div>\n  </div>\n</div>\n";
+  function howItWorksCard() {
+    let hidden = false; try { hidden = localStorage.getItem("proads.hiw") === "hide"; } catch (e) {}
+    const body = h("div", {}, ...new DOMParser().parseFromString(HIW_HTML, "text/html").body.childNodes);   // fixed text, no user data
+    const card = h("details", { class: "card", open: hidden ? null : true },
+      h("summary", { style: "cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:12px" },
+        h("h2", { style: "margin:0" }, "How ProAds works"), h("span", { class: "small", style: "color: var(--muted)" }, "show / hide")), body);
+    card.addEventListener("toggle", () => { try { localStorage.setItem("proads.hiw", card.open ? "show" : "hide"); } catch (e) {} });
+    return card;
   }
   function resultsHero(r, name) {
     const cur = r.currency || "AED", m = (v) => fmt.format(Math.round(v)) + " " + cur;

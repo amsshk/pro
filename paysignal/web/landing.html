@@ -93,6 +93,27 @@ html[dir=rtl] h1,html[lang=hi] h1,html[lang=th] h1{line-height:1.3}
 .social a{display:flex;gap:10px;justify-content:center;align-items:center;min-height:46px;border-radius:12px;font-weight:600;text-decoration:none;font-size:15px}
 .social .or{display:flex;align-items:center;gap:10px;color:#6b7280;font-size:13px}
 .social .or::before,.social .or::after{content:"";flex:1;height:1px;background:#e5e7eb}
+.hiw{display:flex;flex-direction:column;gap:16px}
+.hiw-lane{border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.hiw-bad{background:var(--soft)}
+.hiw-good{background:var(--violet-card);border-color:var(--violet-edge)}
+.hiw-tag{font-weight:700;font-size:14px}
+.hiw-bad .hiw-tag{color:var(--muted)}
+.hiw-good .hiw-tag{color:var(--violet-txt)}
+.hiw-row{display:flex;align-items:stretch;gap:8px;flex-wrap:wrap}
+.hiw-box{flex:1 1 120px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-weight:600;font-size:14px;display:flex;flex-direction:column;justify-content:center;gap:3px;min-width:110px}
+.hiw-box small{font-weight:400;font-size:12px;color:var(--muted)}
+.hiw-core{border:2px solid var(--violet)}
+.hiw-ar{align-self:center;color:var(--dim,#6E6E6E);font-size:18px}
+.hiw-notes{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:13px}
+.hiw-bad .hiw-notes{color:var(--amber-txt)}
+.hiw-good .hiw-notes{color:var(--win-txt,#15803D)}
+.hiw-why{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+.hiw-why div{display:flex;flex-direction:column;gap:3px;font-size:13px;border-left:3px solid var(--violet);padding-left:10px}
+.hiw-why b{font-size:15px}
+@media (max-width:640px){.hiw-row{flex-direction:column}.hiw-ar{transform:rotate(90deg)}.hiw-box{flex:none}}
+.hiw-hub{display:flex;flex-direction:column;gap:4px;align-items:center;text-align:center;padding:14px;border-radius:14px;background:var(--card);border:2px solid var(--violet)}
+.hiw-hub b{font-size:17px}.hiw-hub span{font-size:14px;color:var(--muted)}
 </style>
 %%JSONLD%%
 </head>
@@ -159,13 +180,48 @@ html[dir=rtl] h1,html[lang=hi] h1,html[lang=th] h1{line-height:1.3}
 
 
     <section class="block" id="sales-to-meta" dir="ltr" lang="en" aria-labelledby="stm-h">
-      <h2 id="stm-h">What ProAds does differently from a pixel</h2>
+      <h2 id="stm-h">How ProAds works</h2>
       <p class="sub">A Meta or TikTok pixel runs in the shopper's browser and misses sales when iPhone privacy, ad blockers or a closed page stop it, and it never sees payments made elsewhere. ProAds reports sales from its server after the payment is confirmed.</p>
-      <div class="grid3">
-        <div class="card"><h3>Only paid orders</h3><p>Unpaid and failed orders aren't sent; refunds are taken off, so Meta and TikTok learn from people who really pay.</p></div>
-        <div class="card"><h3>Every channel, counted once</h3><p>Shopify, Stripe, Tabby, Ziina, uploads and in-store sales. When two systems report the same sale, it counts once.</p></div>
-        <div class="card"><h3>One true total</h3><p>What was really paid, next to what each platform claims. Customer emails and phones are SHA-256 hashed before they're sent.</p></div>
-      </div>
+<div class="hiw">
+  <div class="hiw-hub"><b>Everything in one place</b><span>Shopify · Stripe · Tabby · Ziina · WhatsApp · Instagram · Facebook · TikTok</span></div>
+  <div class="hiw-lane hiw-bad">
+    <div class="hiw-tag">Usual setup: pixel only</div>
+    <div class="hiw-row">
+      <div class="hiw-box">Ad</div><span class="hiw-ar">→</span>
+      <div class="hiw-box">Website</div><span class="hiw-ar">→</span>
+      <div class="hiw-box">Browser pixel</div><span class="hiw-ar">→</span>
+      <div class="hiw-box">Meta / TikTok</div>
+    </div>
+    <ul class="hiw-notes">
+      <li>✗ Misses buyers: iPhone privacy, ad blockers, closed pages</li>
+      <li>✗ Can't see Tabby, WhatsApp or in-store payments</li>
+      <li>✗ Counts checkouts that were never paid</li>
+    </ul>
+  </div>
+  <div class="hiw-lane hiw-good">
+    <div class="hiw-tag">With ProAds</div>
+    <div class="hiw-row">
+      <div class="hiw-box">Ad</div><span class="hiw-ar">→</span>
+      <div class="hiw-box">Customer pays<small>Shopify · Stripe · Tabby · WhatsApp · store</small></div><span class="hiw-ar">→</span>
+      <div class="hiw-box hiw-core">ProAds checks<small>paid ✓ · refunds off ✓ · counted once ✓</small></div><span class="hiw-ar">→</span>
+      <div class="hiw-box">Meta &amp; TikTok<small>server to server</small></div><span class="hiw-ar">→</span>
+      <div class="hiw-box hiw-core">Ads learn real buyers<small>and find more like them</small></div>
+    </div>
+    <ul class="hiw-notes">
+      <li>✓ Every paid order reaches the ads, nothing blocked</li>
+      <li>✓ Ads optimize for people who pay, not people who click</li>
+      <li>✓ You see real paid orders per ad, next to what the platform claims</li>
+    </ul>
+  </div>
+  <div class="hiw-why">
+    <div><b>Only paid orders</b><span>Unpaid and refunded orders never teach your ads.</span></div>
+    <div><b>Nothing missed</b><span>Sent from the server, so browsers and ad blockers can't stop it.</span></div>
+    <div><b>Every channel, once</b><span>Website, Tabby, WhatsApp and store sales, without double counting.</span></div>
+    <div><b>The real number</b><span>Paid orders and revenue per ad, not the platform's estimate.</span></div>
+    <div><b>One place</b><span>Your shop, payments and every social platform in one dashboard, not five apps.</span></div>
+  </div>
+</div>
+
     </section>
 
 %%RESULTS%%
