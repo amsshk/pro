@@ -4460,10 +4460,11 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       : r.spend && r.orders ? "Return: " + r.back_per_1.toFixed(2) + " " + cur + " per 1 " + cur + " spent · " + m(r.cost_per_order) + " per paid order"
       : r.spend ? "No paid orders from these campaigns yet."
       : "No spend yet.";
+    const pair = (sent, ok) => sent ? fmt.format(sent) + " sent · " + fmt.format(ok) + " accepted" : null;
     const bg = [
-      ["Paid orders sent to TikTok", r.sent_tiktok, "Events API, accepted"],
-      ["Paid orders sent to Meta", r.sent_meta, "Conversions API, accepted"],
-      ["Buyers in audience list", r.buyers, "for exclusion and lookalikes"]].filter(([, v]) => v);
+      ["Meta (Conversions API)", pair(r.meta_sent_total, r.sent_meta), r.meta_sent_total && r.sent_meta < r.meta_sent_total ? (r.meta_sent_total - r.sent_meta) + " not accepted" : "paid orders"],
+      ["TikTok (Events API)", pair(r.tiktok_sent_total, r.sent_tiktok), r.tiktok_sent_total && r.sent_tiktok < r.tiktok_sent_total ? (r.tiktok_sent_total - r.sent_tiktok) + " not accepted" : "paid orders"],
+      ["Buyers in audience list", r.buyers ? fmt.format(r.buyers) : null, "for exclusion and lookalikes"]].filter(([, v]) => v);
     return h("section", { class: "card hero", "aria-labelledby": "res-h" },
       h("div", {}, h("h2", { id: "res-h", style: "font-size:22px;margin:0" }, "ProAds results"),
         h("p", { class: "sub", style: "margin:4px 0 0" }, since ? "Since " + since : "All time")),
@@ -4471,7 +4472,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       h("p", { style: "margin:0;font-size:16px;font-weight:600" }, verdict),
       !r.campaigns ? h("a", { class: "btn btn-primary", href: "#/assistant", style: "align-self:flex-start" }, "Build a campaign") : null,
       bg.length ? h("div", { class: "bgwork" }, h("b", { style: "font-size:14px" }, "Data sent to ad platforms"),
-        h("div", { class: "bggrid" }, bg.map(([t, v, why]) => h("div", {}, h("b", { style: "font-size:22px" }, fmt.format(v)), h("span", {}, t), h("span", { class: "sub", style: "font-size:12px" }, why))))) : null,
+        h("div", { class: "bggrid" }, bg.map(([t, v, why]) => h("div", {}, h("span", { style: "font-weight:600" }, t), h("b", { style: "font-size:18px" }, v), h("span", { class: "sub", style: "font-size:12px" }, why))))) : null,
       h("span", { class: "sub", style: "font-size:12px" }, "Paid orders from tracked ad clicks only, refunds deducted."));
   }
   async function viewHome() {

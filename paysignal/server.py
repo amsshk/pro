@@ -2340,10 +2340,12 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             tt_rows = state.store.db.execute("SELECT campaign_id, data, status FROM tiktok_launches WHERE client_id=? AND status<>'REMOVED'",
                                              (client_id,)).fetchall()
             t0 = int(since.timestamp()) if since else 0
-            sent_meta = state.store.db.execute("SELECT COALESCE(SUM(purchases),0) FROM capi_log WHERE client_id=? AND mode='live'"
-                                               " AND error IS NULL AND COALESCE(received,0)>0 AND at>=?", (client_id, t0)).fetchone()[0]
-            sent_tt = state.store.db.execute("SELECT COUNT(*) FROM tiktok_delivered WHERE client_id=? AND status='accepted'"
-                                             " AND event_id NOT LIKE '%refund%' AND sent_at>=?", (client_id, t0)).fetchone()[0]
+            meta_tried, sent_meta = state.store.db.execute(
+                "SELECT COALESCE(SUM(purchases),0), COALESCE(SUM(CASE WHEN error IS NULL AND COALESCE(received,0)>0 THEN purchases ELSE 0 END),0)"
+                " FROM capi_log WHERE client_id=? AND mode='live' AND at>=?", (client_id, t0)).fetchone()
+            tt_tried, sent_tt = state.store.db.execute(
+                "SELECT COUNT(*), COALESCE(SUM(CASE WHEN status='accepted' THEN 1 ELSE 0 END),0) FROM tiktok_delivered"
+                " WHERE client_id=? AND event_id NOT LIKE '%refund%' AND sent_at>=?", (client_id, t0)).fetchone()
             try:
                 n_buyers = len(audiences.buyers(eng.store, client_id))
             except Exception:
@@ -2377,6 +2379,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         out = proads_results.build(purchases, lambda p: refunded.get(p.external_id, 0.0), since, camps, spend,
                                    {"meta": sent_meta, "tiktok": sent_tt}, n_buyers)
         out["currency"] = state.config(client_id).get("currency", "AED")
+        out["meta_sent_total"], out["tiktok_sent_total"] = meta_tried, tt_tried
         state.ads_cache[("results", client_id)] = (time.time(), out)
         return out
 

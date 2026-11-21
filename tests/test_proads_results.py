@@ -37,4 +37,4 @@ def test_endpoint(tmp_path):
                (int(time.time()),))
     db.commit()
     r = c.get("/proads-results/glow-clinic", headers={"X-API-Key": tok}).json
-    assert r["campaigns"] == 0 and r["sent_tiktok"] == 1 and r["since"] and r["currency"] == "AED"
+    assert r["campaigns"] == 0 and r["sent_tiktok"] == 1 and r["tiktok_sent_total"] == 1 and r["meta_sent_total"] == 0 and r["since"]
