@@ -4172,6 +4172,16 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             abort(404)
         return send_from_directory(WEB_DIR, f"favicon-{size}.png", max_age=7 * 86400)
 
+    BRAND = {"shopify.svg": "image/svg+xml", "instagram.svg": "image/svg+xml", "meta.png": "image/png", "facebook.png": "image/png",
+             "tiktok.png": "image/png"}
+
+    @flask.get("/brand/<name>")
+    def brand_asset(name):
+        """Official partner logos (from each company's brand asset pack) used on the homepage flow map."""
+        if name not in BRAND:
+            abort(404)
+        return send_from_directory(os.path.join(WEB_DIR, "brand"), name, max_age=30 * 86400, mimetype=BRAND[name])
+
     @flask.get("/proads-mark.svg")
     def proads_mark():
         """The cube mark used in page headers."""
