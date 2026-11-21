@@ -288,7 +288,7 @@ html[dir=rtl] h1,html[lang=hi] h1,html[lang=th] h1{line-height:1.3}
   const NAMES = { en: "English", ar: "العربية", fr: "Français", es: "Español", pt: "Português", ru: "Русский", hi: "हिन्दी", ur: "اردو", th: "ไทย" };
   const RTL = { ar: 1, ur: 1 };
   const BY_COUNTRY = {};
-  [["ar", "AE SA QA KW BH OM EG JO LB IQ MA DZ TN LY SY YE PS SD MR"], ["fr", "FR MC SN CI CM ML BF NE TG BJ GA CG CD MG HT"],
+  [["en", "AE"], ["ar", "SA QA KW BH OM EG JO LB IQ MA DZ TN LY SY YE PS SD MR"], ["fr", "FR MC SN CI CM ML BF NE TG BJ GA CG CD MG HT"],
    ["es", "ES MX AR CO CL PE VE EC GT CU BO DO HN PY SV NI CR PA UY PR"], ["pt", "BR PT AO MZ CV"], ["ru", "RU BY KZ KG"],
    ["hi", "IN"], ["ur", "PK"], ["th", "TH"]].forEach(([l, cs]) => cs.split(" ").forEach((c) => { BY_COUNTRY[c] = l; }));
   const TZ = { "Asia/Dubai": "AE", "Asia/Riyadh": "SA", "Asia/Qatar": "QA", "Asia/Kuwait": "KW", "Asia/Bahrain": "BH", "Asia/Muscat": "OM",
