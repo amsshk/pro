@@ -38,3 +38,10 @@ def test_endpoint(tmp_path):
     db.commit()
     r = c.get("/proads-results/glow-clinic", headers={"X-API-Key": tok}).json
     assert r["campaigns"] == 0 and r["sent_tiktok"] == 1 and r["tiktok_sent_total"] == 1 and r["meta_sent_total"] == 0 and r["since"]
+
+
+def test_health_score():
+    good = proads_results.health_score(50, 50, 1.0, None)
+    assert good["score"] == 100 and good["label"] == "Good"
+    weak = proads_results.health_score(5, 6, 0.4, 3)
+    assert weak["score"] < 50 and weak["parts"]["focus"] == 5 and "purchases" in weak["tip"].lower()

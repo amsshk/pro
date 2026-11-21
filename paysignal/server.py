@@ -2481,6 +2481,22 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 out["tiktok_split"] = len(active) if len(active) > 1 else None
             except Exception:
                 pass
+        wk_dt = datetime.now(timezone.utc) - timedelta(days=7)          # health score per platform that gets sales
+        recent = [p for p in purchases if p.occurred_at >= wk_dt and p.amount - refunded.get(p.external_id, 0.0) > 0.005]
+        def share(fn):
+            return (sum(1 for p in recent if fn(p)) / len(recent)) if recent else None
+        with state.lock:
+            tt_sent7 = state.store.db.execute("SELECT COUNT(*) FROM tiktok_delivered WHERE client_id=? AND event_id NOT LIKE '%refund%'"
+                                              " AND sent_at>=?", (client_id, wk)).fetchone()[0]
+            m_sent7 = state.store.db.execute("SELECT COALESCE(SUM(purchases),0) FROM capi_log WHERE client_id=? AND mode='live' AND at>=?",
+                                             (client_id, wk)).fetchone()[0]
+        out["health"] = {}
+        if tt_tried:
+            out["health"]["TikTok"] = proads_results.health_score(out["tiktok_7d"], tt_sent7,
+                                                                  share(lambda p: p.email or p.phone or p.ttclid), out.get("tiktok_split"))
+        if meta_tried:
+            out["health"]["Meta"] = proads_results.health_score(out["meta_7d"], m_sent7,
+                                                                share(lambda p: p.email or p.phone or p.fbclid or p.fbc or p.fbp), None)
         state.ads_cache[("results", client_id)] = (time.time(), out)
         return out
 

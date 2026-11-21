@@ -64,3 +64,23 @@ def parse_created(s: Optional[str]) -> Optional[datetime]:
         return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
     except ValueError:
         return None
+
+
+def health_score(accepted_7d: int, sent_7d: int, matchable_share: Optional[float], split: Optional[int]) -> dict:
+    """0-100 for one platform, from what ProAds measures itself:
+    volume (40): accepted purchases in 7 days against the ~50 the platform wants to finish learning;
+    match (30): share of recent paid orders carrying an email, phone or click id the platform can match to a person;
+    delivery (15): accepted / sent;  focus (15): one purchase campaign at a time instead of several splitting buyers."""
+    volume = 40 * min(accepted_7d / 50, 1)
+    match = 30 * (matchable_share if matchable_share is not None else 0)
+    delivery = 15 * (accepted_7d / sent_7d if sent_7d else 0)
+    focus = 15 / split if split and split > 1 else 15
+    score = round(volume + match + delivery + focus)
+    weakest = min((("volume", volume / 40), ("match", match / 30), ("delivery", delivery / 15 if sent_7d else 1), ("focus", focus / 15)),
+                  key=lambda x: x[1])[0]
+    tip = {"volume": "Needs more paid purchases: one broad campaign with enough budget, and every sale sent.",
+           "match": "Too many orders arrive without email or phone: give the ProAds Shopify app customer data access.",
+           "delivery": "Some sales were refused: see the reason on Tracking.",
+           "focus": "Several purchase campaigns split the same buyers: run one."}[weakest]
+    return {"score": score, "label": "Good" if score >= 75 else "Okay" if score >= 50 else "Weak", "tip": tip,
+            "parts": {"volume": round(volume), "match": round(match), "delivery": round(delivery), "focus": round(focus)}}

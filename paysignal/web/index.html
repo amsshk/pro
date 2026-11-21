@@ -4551,6 +4551,12 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       ["Buyers in audience list", r.buyers ? fmt.format(r.buyers) : null, "for exclusion and lookalikes"]].filter(([, v]) => v);
     const learn = [["TikTok", r.tiktok_7d, r.tiktok_sent_total], ["Meta", r.meta_7d, r.meta_sent_total]].filter(([, , any]) => any)
       .map(([n, v]) => h("div", { style: "display:flex;flex-direction:column;gap:4px;font-size:13px" },
+        (r.health || {})[n] ? h("div", { style: "display:flex;align-items:baseline;gap:10px;flex-wrap:wrap" },
+          h("b", { style: "font-size:15px" }, n + " health"),
+          h("b", { style: "font-size:24px;font-family:var(--head);color:" + (r.health[n].score >= 75 ? "var(--win-txt)" : r.health[n].score >= 50 ? "var(--text)" : "var(--amber-txt)") }, r.health[n].score + "/100"),
+          h("span", { class: "badge " + (r.health[n].score >= 75 ? "b-measured" : r.health[n].score >= 50 ? "b-neutral" : "b-loss") }, r.health[n].label),
+          h("span", { class: "sub", style: "font-size:12px" }, "Purchases " + r.health[n].parts.volume + "/40 · Match " + r.health[n].parts.match + "/30 · Accepted " + r.health[n].parts.delivery + "/15 · Focus " + r.health[n].parts.focus + "/15")) : null,
+        (r.health || {})[n] && r.health[n].score < 75 ? h("span", {}, r.health[n].tip) : null,
         h("span", {}, h("b", {}, n + " learning: "), fmt.format(v) + " of ~50 purchases in the last 7 days"
           + (v >= 50 ? " · enough to finish learning" : v ? " · at this pace about " + Math.ceil(7 * (50 - v) / v) + " more days" : " · no purchases yet")),
         n === "TikTok" && r.tiktok_split ? h("span", { style: "color: var(--amber-txt)" }, r.tiktok_split + " purchase campaigns are running at the same time and split these purchases between them. One campaign learns faster.") : null,
