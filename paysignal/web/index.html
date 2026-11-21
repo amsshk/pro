@@ -1442,13 +1442,13 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
               h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => makeLink(a) }, "Reset link"),
               h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => checkLink(a) }, "Check link"),
               (() => {
-                const n = h("input", { type: "number", min: "1", max: "30", value: "7", "aria-label": "Ad test days to add", style: "width:56px;min-height:36px" });
+                const n = h("input", { type: "number", min: "0", max: "30", value: "2", "aria-label": "Free ad test days left from now", style: "width:56px;min-height:36px" });
                 const b = h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: async () => {
                   b.disabled = true;
-                  try { const r = await api("/admin/" + cid() + "/ads-trial/" + encodeURIComponent(a.client_id), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ days: Number(n.value) || 7 }) });
-                    toast(a.name + " can run ads until " + new Date(r.trial_ends * 1000).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) + ". Ask them to refresh ProAds."); }
+                  try { const r = await api("/admin/" + cid() + "/ads-trial/" + encodeURIComponent(a.client_id), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ days: Math.max(0, Number(n.value) || 0) }) });
+                    toast(r.allowed ? a.name + " can run ads until " + new Date(r.trial_ends * 1000).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) + ". Ask them to refresh ProAds." : a.name + "'s free ad test has ended now."); }
                   catch (e) { if (e.message !== "signed out") toast(e.message); }
-                  b.disabled = false; } }, "Give ad days");
+                  b.disabled = false; } }, "Set ad test days");
                 return h("span", { style: "display:inline-flex;gap:4px;align-items:center" }, n, b);
               })(), delButton(a))))))))
           : h("p", { class: "sub", style: "margin:0" }, "No one has signed up yet. Share pro.ezdevsoft.net or start your first ad.")));

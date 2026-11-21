@@ -4405,7 +4405,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if state.clients.get(client_id) is None and not state.accounts.get(client_id):
             abort(404, "unknown account")
         try:
-            days = float((request.get_json(silent=True) or {}).get("days") or 1)
+            days = float((request.get_json(silent=True) or {}).get("days", 1))
         except (TypeError, ValueError):
             abort(400, "days must be a number")
         with state.lock:

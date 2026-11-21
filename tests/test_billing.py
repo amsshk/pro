@@ -258,3 +258,17 @@ def test_admin_gives_one_more_ad_test_day(tmp_path, monkeypatch):
     assert not st.billing.ads_access("glow-clinic")["allowed"]
     r = c.post("/admin/pro/ads-trial/glow-clinic", headers={"X-API-Key": "admin-key-0123456789abc"}, json={"days": 1}).json
     assert r["allowed"] and r["in_trial"] and 0.9 * 86400 < r["trial_ends"] - _t.time() <= 86400 + 5
+
+
+def test_setting_ad_test_days_replaces_instead_of_stacking(tmp_path):
+    import time as _t
+    from paysignal.server import create_app
+    app = create_app({"pro": {"api_key": "admin-key-0123456789abc"}}, str(tmp_path / "b.db"), start_worker=False)
+    c = app.test_client()
+    c.post("/auth/signup", json={"business": "Glow Clinic", "email": "o@glow.ae", "password": "first-password-1", "terms": True, "phone": "0501234567"})
+    H = {"X-API-Key": "admin-key-0123456789abc"}
+    c.post("/admin/pro/ads-trial/glow-clinic", headers=H, json={"days": 7})
+    c.post("/admin/pro/ads-trial/glow-clinic", headers=H, json={"days": 7})
+    r = c.post("/admin/pro/ads-trial/glow-clinic", headers=H, json={"days": 2}).json
+    assert 1.9 * 86400 < r["trial_ends"] - _t.time() <= 2 * 86400 + 5
+    assert not c.post("/admin/pro/ads-trial/glow-clinic", headers=H, json={"days": 0}).json["allowed"]
