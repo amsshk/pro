@@ -2985,6 +2985,51 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             r["status"] = l["status"] if l else ("published" if r["campaign_id"] else "draft")
         return {"history": rows}
 
+    @flask.get("/campaign/<client_id>/history/stats")
+    def campaign_history_stats(client_id):
+        """Live numbers for every published campaign in the history: spend, impressions, clicks and purchases
+        (the platform's own purchase count), from launch until today."""
+        state.require_key(client_id)
+        hit = state.ads_cache.get(("hist_stats", client_id))
+        if hit and time.time() - hit[0] < 600 and not request.args.get("fresh"):
+            return hit[1]
+        today = datetime.now(timezone.utc).date()
+        with state.lock:
+            tt = state.store.db.execute("SELECT campaign_id, created_at FROM tiktok_launches WHERE client_id=? AND status<>'REMOVED'",
+                                        (client_id,)).fetchall()
+            meta_l = state.launches.list(client_id)
+            tt_link = state.tiktok_ads.get(client_id)
+        stats, errors = {}, []
+        if tt and tt_link and tt_link["advertiser_id"]:
+            first = min(datetime.fromtimestamp(t or time.time(), timezone.utc).date() for _, t in tt)
+            try:
+                r = tiktok_api.campaign_totals(tt_http(), tt_token(client_id, tt_link), tt_link["advertiser_id"], [c for c, _ in tt],
+                                               first.isoformat(), today.isoformat(), per_campaign=True)
+                for c, _ in tt:
+                    stats[c] = {**r["by"].get(c, {"spend": 0.0, "impressions": 0, "clicks": 0, "purchases": 0}),
+                                "purchases_known": r["purchases_known"], "platform": "TikTok"}
+            except Exception as e:
+                errors.append(f"TikTok: {str(e)[:120]}")
+        s_ = state.ads_settings(client_id, is_admin(client_id)) if meta_l else None
+        for l in meta_l if s_ else []:
+            try:
+                r = state.ads_http.get(f"https://graph.facebook.com/{meta_ads.settings()['version']}/{l['campaign_id']}/insights",
+                                       params={"access_token": s_["token"], "fields": "spend,impressions,clicks,actions",
+                                               "date_preset": "maximum"}, timeout=20)
+                body = r.json()
+                if r.status_code != 200 or "error" in body:
+                    continue
+                row = (body.get("data") or [{}])[0] if body.get("data") else {}
+                acts = {a.get("action_type"): int(float(a.get("value") or 0)) for a in row.get("actions") or []}
+                buys = next((acts[k] for k in ("omni_purchase", "offsite_conversion.fb_pixel_purchase", "purchase") if k in acts), 0)
+                stats[l["campaign_id"]] = {"spend": round(float(row.get("spend") or 0), 2), "impressions": int(float(row.get("impressions") or 0)),
+                                           "clicks": int(float(row.get("clicks") or 0)), "purchases": buys, "purchases_known": True, "platform": "Meta"}
+            except Exception:
+                errors.append("Meta: couldn't read a campaign")
+        out = {"stats": stats, "errors": errors[:3], "currency": state.config(client_id).get("currency", "AED")}
+        state.ads_cache[("hist_stats", client_id)] = (time.time(), out)
+        return out
+
     @flask.get("/campaign/<client_id>/history/<draft_id>")
     def campaign_history_item(client_id, draft_id):
         state.require_key(client_id)

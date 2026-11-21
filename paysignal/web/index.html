@@ -2360,8 +2360,10 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     async function loadHistory() {
       try {
         const r = await api("/campaign/" + cid() + "/history");
-        hist.replaceChildren(r.history.length ? h("table", {},
-          h("thead", {}, h("tr", {}, ["Built", "Campaign", "Budget", "Ads", "Status", ""].map((t) => h("th", { scope: "col" }, t)))),
+        const cells = {};                                    // filled in when the live numbers arrive
+        const num = (x, k) => (cells[x.campaign_id] = cells[x.campaign_id] || {})[k] = h("td", { style: "white-space:nowrap;text-align:right" }, x.campaign_id ? "…" : "–");
+        hist.replaceChildren(r.history.length ? h("div", { style: "overflow-x:auto" }, h("table", {},
+          h("thead", {}, h("tr", {}, ["Built", "Campaign", "Budget", "Status", "Spend", "Impressions", "Clicks", "Purchases", ""].map((t) => h("th", { scope: "col" }, t)))),
           h("tbody", {}, r.history.map((x) => {
             const [cls, label] = badge(x.status);
             let armed = false;
@@ -2375,13 +2377,23 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
               h("td", { style: "white-space:nowrap" }, when(x.created_at)),
               h("td", {}, h("b", {}, x.name || "Campaign"), x.problems ? h("span", { class: "sub", style: "font-size:12px" }, " · needs checking") : null),
               h("td", { style: "white-space:nowrap" }, x.daily_budget ? fmt.format(x.daily_budget) + " " + (x.currency || "") + "/day" : "–"),
-              h("td", {}, x.ads),
               h("td", {}, h("span", { class: "badge " + cls }, label)),
+              num(x, "spend"), num(x, "impressions"), num(x, "clicks"), num(x, "purchases"),
               h("td", {}, h("div", { style: "display:flex;gap:6px;justify-content:flex-end" },
                 h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => openDraft(x.draft_id) }, "Open"),
                 x.campaign_id ? null : del)));
-          })))
+          }))))
           : h("p", { class: "sub", style: "margin:0;font-size:14px" }, "Campaigns you build will be saved here."));
+        if (r.history.some((x) => x.campaign_id)) api("/campaign/" + cid() + "/history/stats").then((st) => {
+          Object.entries(cells).forEach(([id, c]) => {
+            const v = st.stats[id];
+            if (!v) { Object.values(c).forEach((td) => td.textContent = "–"); return; }
+            c.spend.textContent = fmt.format(Math.round(v.spend)) + " " + st.currency;
+            c.impressions.textContent = fmt.format(v.impressions);
+            c.clicks.textContent = fmt.format(v.clicks);
+            c.purchases.textContent = v.purchases_known ? fmt.format(v.purchases) : "not reported";
+          });
+        }).catch(() => Object.values(cells).forEach((c) => Object.values(c).forEach((td) => td.textContent = "–")));
       } catch (e) { if (e.message !== "signed out") hist.replaceChildren(errorCard(e.message)); }
     }
 

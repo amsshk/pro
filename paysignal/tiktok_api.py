@@ -556,15 +556,16 @@ def tiktok_posts(http, token: str, advertiser_id: str, limit: int = 60) -> tuple
     return posts[:limit], problems
 
 
-def campaign_totals(http, token: str, advertiser_id: str, ids: list[str], start: str, end: str) -> dict:
-    """Spend, clicks and purchases (Complete payment) of the given campaigns over any length of time (read in 28-day
-    pieces, TikTok's limit)."""
+def campaign_totals(http, token: str, advertiser_id: str, ids: list[str], start: str, end: str, per_campaign: bool = False) -> dict:
+    """Spend, impressions, clicks and purchases (Complete payment) of the given campaigns over any length of time
+    (read in 28-day pieces, TikTok's limit). per_campaign=True also returns {"by": {campaign_id: {...}}}."""
     from datetime import date, timedelta
-    out = {"spend": 0.0, "clicks": 0, "purchases": 0}
+    zero = lambda: {"spend": 0.0, "impressions": 0, "clicks": 0, "purchases": 0}
+    out, by = zero(), {}
     if not ids:
-        return out
+        return {**out, "by": by} if per_campaign else out
     want, a, b = set(ids), date.fromisoformat(start), date.fromisoformat(end)
-    metrics = ["spend", "clicks", "complete_payment"]
+    metrics = ["spend", "impressions", "clicks", "complete_payment"]
     while a <= b:
         piece_end = min(b, a + timedelta(days=MAX_SPAN_DAYS - 1))
         params = {"advertiser_id": advertiser_id, "report_type": "BASIC", "data_level": "AUCTION_CAMPAIGN",
@@ -575,16 +576,21 @@ def campaign_totals(http, token: str, advertiser_id: str, ids: list[str], start:
         except TikTokAPIError:
             if "complete_payment" not in metrics:
                 raise
-            metrics = ["spend", "clicks"]
+            metrics = ["spend", "impressions", "clicks"]
             d = _get(http, token, "report/integrated/get", {**params, "metrics": metrics}, "reading ProAds campaigns")
         for row in d.get("list") or []:
-            if str((row.get("dimensions") or {}).get("campaign_id") or "") not in want:
+            cid = str((row.get("dimensions") or {}).get("campaign_id") or "")
+            if cid not in want:
                 continue
             m = row.get("metrics") or {}
             f = lambda k: float(m.get(k) or 0) if str(m.get(k) or "0").replace(".", "", 1).isdigit() else 0.0
-            out["spend"] += f("spend")
-            out["clicks"] += int(f("clicks"))
-            out["purchases"] += int(f("complete_payment"))
+            for tgt in (out, by.setdefault(cid, zero())):
+                tgt["spend"] += f("spend")
+                tgt["impressions"] += int(f("impressions"))
+                tgt["clicks"] += int(f("clicks"))
+                tgt["purchases"] += int(f("complete_payment"))
         a = piece_end + timedelta(days=1)
-    out["spend"] = round(out["spend"], 2)
-    return out
+    for tgt in [out, *by.values()]:
+        tgt["spend"] = round(tgt["spend"], 2)
+    out["purchases_known"] = "complete_payment" in metrics
+    return {**out, "by": by} if per_campaign else out

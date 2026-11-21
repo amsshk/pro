@@ -109,3 +109,17 @@ def test_promote_results_are_not_called_purchases():
     out = tiktok_api.live_summary(H(), "t", "A", "2026-11-15", "2026-11-15")
     assert out["days"]["2026-11-15"]["results"] == 0 and out["days"]["2026-11-15"]["goal_results"] == 252
     assert out["purchases_known"] is True
+
+
+def test_campaign_totals_per_campaign():
+    from paysignal import tiktok_api
+
+    class H:
+        def get(self, url, params=None, headers=None, timeout=None):
+            return R({"code": 0, "data": {"list": [
+                {"dimensions": {"campaign_id": "C1", "stat_time_day": "2026-11-16 00:00:00"}, "metrics": {"spend": "150", "impressions": "9000", "clicks": "120", "complete_payment": "1"}},
+                {"dimensions": {"campaign_id": "C1", "stat_time_day": "2026-11-17 00:00:00"}, "metrics": {"spend": "149.5", "impressions": "8000", "clicks": "100", "complete_payment": "0"}},
+                {"dimensions": {"campaign_id": "X", "stat_time_day": "2026-11-17 00:00:00"}, "metrics": {"spend": "99", "impressions": "1", "clicks": "1", "complete_payment": "9"}}]}})
+    r = tiktok_api.campaign_totals(H(), "t", "A", ["C1"], "2026-11-16", "2026-11-17", per_campaign=True)
+    assert r["by"]["C1"] == {"spend": 299.5, "impressions": 17000, "clicks": 220, "purchases": 1} and r["purchases_known"]
+    assert r["spend"] == 299.5
