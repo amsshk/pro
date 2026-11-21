@@ -152,6 +152,13 @@ footer{border-top-color:#1C1C1C}
 .flowzoom button:hover{border-color:#B6F04A;color:#B6F04A}
 .flowhead{align-items:center}
 @media (max-width:640px){.flowhint{display:none}}
+details.fold>summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:16px}
+details.fold>summary::-webkit-details-marker{display:none}
+details.fold>summary h2{margin:0}
+.foldic{flex:0 0 40px;height:40px;border-radius:999px;border:1px solid #333;display:grid;place-items:center;font-size:22px;color:#B6F04A;transition:transform .2s}
+details.fold[open] .foldic{transform:rotate(45deg)}
+details.fold[open]>summary{margin-bottom:18px}
+section.block:has(details.fold){padding:28px 0}
 </style>
 %%JSONLD%%
 </head>
@@ -178,7 +185,7 @@ footer{border-top-color:#1C1C1C}
         <p class="lead" data-i18n="lead">ProAds reads your real sales, shows where you lose money, and teaches Meta to find buyers, not just viewers.</p>
         <div class="cta">
           <a class="btn btn-primary" href="#signup" data-i18n="cta">Get your free audit</a>
-          <a class="btn btn-ghost" href="#how" data-i18n="how_btn">How it works</a>
+          <a class="btn btn-ghost" href="#sales-to-meta" data-i18n="how_btn">How it works</a>
         </div>
         <p class="note" data-i18n="note">No card needed. Your first audit is ready the day you upload your sales.</p>
       </div>
@@ -328,7 +335,8 @@ footer{border-top-color:#1C1C1C}
     </section>
 
     <section class="block" aria-labelledby="week">
-      <h2 id="week" data-i18n="week_h">What you learn in your first week</h2>
+      <details class="fold"><summary><h2 id="week" data-i18n="week_h">What you learn in your first week</h2><span class="foldic" aria-hidden="true">+</span></summary>
+      
       <p class="sub" data-i18n="week_sub">From the sales history you already have. No waiting months for new data.</p>
       <div class="grid3">
         <div class="card"><h3 data-i18n="c1h">Discounts that lose money</h3><p data-i18n="c1p">See which promo codes bring orders that get refunded or barely make a profit.</p></div>
@@ -338,39 +346,46 @@ footer{border-top-color:#1C1C1C}
         <div class="card"><h3 data-i18n="c5h">Customers who come back</h3><p data-i18n="c5p">How many buy again, and how much of your profit they bring.</p></div>
         <div class="card"><h3 data-i18n="c6h">A to-do list</h3><p data-i18n="c6p">Specific actions for this week, written from your own numbers.</p></div>
       </div>
+    </details>
     </section>
 
     <section class="block" id="how" aria-labelledby="how-h">
-      <h2 id="how-h" data-i18n="how_h">How it works</h2>
+      <details class="fold"><summary><h2 id="how-h" data-i18n="how_h">How it works</h2><span class="foldic" aria-hidden="true">+</span></summary>
+      
       <p class="sub" data-i18n="how_sub">Three steps. Most businesses finish the first one in a few minutes.</p>
       <div class="grid3">
         <div class="card"><span class="step">1</span><h3 data-i18n="s1h">Bring your sales</h3><p data-i18n="s1p">Upload a sales list (Excel or CSV from your booking system, card machine or shop), or connect a Shopify store.</p></div>
         <div class="card"><span class="step">2</span><h3 data-i18n="s2h">Get your audit</h3><p data-i18n="s2p">See where money leaks and what sells. Ask questions and get answers from your own numbers.</p></div>
         <div class="card"><span class="step">3</span><h3 data-i18n="s3h">Teach Meta what a buyer looks like</h3><p data-i18n="s3p">Track every post with its own link or code. ProAds sends every real, paid sale to Meta (refunds included), so ads find more people like your actual buyers.</p></div>
       </div>
+    </details>
     </section>
 
     <section class="block" aria-labelledby="uae">
-      <h2 id="uae" data-i18n="any_h">Made for how businesses really sell, anywhere</h2>
+      <details class="fold"><summary><h2 id="uae" data-i18n="any_h">Made for how businesses really sell, anywhere</h2><span class="foldic" aria-hidden="true">+</span></summary>
+      
       <ul class="checks">
         <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#B6F04A" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg><span data-i18n="k1">Connect Shopify or Stripe directly, or upload a sales export from Salla, Zid, WooCommerce or any shop or POS. WhatsApp, cash and walk-in sales count through promo codes</span></li>
         
         <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#B6F04A" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg><span data-i18n="k3">Any currency: your ads, sales and reports stay in the currency you use</span></li>
         <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#B6F04A" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg><span data-i18n="k4">Your data stays yours: the AI sees totals, never customer names, emails or phones</span></li>
       </ul>
+    </details>
     </section>
 
 
 
 %%RESULTS%%
     <section class="block" id="pricing" dir="ltr" lang="en" aria-labelledby="pricing-h">
-      <h2 id="pricing-h">Pricing</h2>
+      <details class="fold"><summary><h2 id="pricing-h">Pricing</h2><span class="foldic" aria-hidden="true">+</span></summary>
+      
       <div class="grid3">
         <div class="card"><h3>Free</h3><p><b>%%PRICE_FREE%%</b>. Audit, organic plans and AI questions from your own numbers. No card.</p></div>
         <div class="card"><h3>Pro</h3><p><b>%%PRICE_PRO%% a month</b>%%FEE_LINE%%. Sales sent to Meta and TikTok, campaigns, reports.</p></div>
         <div class="card"><h3>Premium</h3><p><b>%%PRICE_PREMIUM%% a month</b>%%FEE_LINE%%. Everything in Pro plus Competitor X-ray, Win their customers, Follow-ups and auto buyer audiences.</p></div>
       </div>
       <p class="sub">Your ad spend is paid by you to Meta or TikTok from your own ad account; ProAds never holds it. Every fee is itemised: <a href="/fees">how fees work</a>. Cancel any time.</p>
+    </details>
     </section>
 
     <section class="block signup" id="signup" aria-labelledby="signup-h">
@@ -792,6 +807,10 @@ footer{border-top-color:#1C1C1C}
     if (b.dataset.z === "in") zoom(1.3); else if (b.dataset.z === "out") zoom(1 / 1.3); else { vb = { ...full }; set(); }
   }));
 })();
+</script>
+<script>
+// a link to a folded section opens it
+addEventListener("click", (e) => { const a = e.target.closest('a[href^="#"]'); if (!a) return; const t = document.querySelector(a.getAttribute("href")); const d = t && t.querySelector("details.fold"); if (d) d.open = true; });
 </script>
 </body>
 </html>
