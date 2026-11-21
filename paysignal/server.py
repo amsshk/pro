@@ -2248,14 +2248,19 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             out["ads_access"] = state.billing.ads_access(client_id) if billing.available() and not is_admin(client_id) else None
         out["campaigns"] = [{k: l.get(k) for k in ("campaign_id", "name", "status", "daily_budget", "currency",
                                                    "manager_url")} for l in launches[:5]]
+        with state.lock:
+            tt_pixel = state.store.db.execute("SELECT 1 FROM tiktok_pixels WHERE client_id=? AND active=1", (client_id,)).fetchone()
+            tt_ads = state.tiktok_ads.get(client_id)
+            tt_launch = state.store.db.execute("SELECT 1 FROM tiktok_launches WHERE client_id=? LIMIT 1", (client_id,)).fetchone()
+            meta_send = state.connected_meta(client_id)
         out["setup"] = [
-            {"label": "Bring in your sales", "done": out["has_data"] or bool(shop), "href": "#/platforms",
-             "how": "Upload a sales list or connect Shopify"},
-            {"label": "Connect Facebook & Instagram", "done": bool(conn.get("ready")) or is_admin(client_id),
-             "href": "#/upload", "how": "Pick your ad account, Page and Pixel"},
-            {"label": "Track your next post", "done": codes > 0, "href": "#/upload",
-             "how": "Give each post its own link and code"},
-            {"label": "Launch your first campaign", "done": bool(launches), "href": "#/assistant",
+            {"label": "Bring in your sales", "done": out["has_data"] or bool(shop), "href": "#/upload",
+             "how": "Connect Shopify or upload a sales list"},
+            {"label": "Send sales to your ad platforms", "done": bool(tt_pixel or meta_send), "href": "#/upload",
+             "how": "Add your TikTok Pixel or Meta Pixel, so the ads learn from real buyers"},
+            {"label": "Connect your ad account", "done": bool((tt_ads and tt_ads["advertiser_id"]) or conn.get("ready")) or is_admin(client_id),
+             "href": "#/upload", "how": "TikTok, Facebook or Instagram, to see spend and launch campaigns"},
+            {"label": "Launch your first campaign", "done": bool(launches or tt_launch), "href": "#/assistant",
              "how": "ProAds builds it, you press Go live"},
         ]
         if not is_admin(client_id) and billing.available():
@@ -2320,6 +2325,78 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         except Exception:
             return None
 
+    def health_alerts(client_id: str) -> list[dict]:
+        """Problems worth a red line on Home and in the morning email: ads spending with no paid orders coming in,
+        and sales not being accepted by Meta or TikTok."""
+        out = []
+        now = time.time()
+        with state.lock:
+            eng = state.engine(client_id)
+            purchases = eng.store.purchases(client_id)
+            last_sale = max((p.occurred_at.timestamp() for p in purchases), default=None)
+            week = int(now - 7 * 86400)
+            tt_sent, tt_ok = state.store.db.execute(
+                "SELECT COUNT(*), COALESCE(SUM(CASE WHEN status='accepted' THEN 1 ELSE 0 END),0) FROM tiktok_delivered"
+                " WHERE client_id=? AND event_id NOT LIKE '%refund%' AND sent_at>=?", (client_id, week)).fetchone()
+            m_sent, m_ok = state.store.db.execute(
+                "SELECT COALESCE(SUM(purchases),0), COALESCE(SUM(CASE WHEN error IS NULL AND COALESCE(received,0)>0 THEN purchases ELSE 0 END),0)"
+                " FROM capi_log WHERE client_id=? AND mode='live' AND at>=?", (client_id, week)).fetchone()
+            tt_link = state.tiktok_ads.get(client_id)
+        spend3 = None
+        if tt_link and tt_link["advertiser_id"]:
+            try:
+                live = tiktok_live_data(client_id, "7")
+                days = sorted((live.get("dates") or []))[-3:]
+                spend3 = sum(v for d, v in zip(live.get("dates") or [], (live.get("series") or {}).get("spend") or []) if d in days)
+            except Exception:
+                spend3 = None
+        days_quiet = (now - last_sale) / 86400 if last_sale else None
+        if spend3 and spend3 >= 100 and (days_quiet is None or days_quiet >= 3):
+            out.append({"level": "bad", "text": f"TikTok spent {spend3:,.0f} in the last 3 days and ProAds received no paid orders"
+                        + (f" for {int(days_quiet)} days." if days_quiet else "."),
+                        "fix": "Check the Shopify connection on Connect. If sales are coming in fine, the ads aren't selling: change the videos or the offer."})
+        for name, sent, ok in (("TikTok", tt_sent, tt_ok), ("Meta", m_sent, m_ok)):
+            if sent >= 5 and ok / sent < 0.9:
+                out.append({"level": "bad", "text": f"{name} accepted only {ok} of {sent} sales sent in the last 7 days.",
+                            "fix": "Open Tracking to see the reason, then fix the Pixel or token on Connect."})
+        return out
+    state.health_alerts = health_alerts
+
+    @flask.get("/alerts/<client_id>")
+    def alerts_view(client_id):
+        state.require_key(client_id)
+        return {"alerts": health_alerts(client_id)}
+
+    @flask.get("/orders-trace/<client_id>")
+    def orders_trace(client_id):
+        """The last 30 orders and what happened to each: paid, refunded, sent to Meta, sent to TikTok (and the
+        reason if TikTok refused it). Amounts and order numbers only, no customer details."""
+        state.require_key(client_id)
+        with state.lock:
+            eng = state.engine(client_id)
+            rows = []
+            for src, ext, amount, cur, at, sent_meta, data in state.store.db.execute(
+                    "SELECT source, external_id, amount, currency, occurred_at, sent_to_meta, data FROM payments"
+                    " WHERE client_id=? AND kind='purchase' ORDER BY occurred_at DESC LIMIT 30", (client_id,)).fetchall():
+                try:
+                    dd = json.loads(data or "{}")
+                except ValueError:
+                    dd = {}
+                rows.append((src, ext, amount, cur, at, sent_meta, dd.get("payment_method"), dd.get("utm_source"), dd.get("ttclid"), dd.get("fbclid")))
+            tt = {r[0]: (r[1], r[2]) for r in state.store.db.execute(
+                "SELECT event_id, status, reason FROM tiktok_delivered WHERE client_id=? AND event_id NOT LIKE '%refund%'", (client_id,))}
+            meta_live = bool(state.connected_meta(client_id))
+            tt_on = bool(state.store.db.execute("SELECT 1 FROM tiktok_pixels WHERE client_id=? AND active=1", (client_id,)).fetchone())
+            out = []
+            for src, ext, amount, cur, at, sent_meta, pm, utm, ttc, fbc in rows:
+                ref = eng.store.refunded_amount(client_id, ext)
+                t = tt.get(str(ext)[:200])
+                out.append({"order": str(ext)[-8:], "source": src, "amount": amount, "currency": cur, "at": at,
+                            "payment": pm or "", "refunded": round(ref, 2), "from_ad": "TikTok" if ttc else "Meta" if fbc else (utm or ""),
+                            "meta": "sent" if sent_meta else ("waiting" if meta_live else "not connected"),
+                            "tiktok": (t[0] if t else ("waiting" if tt_on else "not connected")), "tiktok_reason": (t[1] if t else None)})
+        return {"orders": out}
+
     @flask.get("/proads-results/<client_id>")
     def proads_results_view(client_id):
         """Home: only what ProAds did for this business since it signed up (campaigns, spend, paid orders from
@@ -2380,6 +2457,12 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                                    {"meta": sent_meta, "tiktok": sent_tt}, n_buyers)
         out["currency"] = state.config(client_id).get("currency", "AED")
         out["meta_sent_total"], out["tiktok_sent_total"] = meta_tried, tt_tried
+        wk = int(time.time() - 7 * 86400)
+        with state.lock:
+            out["tiktok_7d"] = state.store.db.execute("SELECT COUNT(*) FROM tiktok_delivered WHERE client_id=? AND status='accepted'"
+                                                      " AND event_id NOT LIKE '%refund%' AND sent_at>=?", (client_id, wk)).fetchone()[0]
+            out["meta_7d"] = state.store.db.execute("SELECT COALESCE(SUM(purchases),0) FROM capi_log WHERE client_id=? AND mode='live'"
+                                                    " AND error IS NULL AND COALESCE(received,0)>0 AND at>=?", (client_id, wk)).fetchone()[0]
         state.ads_cache[("results", client_id)] = (time.time(), out)
         return out
 
@@ -2510,8 +2593,12 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 log.exception("follow-ups for the summary of %s", client_id)
         leak = None
         try:
-            lk = leaks_for(client_id).get("leaks") or []
-            leak = lk[0] if lk else None
+            al = health_alerts(client_id)                     # a tracking or no-sales alert comes before money leaks
+            if al:
+                leak = {"title": al[0]["text"].rstrip(".") + ". " + al[0]["fix"].rstrip(".")}
+            else:
+                lk = leaks_for(client_id).get("leaks") or []
+                leak = lk[0] if lk else None
         except Exception:
             pass
         return digest.render(cfg.get("name") or client_id, cur, d, spend, waiting, leak, f"{public_base()}/app#/home")

@@ -149,6 +149,7 @@ h2{margin:0;font-family:var(--head);font-size:20px;font-weight:600}
 .b-est{color:var(--amber-txt);background:var(--amber-chip)}
 .b-risk{background:#FDECEC;color:#B42318}
 .b-neutral{color:#4A4A4A;background:var(--line)}
+.b-loss{color:var(--loss-txt);background:var(--loss-bg)}
 .actions{margin:0;padding:0;list-style:none;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
 .actions li{display:flex;gap:14px;padding:16px;border-radius:12px;background:var(--violet-card);line-height:1.5}
 .actions li.warn{background:var(--amber-bg)}
@@ -3257,6 +3258,23 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     const k = (label, v, note, color) => h("div", { class: "ek" }, h("span", { class: "label" }, label), h("b", { style: color ? "color:" + color : "" }, v), note ? h("span", { class: "small" }, note) : null);
     const blocks = [head];
     try { const ib = await impactCard(); if (ib) blocks.push(ib); } catch (e) {}      // Impact lives here, next to the tracking it measures
+    try {
+      const ot = await api("/orders-trace/" + cid());
+      if (ot.orders.length) {
+        const tag = (v, reason) => h("span", { class: "badge " + (v === "accepted" || v === "sent" ? "b-measured" : v === "waiting" ? "b-neutral" : v === "not connected" ? "b-neutral" : "b-loss"), title: reason || "" },
+          v === "accepted" || v === "sent" ? "✓ " + (v === "sent" ? "sent" : "accepted") : v === "rejected" ? "rejected" : v);
+        blocks.push(h("section", { class: "card" }, h("h2", {}, "Recent orders"),
+          h("p", { class: "sub", style: "margin:0;font-size:13px" }, "What happened to each order: paid, refunded, sent to Meta and TikTok. Hover a rejected one for the reason."),
+          h("div", { style: "overflow-x:auto" }, h("table", {},
+            h("thead", {}, h("tr", {}, ["When", "Order", "Amount", "Paid with", "From ad", "Meta", "TikTok"].map((t) => h("th", { scope: "col" }, t)))),
+            h("tbody", {}, ot.orders.map((o) => h("tr", {},
+              h("td", { style: "white-space:nowrap" }, new Date(o.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })),
+              h("td", {}, "…" + o.order),
+              h("td", { style: "white-space:nowrap" }, fmt.format(Math.round(o.amount)) + " " + o.currency + (o.refunded ? " (refunded " + fmt.format(Math.round(o.refunded)) + ")" : "")),
+              h("td", {}, o.payment || "–"), h("td", {}, o.from_ad || "–"),
+              h("td", {}, tag(o.meta)), h("td", {}, tag(o.tiktok, o.tiktok_reason)))))))));
+      }
+    } catch (e) {}
     const alertBox = (a) => h("div", { class: a.level === "bad" ? "result err" : "result", role: a.level === "bad" ? "alert" : null },
       h("span", {}, h("b", {}, a.text), a.fix ? h("span", { style: "display:block;margin-top:4px" }, "Fix: " + a.fix) : null));
     if (d.admin) {
@@ -4374,12 +4392,14 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("div", {}, h("h1", {}, "Home"), h("p", { class: "sub" }, "Sales compared with the previous period")),
         h("div", { class: "homectl", style: "display:flex;gap:10px;align-items:center;flex-wrap:wrap;min-width:0;max-width:100%" }, periods, download)),
       body]));
-    let d, res = null;
-    try { [d, res] = await Promise.all([api("/dashboard/" + cid() + "?period=" + encodeURIComponent(homePeriod)),
-                                       api("/proads-results/" + cid()).catch(() => null)]); }
+    let d, res = null, al = null;
+    try { [d, res, al] = await Promise.all([api("/dashboard/" + cid() + "?period=" + encodeURIComponent(homePeriod)),
+                                       api("/proads-results/" + cid()).catch(() => null), api("/alerts/" + cid()).catch(() => null)]); }
     catch (e) { if (e.message !== "signed out") body.replaceChildren(errorCard(e.message)); return; }
     const cur = d.currency;
     const hero = d.mode !== "proads" && res && !res.error ? resultsHero(res, status ? status.name : session.client) : null;
+    const alertsBox = al && al.alerts && al.alerts.length ? h("div", { style: "display:flex;flex-direction:column;gap:8px" }, al.alerts.map((a) =>
+      h("div", { class: "result err", role: "alert" }, h("span", {}, h("b", {}, a.text + " "), a.fix)))) : null;
     const doneN = (d.setup || []).filter((x) => x.done).length;
     const guide = !d.setup || doneN === d.setup.length ? null : h("section", { class: "card", "aria-labelledby": "guide-h" },
       h("div", { class: "between" }, h("h2", { id: "guide-h" }, "Setup guide"), h("span", { class: "sub", style: "font-size:13px" }, doneN + " of " + d.setup.length + " done")),
@@ -4390,7 +4410,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("span", { class: "sr" }, x.done ? "done" : "to do")))));
     if (d.mode !== "proads" && !d.has_data) {
       const [adsEmpty, leadsEmpty] = await Promise.all([adsSection(homePeriod), leadsCard()]);
-      body.replaceChildren(...[adsBanner(d.ads_access), hero, howItWorksCard(), guide, adsEmpty, leadsEmpty].filter(Boolean), h("section", { class: "card empty" }, h("h2", {}, "Your sales will show here"),
+      body.replaceChildren(...[adsBanner(d.ads_access), alertsBox, hero, howItWorksCard(), guide, adsEmpty, leadsEmpty].filter(Boolean), h("section", { class: "card empty" }, h("h2", {}, "Your sales will show here"),
         h("p", { class: "sub" }, "Bring in your sales and this page fills with sales, real profit and orders, day by day."),
         h("a", { class: "btn btn-primary", href: "#/upload" }, "Bring in your sales")));
       return;
@@ -4464,7 +4484,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         + (lk.at_stake_per_month ? (lk.measured_per_month ? ", " : "") + "up to " + fmt.format(Math.round(lk.at_stake_per_month)) + " " + lk.currency + " more at stake" : "")
         + ". Biggest: " + lk.leaks[0].title + "."), h("span", { class: "ok" }, "See all →")) : null;
     body.replaceChildren(
-      ...[adsBanner(d.ads_access), leakNote, hero, d.mode !== "proads" ? howItWorksCard() : null, whatsNewCard()].filter(Boolean),
+      ...[adsBanner(d.ads_access), alertsBox, leakNote, hero, d.mode !== "proads" ? howItWorksCard() : null, whatsNewCard()].filter(Boolean),
       h("h2", { style: "font-size:20px;margin:8px 0 -8px" }, "Sales"), strip, profitNote(d), ...[impactBox].filter(Boolean), adsBox,
       h("section", { class: "card", "aria-label": "Chart" },
         h("div", { class: "between" }, h("h2", {}, label + " over time"),
@@ -4529,6 +4549,10 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       ["Meta (Conversions API)", pair(r.meta_sent_total, r.sent_meta), r.meta_sent_total && r.sent_meta < r.meta_sent_total ? (r.meta_sent_total - r.sent_meta) + " not accepted" : "paid orders"],
       ["TikTok (Events API)", pair(r.tiktok_sent_total, r.sent_tiktok), r.tiktok_sent_total && r.sent_tiktok < r.tiktok_sent_total ? (r.tiktok_sent_total - r.sent_tiktok) + " not accepted" : "paid orders"],
       ["Buyers in audience list", r.buyers ? fmt.format(r.buyers) : null, "for exclusion and lookalikes"]].filter(([, v]) => v);
+    const learn = [["TikTok", r.tiktok_7d, r.tiktok_sent_total], ["Meta", r.meta_7d, r.meta_sent_total]].filter(([, , any]) => any)
+      .map(([n, v]) => h("div", { style: "display:flex;flex-direction:column;gap:4px;font-size:13px" },
+        h("span", {}, h("b", {}, n + " learning: "), fmt.format(v) + " of ~50 purchases in the last 7 days"),
+        h("div", { class: "progress", style: "height:6px" }, h("div", { style: "width:" + Math.min(100, Math.round(2 * v)) + "%" }))));
     return h("section", { class: "card hero", "aria-labelledby": "res-h" },
       h("div", {}, h("h2", { id: "res-h", style: "font-size:22px;margin:0" }, "ProAds results"),
         h("p", { class: "sub", style: "margin:4px 0 0" }, since ? "Since " + since : "All time")),
@@ -4536,7 +4560,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       h("p", { style: "margin:0;font-size:16px;font-weight:600" }, verdict),
       !r.campaigns ? h("a", { class: "btn btn-primary", href: "#/assistant", style: "align-self:flex-start" }, "Build a campaign") : null,
       bg.length ? h("div", { class: "bgwork" }, h("b", { style: "font-size:14px" }, "Data sent to ad platforms"),
-        h("div", { class: "bggrid" }, bg.map(([t, v, why]) => h("div", {}, h("span", { style: "font-weight:600" }, t), h("b", { style: "font-size:18px" }, v), h("span", { class: "sub", style: "font-size:12px" }, why))))) : null,
+        h("div", { class: "bggrid" }, bg.map(([t, v, why]) => h("div", {}, h("span", { style: "font-weight:600" }, t), h("b", { style: "font-size:18px" }, v), h("span", { class: "sub", style: "font-size:12px" }, why)))), ...learn) : null,
       h("span", { class: "sub", style: "font-size:12px" }, "Paid orders from tracked ad clicks only, refunds deducted."));
   }
   async function viewHome() { return viewDetails(null, true); }
