@@ -4021,8 +4021,8 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         : "Judge TikTok on the paid orders ProAds confirms, not only on TikTok's count. " + (tr.tracked ? "" : "Use your ProAds TikTok tracking link in the ads to tie each paid order to its ad."));
       const list = (title, rows, label) => h("div", { style: "flex:1 1 300px;display:flex;flex-direction:column;gap:12px;min-width:0" }, h("b", {}, title),
         rows.length ? rows.map((x) => {
-          const byRes = rows.some((y) => y.results), val = byRes ? x.results : x.clicks, max = Math.max(...rows.map((y) => byRes ? y.results : y.clicks), 1);
-          return h("div", { class: "hbar" }, h("span", {}, label(x)), h("b", {}, x.results ? fmt.format(x.results) + " purchases" : fmt.format(x.clicks) + " clicks"),
+          const val = x.clicks || 0, max = Math.max(...rows.map((y) => y.clicks || 0), 1);      // bars by clicks; every row shows both
+          return h("div", { class: "hbar" }, h("span", {}, label(x)), h("b", {}, fmt.format(x.clicks || 0) + " clicks · " + fmt.format(x.results || 0) + " purchases"),
             h("div", { class: "track" }, h("div", { style: "width:" + Math.max(3, Math.round(100 * val / max)) + "%" })));
         }) : h("span", { class: "sub", style: "font-size:13px" }, "Nothing yet."));
       const STATUS = { CAMPAIGN_STATUS_ENABLE: "Active", CAMPAIGN_STATUS_DISABLE: "Off", CAMPAIGN_STATUS_DELETE: "Deleted",
@@ -4088,8 +4088,8 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         : "Every result Meta reports is confirmed by ProAds" + (gap < 0 ? ", plus " + fmt.format(-gap) + " Meta missed." : "."));
       const list = (title, rows, label) => h("div", { style: "flex:1 1 300px;display:flex;flex-direction:column;gap:12px;min-width:0" }, h("b", {}, title),
         rows.length ? rows.map((x) => {
-          const byRes = rows.some((y) => y.results), val = byRes ? x.results : x.clicks, max = Math.max(...rows.map((y) => byRes ? y.results : y.clicks), 1);
-          return h("div", { class: "hbar" }, h("span", {}, label(x)), h("b", {}, x.results ? fmt.format(x.results) + " " + what : fmt.format(x.clicks) + " clicks"),
+          const val = x.clicks || 0, max = Math.max(...rows.map((y) => y.clicks || 0), 1);      // bars by clicks; every row shows both
+          return h("div", { class: "hbar" }, h("span", {}, label(x)), h("b", {}, fmt.format(x.clicks || 0) + " clicks · " + fmt.format(x.results || 0) + " " + what),
             h("div", { class: "track" }, h("div", { style: "width:" + Math.max(3, Math.round(100 * val / max)) + "%" })));
         }) : h("span", { class: "sub", style: "font-size:13px" }, "Nothing yet."));
       box.replaceChildren(head, kpis, river(stages), truth, verdict,
