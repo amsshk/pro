@@ -2752,14 +2752,18 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                     kind = trial_mail.due(acc)
                     if not kind or state.trial_mails.sent(cid, kind, acc["trial_ends"]):
                         continue
-                    state.trial_mails.mark(cid, kind, acc["trial_ends"])          # once, even if sending fails
                 acct = state.accounts.get(cid)
                 email = (acct or {}).get("email") or state.config(cid).get("email")
                 if not email:
                     continue
                 name = state.config(cid).get("name") or (acct or {}).get("business") or cid
-                mailer.send(email, *trial_mail.render(kind, name, plan_prices(), f"{billing.fee_percent():g}%", base))
-                log.info("sent ad-test %s email to %s", kind, cid)
+                ok, why = mailer.send_checked(email, *trial_mail.render(kind, name, plan_prices(), f"{billing.fee_percent():g}%", base))
+                if ok:                                          # marked only once it really went, so a failure is retried
+                    with state.lock:
+                        state.trial_mails.mark(cid, kind, acc["trial_ends"])
+                    log.info("sent ad-test %s email to %s", kind, cid)
+                else:
+                    log.warning("ad-test %s email to %s not sent: %s", kind, cid, why)
             except Exception:
                 log.exception("ad-test email failed for %s", cid)
     state.trial_mail_all = trial_mail_all
@@ -4859,6 +4863,21 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         name = re.sub(r"[^a-z0-9-]", "", (cfg.get("name") or client_id).lower().replace(" ", "-"))[:40] or "business"
         return Response(body, mimetype="application/json",
                         headers={"Content-Disposition": f'attachment; filename="proads-campaign-log-{name}.json"', "Cache-Control": "no-store"})
+
+    @flask.post("/admin/<admin_id>/test-email")
+    def admin_test_email(admin_id):
+        """Sends a test email to the address given, and says exactly why it failed if it did."""
+        require_admin(admin_id)
+        to = str((request.get_json(silent=True) or {}).get("to") or "").strip()
+        if "@" not in to or len(to) > 200:
+            abort(400, "Enter an email address.")
+        ok, why = mailer.send_checked(to, "ProAds test email", "This is a test from ProAds. Email sending works.",
+                                      "<p>This is a test from <b>ProAds</b>. Email sending works.</p>")
+        with state.lock:
+            sent = [dict(zip(("client_id", "kind", "sent_at"), r)) for r in state.store.db.execute(
+                "SELECT client_id, kind, sent_at FROM trial_mails ORDER BY sent_at DESC LIMIT 10")]
+        return {"sent": ok, "error": why or None, "from": os.environ.get("SMTP_FROM"), "host": os.environ.get("SMTP_HOST"),
+                "port": os.environ.get("SMTP_PORT", "587"), "recent_reminders": sent}
 
     @flask.post("/admin/<admin_id>/check-link/<client_id>")
     def admin_check_link(admin_id, client_id):

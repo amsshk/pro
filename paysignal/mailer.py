@@ -20,8 +20,14 @@ def available() -> bool:
 
 
 def send(to: str, subject: str, text: str, html: str | None = None) -> bool:
+    return send_checked(to, subject, text, html)[0]
+
+
+def send_checked(to: str, subject: str, text: str, html: str | None = None) -> tuple[bool, str]:
+    """(sent, why not) - the reason is shown to the admin, never the password."""
     if not available():
-        return False
+        missing = [k for k in ("SMTP_HOST", "SMTP_FROM") if not os.environ.get(k)]
+        return False, "Missing in Render: " + ", ".join(missing)
     msg = EmailMessage()
     msg["From"] = os.environ["SMTP_FROM"]
     msg["To"] = to
@@ -41,7 +47,10 @@ def send(to: str, subject: str, text: str, html: str | None = None) -> bool:
             if user:
                 server.login(user, password)
             server.send_message(msg)
-        return True
+        return True, ""
     except Exception as e:
         log.warning("email to %s failed: %s", to.split("@")[-1], e)
-        return False
+        why = f"{type(e).__name__}: {str(e)[:200]}"
+        if os.environ.get("SMTP_PASSWORD"):
+            why = why.replace(os.environ["SMTP_PASSWORD"], "***")
+        return False, why
