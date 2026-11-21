@@ -4558,7 +4558,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
           h("span", { class: "sub", style: "font-size:12px" }, "Purchases " + r.health[n].parts.volume + "/40 · Match " + r.health[n].parts.match + "/30 · Accepted " + r.health[n].parts.delivery + "/15 · Focus " + r.health[n].parts.focus + "/15")) : null,
         (r.health || {})[n] && r.health[n].score < 75 ? h("span", {}, r.health[n].tip) : null,
         h("span", {}, h("b", {}, n + " learning: "), fmt.format(v) + " of ~50 purchases in the last 7 days"
-          + (v >= 50 ? " · enough to finish learning" : v ? " · at this pace about " + Math.ceil(7 * (50 - v) / v) + " more days" : " · no purchases yet")),
+          + (v >= 50 ? " · enough to finish learning" : v >= 20 ? " · on pace, about " + Math.ceil(7 * (50 - v) / v) + " more days" : " · not enough yet: one campaign with enough budget first")),
         n === "TikTok" && r.tiktok_split ? h("span", { style: "color: var(--amber-txt)" }, r.tiktok_split + " purchase campaigns are running at the same time and split these purchases between them. One campaign learns faster.") : null,
         h("div", { class: "progress", style: "height:6px" }, h("div", { style: "width:" + Math.min(100, Math.round(2 * v)) + "%" }))));
     return h("section", { class: "card hero", "aria-labelledby": "res-h" },

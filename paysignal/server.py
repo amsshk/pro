@@ -2478,7 +2478,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             try:
                 live = tiktok_live_data(client_id, "7")
                 active = [c for c in live.get("campaigns", []) if c.get("on") and not c.get("promote")]
-                out["tiktok_split"] = len(active) if len(active) > 1 else None
+                rt = re.compile(r"retarget|remarket|\brt\b|returning|existing|إعادة", re.I)
+                prospecting = [c for c in active if not rt.search(str(c.get("name") or ""))]   # one retargeting campaign is fine
+                out["tiktok_split"] = len(prospecting) if len(prospecting) > 1 else None
             except Exception:
                 pass
         wk_dt = datetime.now(timezone.utc) - timedelta(days=7)          # health score per platform that gets sales
