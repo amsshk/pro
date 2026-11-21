@@ -528,6 +528,11 @@ class App:
                 self.sync_meta(client_id)
             except Exception:
                 log.exception("instant meta send failed for %s", client_id)
+            try:                                          # TikTok too: a sale reaches both within seconds, not minutes
+                if getattr(self, "tiktok_push", None) and self.tiktok.get(client_id):
+                    self.tiktok_push(client_id)
+            except Exception:
+                log.exception("instant TikTok send failed for %s", client_id)
         threading.Thread(target=run, daemon=True, name="meta-now").start()
 
     # ----- WhatsApp -----
@@ -2355,6 +2360,11 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             out.append({"level": "bad", "text": f"TikTok spent {spend3:,.0f} in the last 3 days and ProAds received no paid orders"
                         + (f" for {int(days_quiet)} days." if days_quiet else "."),
                         "fix": "Check the Shopify connection on Connect. If sales are coming in fine, the ads aren't selling: change the videos or the offer."})
+        hit = state.ads_cache.get(("impact", client_id))           # Meta's own match score, when Impact already read it
+        mq = ((hit[1] or {}).get("meta") or {}) if hit else {}
+        if isinstance(mq, dict) and mq.get("match_quality") is not None and mq["match_quality"] < 6:
+            out.append({"level": "bad", "text": f"Meta can match only {mq['match_quality']:.1f}/10 of your purchases to people.",
+                        "fix": "More orders with email and phone (Shopify customer data access) raise it. Fix this before raising budgets."})
         for name, sent, ok in (("TikTok", tt_sent, tt_ok), ("Meta", m_sent, m_ok)):
             if sent >= 5 and ok / sent < 0.9:
                 out.append({"level": "bad", "text": f"{name} accepted only {ok} of {sent} sales sent in the last 7 days.",
@@ -2461,8 +2471,16 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         with state.lock:
             out["tiktok_7d"] = state.store.db.execute("SELECT COUNT(*) FROM tiktok_delivered WHERE client_id=? AND status='accepted'"
                                                       " AND event_id NOT LIKE '%refund%' AND sent_at>=?", (client_id, wk)).fetchone()[0]
+            out["tiktok_split"] = None
             out["meta_7d"] = state.store.db.execute("SELECT COALESCE(SUM(purchases),0) FROM capi_log WHERE client_id=? AND mode='live'"
                                                     " AND error IS NULL AND COALESCE(received,0)>0 AND at>=?", (client_id, wk)).fetchone()[0]
+        if tt_link and tt_link["advertiser_id"]:                 # purchase campaigns running at once share the same buyers
+            try:
+                live = tiktok_live_data(client_id, "7")
+                active = [c for c in live.get("campaigns", []) if c.get("on") and not c.get("promote")]
+                out["tiktok_split"] = len(active) if len(active) > 1 else None
+            except Exception:
+                pass
         state.ads_cache[("results", client_id)] = (time.time(), out)
         return out
 

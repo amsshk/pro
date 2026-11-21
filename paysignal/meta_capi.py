@@ -73,6 +73,12 @@ def build_purchase_event(p: Payment, score: Score, default_country_code: str = "
             "proads_source": p.source,
         },
     }
+    if p.items:                                   # what was bought: helps Meta match products and Advantage+ catalog ads
+        event["custom_data"]["content_type"] = "product"
+        event["custom_data"]["content_ids"] = [str(i.sku or i.name)[:100] for i in p.items][:50]
+        event["custom_data"]["contents"] = [{"id": str(i.sku or i.name)[:100], "quantity": int(i.quantity or 1),
+                                             "item_price": round(float(i.unit_price or 0), 2)} for i in p.items][:50]
+        event["custom_data"]["num_items"] = sum(int(i.quantity or 1) for i in p.items)
     if p.event_source_url:
         event["event_source_url"] = p.event_source_url
     return event

@@ -4551,7 +4551,9 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       ["Buyers in audience list", r.buyers ? fmt.format(r.buyers) : null, "for exclusion and lookalikes"]].filter(([, v]) => v);
     const learn = [["TikTok", r.tiktok_7d, r.tiktok_sent_total], ["Meta", r.meta_7d, r.meta_sent_total]].filter(([, , any]) => any)
       .map(([n, v]) => h("div", { style: "display:flex;flex-direction:column;gap:4px;font-size:13px" },
-        h("span", {}, h("b", {}, n + " learning: "), fmt.format(v) + " of ~50 purchases in the last 7 days"),
+        h("span", {}, h("b", {}, n + " learning: "), fmt.format(v) + " of ~50 purchases in the last 7 days"
+          + (v >= 50 ? " · enough to finish learning" : v ? " · at this pace about " + Math.ceil(7 * (50 - v) / v) + " more days" : " · no purchases yet")),
+        n === "TikTok" && r.tiktok_split ? h("span", { style: "color: var(--amber-txt)" }, r.tiktok_split + " purchase campaigns are running at the same time and split these purchases between them. One campaign learns faster.") : null,
         h("div", { class: "progress", style: "height:6px" }, h("div", { style: "width:" + Math.min(100, Math.round(2 * v)) + "%" }))));
     return h("section", { class: "card hero", "aria-labelledby": "res-h" },
       h("div", {}, h("h2", { id: "res-h", style: "font-size:22px;margin:0" }, "ProAds results"),
