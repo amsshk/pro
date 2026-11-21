@@ -519,11 +519,14 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   const AKEY = "proads.admin_session";
   let adminSession = null, bizList = null;
   try { adminSession = sessionStorage.getItem(VKEY) ? store.get(SKEY, localStorage) : null; } catch (e) { adminSession = null; }
+  // "Remember me": on (default) keeps you signed in on this device; off signs you out when the browser closes
+  const remembered = () => { try { return localStorage.getItem("proads.remember") !== "0"; } catch (e) { return true; } };
   function saveSessions() {
     try {
-      if (adminSession) { localStorage.setItem(SKEY, JSON.stringify(adminSession)); sessionStorage.setItem(VKEY, JSON.stringify(session)); }
-      else { if (session) localStorage.setItem(SKEY, JSON.stringify(session)); sessionStorage.removeItem(VKEY); }
-      sessionStorage.removeItem(SKEY); sessionStorage.removeItem(AKEY);
+      const keep = remembered() ? localStorage : sessionStorage, other = keep === localStorage ? sessionStorage : localStorage;
+      if (adminSession) { keep.setItem(SKEY, JSON.stringify(adminSession)); sessionStorage.setItem(VKEY, JSON.stringify(session)); }
+      else { if (session) keep.setItem(SKEY, JSON.stringify(session)); sessionStorage.removeItem(VKEY); }
+      other.removeItem(SKEY); sessionStorage.removeItem(AKEY);
     } catch (e) {}
   }
   function clearSessions() {
@@ -595,8 +598,10 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
 
   // ---------- sign in ----------
   function renderLogin(message) {
-    const client = h("input", { id: "client", autocomplete: "username", required: true, placeholder: "you@business.com" });
-    const key = h("input", { id: "key", type: "password", autocomplete: "current-password", required: true });
+    let lastLogin = ""; try { lastLogin = localStorage.getItem("proads.lastlogin") || ""; } catch (e) {}
+    const client = h("input", { id: "client", name: "username", autocomplete: "username", required: true, placeholder: "you@business.com", value: lastLogin });
+    const key = h("input", { id: "key", name: "password", type: "password", autocomplete: "current-password", required: true });
+    const remember = h("input", { type: "checkbox", id: "remember", checked: remembered() || null, style: "width:18px;min-height:18px" });
     const err = h("p", { class: "sub", role: "alert", style: "color: var(--amber-txt)" }, message || "");
     const btn = h("button", { class: "btn btn-primary", type: "submit" }, "Sign in");
     const socialSlot = h("div", { hidden: true });
@@ -610,6 +615,13 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         if (!res.ok) throw new Error(data.error || "Sign-in failed. Please try again.");
         session = { client: data.client_id, key: data.token };
         status = await api("/status/" + cid());
+        try {
+          localStorage.setItem("proads.remember", remember.checked ? "1" : "0");
+          if (remember.checked) localStorage.setItem("proads.lastlogin", client.value.trim()); else localStorage.removeItem("proads.lastlogin");
+        } catch (e) {}
+        if (remember.checked && window.PasswordCredential && /@/.test(client.value)) {     // let the browser offer to save the password
+          try { await navigator.credentials.store(new PasswordCredential({ id: client.value.trim(), password: key.value, name: client.value.trim() })); } catch (e) {}
+        }
         saveSessions();
         go(location.hash && location.hash !== "#" ? location.hash : "#/home");
       } catch (e2) {
@@ -622,11 +634,12 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       socialSlot,
       h("label", { class: "f", for: "client" }, "Email (or business ID)", client),
       h("label", { class: "f", for: "key" }, "Password (or access key)", key),
+      h("label", { for: "remember", style: "display:flex;gap:10px;align-items:center;font-size:14px" }, remember, "Remember me on this device"),
       err, btn,
       h("button", { type: "button", class: "chip", style: "align-self:flex-start;border:0;background:none;padding:0;min-height:32px;color: var(--violet)", onclick: () => renderForgot(client.value) }, "Forgot password?"),
       h("p", { class: "sub", style: "margin:0;font-size:14px" }, "New here? ", h("a", { href: "/#signup" }, "Create a free account")));
     root.replaceChildren(h("div", { class: "login" }, form));
-    client.focus();
+    (lastLogin ? key : client).focus();
     fetch("/public-config").then((r) => r.json()).then((c) => { const b = socialButtons(c.sign_in, "signin"); if (b) socialSlot.replaceWith(b); }).catch(() => {});
   }
 
