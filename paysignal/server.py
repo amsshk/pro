@@ -2378,6 +2378,24 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                             "fix": "Add 3 to 5 clearly different videos (different hooks, people, angles) so TikTok can find what sells."})
         except Exception:
             pass
+        try:                                                  # a video people stop clicking: CTR last 3 days vs the 4 before
+            today_ = datetime.now(timezone.utc).date()
+            d3, d7 = (today_ - timedelta(days=3)).isoformat(), (today_ - timedelta(days=7)).isoformat()
+            with state.lock:
+                rows = state.store.db.execute(
+                    "SELECT ad_id, MAX(ad_name), SUM(CASE WHEN day>=? THEN impressions ELSE 0 END), SUM(CASE WHEN day>=? THEN clicks ELSE 0 END),"
+                    " SUM(CASE WHEN day<? THEN impressions ELSE 0 END), SUM(CASE WHEN day<? THEN clicks ELSE 0 END)"
+                    " FROM tiktok_spend WHERE client_id=? AND day>=? GROUP BY ad_id", (d3, d3, d3, d3, client_id, d7)).fetchall()
+            for ad_id, name, i_new, c_new, i_old, c_old in rows:
+                if i_new >= 2000 and i_old >= 2000 and c_old:
+                    ctr_new, ctr_old = c_new / i_new, c_old / i_old
+                    if ctr_new < ctr_old * 0.6:
+                        out.append({"level": "warn", "text": f"Ad \u201c{name or ad_id}\u201d is getting tired: clicks per view fell from "
+                                    f"{ctr_old * 100:.1f}% to {ctr_new * 100:.1f}% in the last 3 days.",
+                                    "fix": "Add a new video with a different opening. Don't edit the old one; turn it off once the new one runs."})
+                        break
+        except Exception:
+            pass
         for name, sent, ok in (("TikTok", tt_sent, tt_ok), ("Meta", m_sent, m_ok)):
             if sent >= 5 and ok / sent < 0.9:
                 out.append({"level": "bad", "text": f"{name} accepted only {ok} of {sent} sales sent in the last 7 days.",
@@ -2541,6 +2559,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                                               " AND sent_at>=?", (client_id, wk)).fetchone()[0]
             m_sent7 = state.store.db.execute("SELECT COALESCE(SUM(purchases),0) FROM capi_log WHERE client_id=? AND mode='live' AND at>=?",
                                              (client_id, wk)).fetchone()[0]
+        out["learning_budget"] = round(50 * out["cost_per_order"] / 7) if out.get("cost_per_order") else None
         out["health"] = {}
         if tt_tried:
             out["health"]["TikTok"] = proads_results.health_score(out["tiktok_7d"], tt_sent7,

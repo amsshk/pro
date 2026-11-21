@@ -4585,6 +4585,8 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         (r.health || {})[n] && r.health[n].score < 75 ? h("span", {}, r.health[n].tip) : null,
         h("span", {}, h("b", {}, n + " learning: "), fmt.format(v) + " of ~50 purchases in the last 7 days"
           + (v >= 50 ? " · enough to finish learning" : v >= 20 ? " · on pace, about " + Math.ceil(7 * (50 - v) / v) + " more days" : " · not enough yet: one campaign with enough budget first")),
+        v < 50 && r.learning_budget ? h("span", { class: "sub" }, "At your real cost per paid order (" + fmt.format(Math.round(r.cost_per_order)) + " " + cur + "), 50 purchases a week needs about " + fmt.format(r.learning_budget) + " " + cur + " a day in one campaign."
+          + (v < 20 ? " Below that, optimizing for Initiate checkout for a while gives the ads more to learn from." : "")) : null,
         n === "TikTok" && r.tiktok_split ? h("span", { style: "color: var(--amber-txt)" }, r.tiktok_split + " purchase campaigns are running at the same time and split these purchases between them. One campaign learns faster.") : null,
         h("div", { class: "progress", style: "height:6px" }, h("div", { style: "width:" + Math.min(100, Math.round(2 * v)) + "%" }))));
     return h("section", { class: "card hero", "aria-labelledby": "res-h" },

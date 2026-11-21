@@ -55,3 +55,18 @@ def test_add_offline_sale_goes_to_meta_as_chat_not_tiktok(tmp_path):
         def was_sent(self, *a): return False
     pl = tiktok.plan([p], S(), "glow-clinic", lambda p: 0, lambda p: p.amount)
     assert pl["send"] == []
+
+
+def test_tired_ad_alert(tmp_path):
+    from datetime import date, timedelta as td
+    app, c, tok = app_and_token(tmp_path)
+    db = app.extensions["paysignal"].store.db
+    today = date.today()
+    for i in range(7):
+        d = (today - td(days=i)).isoformat()
+        clicks = 20 if i < 3 else 80                       # 1% now vs 4% before
+        db.execute("INSERT INTO tiktok_spend (client_id, day, ad_id, ad_name, spend, impressions, clicks) VALUES ('glow-clinic',?,?,?,?,?,?)",
+                   (d, "A1", "Shop N6", 50, 2000, clicks))
+    db.commit()
+    a = c.get("/alerts/glow-clinic", headers={"X-API-Key": tok}).json["alerts"]
+    assert any("getting tired" in x["text"] for x in a)
