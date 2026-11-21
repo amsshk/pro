@@ -73,6 +73,8 @@ def build_purchase_event(p: Payment, score: Score, default_country_code: str = "
             "proads_source": p.source,
         },
     }
+    if profit is not None:                        # Meta's own profit optimization reads net_revenue next to value (same currency)
+        event["custom_data"]["net_revenue"] = round(profit, 2)
     if p.items:                                   # what was bought: helps Meta match products and Advantage+ catalog ads
         event["custom_data"]["content_type"] = "product"
         event["custom_data"]["content_ids"] = [str(i.sku or i.name)[:100] for i in p.items][:50]

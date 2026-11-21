@@ -48,6 +48,8 @@ def normalize_phone(phone: Optional[str], default_country_code: str = "971") -> 
         digits = digits[2:]
     elif not phone.strip().startswith("+") and digits.startswith("0"):
         digits = default_country_code + digits.lstrip("0")
+    elif not phone.strip().startswith("+") and len(digits) <= 9 and not digits.startswith(default_country_code):
+        digits = default_country_code + digits          # local number typed without the 0 (e.g. 501234567)
     return digits if len(digits) >= 8 else None
 
 
