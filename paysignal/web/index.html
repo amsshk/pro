@@ -4437,7 +4437,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     const doneN = (d.setup || []).filter((x) => x.done).length;
     if (!d.setup || doneN === d.setup.length) return null;
     return h("section", { class: "card", "aria-labelledby": "guide-h" },
-      h("div", { class: "between" }, h("h2", { id: "guide-h" }, "Finish setting up"), h("span", { class: "sub", style: "font-size:13px" }, doneN + " of " + d.setup.length + " done")),
+      h("div", { class: "between" }, h("h2", { id: "guide-h" }, "Setup"), h("span", { class: "sub", style: "font-size:13px" }, doneN + " of " + d.setup.length + " done")),
       h("div", { class: "progress", role: "progressbar", "aria-valuemin": 0, "aria-valuemax": d.setup.length, "aria-valuenow": doneN }, h("div", { style: "width:" + Math.round(100 * doneN / d.setup.length) + "%" })),
       h("div", { class: "guide" }, d.setup.filter((x) => !x.done).slice(0, 3).map((x) => h("a", { href: x.href },
         h("span", { class: "tick", "aria-hidden": "true" }),
@@ -4450,41 +4450,41 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       h("div", { class: "flowdot" }, h("b", {}, value)), h("span", { class: "flowlbl" }, label), note ? h("span", { class: "flownote" }, note) : null);
     const arrow = () => h("span", { class: "flowarrow", "aria-hidden": "true" }, "→");
     const steps = [
-      step(fmt.format(r.campaigns), "campaigns made with ProAds", r.live ? r.live + " running now" : null),
-      step(r.spend === null ? "–" : m(r.spend), "spent on them", r.spend === null ? "connect the ad account to see it" : null),
+      step(fmt.format(r.campaigns), "campaigns", r.live ? r.live + " active" : null),
+      step(r.spend === null ? "–" : m(r.spend), "spend", r.spend === null ? "ad account not connected" : null),
       step(r.clicks === null ? "–" : fmt.format(r.clicks), "clicks"),
-      step(fmt.format(r.orders), "paid orders from your ads", r.orders ? [r.orders_by.tiktok ? r.orders_by.tiktok + " TikTok" : null, r.orders_by.meta ? r.orders_by.meta + " Meta" : null].filter(Boolean).join(" · ") : null, true),
-      step(m(r.money), "money kept", "refunds taken off", true)];
+      step(fmt.format(r.orders), "paid orders", r.orders ? [r.orders_by.tiktok ? r.orders_by.tiktok + " TikTok" : null, r.orders_by.meta ? r.orders_by.meta + " Meta" : null].filter(Boolean).join(" · ") : null, true),
+      step(m(r.money), "revenue", "net of refunds", true)];
     const flow = h("div", { class: "flow", role: "list" }, ...steps.flatMap((x, i) => i ? [arrow(), x] : [x]));
-    const verdict = !r.campaigns ? "You haven't run a campaign with ProAds yet. Build one and this page shows what it brought you, in real paid orders."
-      : r.spend && r.orders ? "Every 1 " + cur + " spent through ProAds brought back " + r.back_per_1.toFixed(2) + " " + cur + " in paid orders (" + m(r.cost_per_order) + " per order)."
-      : r.spend ? "No paid orders from ProAds campaigns yet. ProAds only counts orders that were really paid, so this number is honest from day one."
-      : "Your ProAds campaigns haven't spent yet.";
+    const verdict = !r.campaigns ? "No campaigns yet."
+      : r.spend && r.orders ? "Return: " + r.back_per_1.toFixed(2) + " " + cur + " per 1 " + cur + " spent · " + m(r.cost_per_order) + " per paid order"
+      : r.spend ? "No paid orders from these campaigns yet."
+      : "No spend yet.";
     const bg = [
-      ["Real sales sent to TikTok", r.sent_tiktok, "so TikTok learns who actually buys"],
-      ["Real sales sent to Meta", r.sent_meta, "so Facebook and Instagram learn who actually buys"],
-      ["Buyers ProAds knows", r.buyers, "ready to exclude or find more like them"]].filter(([, v]) => v);
+      ["Paid orders sent to TikTok", r.sent_tiktok, "Events API, accepted"],
+      ["Paid orders sent to Meta", r.sent_meta, "Conversions API, accepted"],
+      ["Buyers in audience list", r.buyers, "for exclusion and lookalikes"]].filter(([, v]) => v);
     return h("section", { class: "card hero", "aria-labelledby": "res-h" },
-      h("div", {}, h("h2", { id: "res-h", style: "font-size:22px;margin:0" }, "What ProAds did for " + name),
-        h("p", { class: "sub", style: "margin:4px 0 0" }, since ? "Since you joined on " + since : "Since you started")),
+      h("div", {}, h("h2", { id: "res-h", style: "font-size:22px;margin:0" }, "ProAds results"),
+        h("p", { class: "sub", style: "margin:4px 0 0" }, since ? "Since " + since : "All time")),
       flow,
       h("p", { style: "margin:0;font-size:16px;font-weight:600" }, verdict),
       !r.campaigns ? h("a", { class: "btn btn-primary", href: "#/assistant", style: "align-self:flex-start" }, "Build a campaign") : null,
-      bg.length ? h("div", { class: "bgwork" }, h("b", { style: "font-size:14px" }, "Working for you in the background"),
+      bg.length ? h("div", { class: "bgwork" }, h("b", { style: "font-size:14px" }, "Data sent to ad platforms"),
         h("div", { class: "bggrid" }, bg.map(([t, v, why]) => h("div", {}, h("b", { style: "font-size:22px" }, fmt.format(v)), h("span", {}, t), h("span", { class: "sub", style: "font-size:12px" }, why))))) : null,
-      h("span", { class: "sub", style: "font-size:12px" }, "Counts only orders that came through a ProAds tracking link or an ad click and were really paid. Nothing here is estimated."));
+      h("span", { class: "sub", style: "font-size:12px" }, "Paid orders from tracked ad clicks only, refunds deducted."));
   }
   async function viewHome() {
     const name = status ? status.name : session.client;
-    const body = h("div", { style: "display:contents" }, loading("Adding up what ProAds did for you…"));
+    const body = h("div", { style: "display:contents" }, loading());
     root.replaceChildren(layout("#/home", [h("header", {}, h("h1", {}, "Home")), body]));
     let d, r;
     try { [d, r] = await Promise.all([api("/dashboard/" + cid() + "?period=30"), api("/proads-results/" + cid()).catch((e) => ({ error: e.message }))]); }
     catch (e) { if (e.message !== "signed out") body.replaceChildren(errorCard(e.message)); return; }
     if (d.mode === "proads") return viewDetails(null, true);          // ProAds' own admin home keeps the full view
     const more = h("section", { class: "card", style: "gap:10px" },
-      h("div", { class: "between" }, h("h2", {}, "Want the details?"), h("a", { class: "btn btn-ghost", href: "#/details" }, "See all details")),
-      h("p", { class: "sub", style: "margin:0;font-size:14px" }, "Sales over time, every ad's results, products, money leaks and more are on the Details page."));
+      h("div", { class: "between" }, h("h2", {}, "Details"), h("a", { class: "btn btn-ghost", href: "#/details" }, "Open")),
+      h("p", { class: "sub", style: "margin:0;font-size:14px" }, "Sales trend, ad results, products, forecast."));
     body.replaceChildren(...[adsBanner(d.ads_access), r.error ? errorCard(r.error) : resultsHero(r, name), setupGuide(d), more].filter(Boolean));
   }
 
