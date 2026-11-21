@@ -144,6 +144,14 @@ footer{border-top-color:#1C1C1C}
 .hiw-why div{border-left-color:#B6F04A}
 .eyebrow{background:#182010;border-color:#3A4A1F;color:#B6F04A}
 #bgnet{position:fixed;inset:0;width:100vw;height:100vh;z-index:-1;pointer-events:none;opacity:.55}
+.flowscroll{overflow:hidden;border-radius:14px}
+.flowmap{min-width:0;touch-action:none;cursor:grab;user-select:none}
+.flowmap.grabbing{cursor:grabbing}
+.flowzoom{display:inline-flex;gap:6px;margin-left:auto}
+.flowzoom button{width:32px;height:32px;border-radius:999px;border:1px solid #333;background:#1A1A1A;color:#EDEDED;font:600 16px Inter,sans-serif;cursor:pointer}
+.flowzoom button:hover{border-color:#B6F04A;color:#B6F04A}
+.flowhead{align-items:center}
+@media (max-width:640px){.flowhint{display:none}}
 </style>
 %%JSONLD%%
 </head>
@@ -181,7 +189,8 @@ footer{border-top-color:#1C1C1C}
       <p class="sub">Paid orders in. Ads that find buyers out.</p>
 <div class="hiw">
   <div class="flowpanel">
-    <div class="flowhead"><span>ProAds · flow</span><span class="flowhint">From the payment to ads that find buyers</span></div>
+    <div class="flowhead"><span>ProAds · flow</span><span class="flowhint">Drag to move · pinch or +/− to zoom</span>
+      <span class="flowzoom"><button type="button" data-z="in" aria-label="Zoom in">+</button><button type="button" data-z="out" aria-label="Zoom out">−</button><button type="button" data-z="fit" aria-label="Reset view">⟲</button></span></div>
     <div class="flowscroll">
 <svg class="flowmap" viewBox="0 0 1220 660" role="img" aria-labelledby="fm-t fm-d" xmlns="http://www.w3.org/2000/svg">
 <title id="fm-t">How ProAds works</title>
@@ -727,6 +736,37 @@ footer{border-top-color:#1C1C1C}
   setup(); frame();
   if (!still) raf = requestAnimationFrame(loop);
   else document.querySelectorAll(".flowmap").forEach((s) => { try { s.pauseAnimations(); } catch (e) {} s.querySelectorAll(".flowdata").forEach((g) => g.remove()); });
+})();
+</script>
+<script>
+// flow map: drag to pan, pinch / ctrl+wheel / buttons to zoom (whiteboard style)
+(function () {
+  const svg = document.querySelector(".flowmap"); if (!svg) return;
+  const full = { x: 0, y: 0, w: 1220, h: 660 }; let vb = { ...full };
+  const set = () => svg.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+  const zoom = (f, cx, cy) => {
+    const nw = Math.min(full.w * 1.6, Math.max(full.w / 4, vb.w / f)), k = nw / vb.w;
+    const px = cx == null ? vb.x + vb.w / 2 : cx, py = cy == null ? vb.y + vb.h / 2 : cy;
+    vb = { x: px - (px - vb.x) * k, y: py - (py - vb.y) * k, w: nw, h: vb.h * k }; set();
+  };
+  const toSvg = (ex, ey) => { const r = svg.getBoundingClientRect(); return [vb.x + (ex - r.left) / r.width * vb.w, vb.y + (ey - r.top) / r.height * vb.h]; };
+  const pts = new Map(); let pinch = null;
+  svg.addEventListener("pointerdown", (e) => { svg.setPointerCapture(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]); svg.classList.add("grabbing"); });
+  svg.addEventListener("pointermove", (e) => {
+    if (!pts.has(e.pointerId)) return;
+    const prev = pts.get(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]);
+    const r = svg.getBoundingClientRect();
+    if (pts.size === 1) { vb.x -= (e.clientX - prev[0]) / r.width * vb.w; vb.y -= (e.clientY - prev[1]) / r.height * vb.h; set(); return; }
+    const [a, b] = [...pts.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+    if (pinch) { const [cx, cy] = toSvg((a[0] + b[0]) / 2, (a[1] + b[1]) / 2); zoom(d / pinch, cx, cy); }
+    pinch = d;
+  });
+  const up = (e) => { pts.delete(e.pointerId); if (pts.size < 2) pinch = null; if (!pts.size) svg.classList.remove("grabbing"); };
+  svg.addEventListener("pointerup", up); svg.addEventListener("pointercancel", up);
+  svg.addEventListener("wheel", (e) => { if (!e.ctrlKey && !e.metaKey) return; e.preventDefault(); const [cx, cy] = toSvg(e.clientX, e.clientY); zoom(e.deltaY < 0 ? 1.15 : 1 / 1.15, cx, cy); }, { passive: false });
+  document.querySelectorAll(".flowzoom button").forEach((b) => b.addEventListener("click", () => {
+    if (b.dataset.z === "in") zoom(1.3); else if (b.dataset.z === "out") zoom(1 / 1.3); else { vb = { ...full }; set(); }
+  }));
 })();
 </script>
 </body>
