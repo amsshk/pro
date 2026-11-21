@@ -143,10 +143,12 @@ footer{border-top-color:#1C1C1C}
 .flowpanel{background:#121212;border:1px solid #232323}
 .hiw-why div{border-left-color:#B6F04A}
 .eyebrow{background:#182010;border-color:#3A4A1F;color:#B6F04A}
+#bgnet{position:fixed;inset:0;width:100vw;height:100vh;z-index:-1;pointer-events:none;opacity:.55}
 </style>
 %%JSONLD%%
 </head>
 <body>
+<canvas id="bgnet" aria-hidden="true"></canvas>
 <div class="wrap">
   <header class="top">
     <a class="brand" href="/" aria-label="ProAds home">
@@ -183,63 +185,71 @@ footer{border-top-color:#1C1C1C}
     <div class="flowscroll">
 <svg class="flowmap" viewBox="0 0 1220 660" role="img" aria-labelledby="fm-t fm-d" xmlns="http://www.w3.org/2000/svg">
 <title id="fm-t">How ProAds works</title>
-<desc id="fm-d">Customer pays through Shopify, Stripe, Tabby or Ziina, WhatsApp or DM, or in store. ProAds checks the sale (paid orders only, refunds taken off, every sale counted once), sends it to Meta (Facebook and Instagram) and TikTok so the ads learn real buyers, shows you real paid orders per ad, return per 1 AED spent and alerts, and builds campaigns and buyer audiences.</desc>
+<desc id="fm-d">Customer pays on Shopify. ProAds checks the sale (paid orders only, refunds taken off, every sale counted once), sends it to Meta (Facebook and Instagram) and TikTok so the ads learn real buyers, shows you real paid orders per ad, return per 1 AED spent and alerts, and builds campaigns and buyer audiences.</desc>
 
 <g fill="none" stroke="#3B3B3B" stroke-width="1.4">
-<path d="M160,330 C183,330 183,170 205,170"/>
-<path d="M160,330 C183,330 183,250 205,250"/>
-<path d="M160,330 C183,330 183,330 205,330"/>
-<path d="M160,330 C183,330 183,410 205,410"/>
-<path d="M160,330 C183,330 183,490 205,490"/>
-<path d="M291,170 C340,170 340,330 390,330"/>
-<path d="M283,250 C337,250 337,330 390,330"/>
-<path d="M335,330 C363,330 363,330 390,330"/>
-<path d="M335,410 C363,410 363,330 390,330"/>
-<path d="M298,490 C344,490 344,330 390,330"/>
-<path d="M468,330 C507,330 507,120 545,120" stroke="#5E9400"/>
-<path d="M468,330 C507,330 507,280 545,280" stroke="#5E9400"/>
-<path d="M468,330 C507,330 507,430 545,430" stroke="#5E9400"/>
-<path d="M468,330 C507,330 507,560 545,560" stroke="#5E9400"/>
-<path d="M623,120 C679,120 679,60 735,60"/>
-<path d="M623,120 C679,120 679,120 735,120"/>
-<path d="M623,120 C679,120 679,180 735,180"/>
-<path d="M616,280 C676,280 676,250 735,250"/>
-<path d="M616,280 C676,280 676,310 735,310"/>
-<path d="M646,430 C690,430 690,385 735,385"/>
-<path d="M646,430 C690,430 690,435 735,435"/>
-<path d="M646,430 C690,430 690,485 735,485"/>
-<path d="M623,560 C679,560 679,545 735,545"/>
-<path d="M623,560 C679,560 679,595 735,595"/>
-<path d="M969,250 C989,250 989,280 1010,280" stroke="#5E9400"/>
-<path d="M813,310 C912,310 912,280 1010,280" stroke="#5E9400"/>
+<path id="fl0" d="M182,330 C199,330 199,330 215,330"/>
+<path id="fl1" d="M323,330 C356,330 356,330 390,330"/>
+<path id="fl2" d="M490,330 C518,330 518,120 545,120" stroke="#5E9400"/>
+<path id="fl3" d="M490,330 C518,330 518,280 545,280" stroke="#5E9400"/>
+<path id="fl4" d="M490,330 C518,330 518,430 545,430" stroke="#5E9400"/>
+<path id="fl5" d="M490,330 C518,330 518,560 545,560" stroke="#5E9400"/>
+<path id="fl6" d="M623,120 C679,120 679,60 735,60"/>
+<path id="fl7" d="M623,120 C679,120 679,120 735,120"/>
+<path id="fl8" d="M623,120 C679,120 679,180 735,180"/>
+<path id="fl9" d="M616,280 C676,280 676,250 735,250"/>
+<path id="fl10" d="M616,280 C676,280 676,310 735,310"/>
+<path id="fl11" d="M646,430 C690,430 690,385 735,385"/>
+<path id="fl12" d="M646,430 C690,430 690,435 735,435"/>
+<path id="fl13" d="M646,430 C690,430 690,485 735,485"/>
+<path id="fl14" d="M623,560 C679,560 679,545 735,545"/>
+<path id="fl15" d="M623,560 C679,560 679,595 735,595"/>
+<path id="fl16" d="M969,250 C989,250 989,280 1010,280" stroke="#5E9400"/>
+<path id="fl17" d="M813,310 C912,310 912,280 1010,280" stroke="#5E9400"/>
+</g>
+<g class="flowdata">
+<circle r="4" fill="#B6F04A" opacity="0"><animateMotion dur="5.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.001;0.200;1"><mpath href="#fl0"/></animateMotion><animate attributeName="opacity" dur="5.0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.001;0.011;0.190;0.200;1"/></circle>
+<circle r="4" fill="#B6F04A" opacity="0"><animateMotion dur="5.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.200;0.400;1"><mpath href="#fl1"/></animateMotion><animate attributeName="opacity" dur="5.0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.200;0.210;0.390;0.400;1"/></circle>
+<circle r="4" fill="#B6F04A" opacity="0"><animateMotion dur="5.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.400;0.600;1"><mpath href="#fl2"/></animateMotion><animate attributeName="opacity" dur="5.0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.400;0.410;0.590;0.600;1"/></circle>
+<circle r="4" fill="#B6F04A" opacity="0"><animateMotion dur="5.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.400;0.600;1"><mpath href="#fl3"/></animateMotion><animate attributeName="opacity" dur="5.0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.400;0.410;0.590;0.600;1"/></circle>
+<circle r="4" fill="#B6F04A" opacity="0"><animateMotion dur="5.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.400;0.600;1"><mpath href="#fl4"/></animateMotion><animate attributeName="opacity" dur="5.0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.400;0.410;0.590;0.600;1"/></circle>
+<circle r="4" fill="#B6F04A" opacity="0"><animateMotion dur="5.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.400;0.600;1"><mpath href="#fl5"/></animateMotion><animate attributeName="opacity" dur="5.0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.400;0.410;0.590;0.600;1"/></circle>
+<circle r="3" fill="#E3F99B" opacity="0"><animateMotion dur="5.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.600;0.800;1"><mpath href="#fl6"/></animateMotion><animate attributeName="opacity" dur="5.0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.600;0.610;0.790;0.800;1"/></circle>
+<circle r="3" fill="#E3F99B" opacity="0"><animateMotion dur="5.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.600;0.800;1"><mpath href="#fl7"/></animateMotion><animate attributeName="opacity" dur="5.0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.600;0.610;0.790;0.800;1"/></circle>
+<circle r="3" fill="#E3F99B" opacity="0"><animateMotion dur="5.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.600;0.800;1"><mpath href="#fl8"/></animateMotion><animate attributeName="opacity" dur="5.0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.600;0.610;0.790;0.800;1"/></circle>
+<circle r="3" fill="#E3F99B" opacity="0"><animateMotion dur="5.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.600;0.800;1"><mpath href="#fl9"/></animateMotion><animate attributeName="opacity" dur="5.0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.600;0.610;0.790;0.800;1"/></circle>
+<circle r="3" fill="#E3F99B" opacity="0"><animateMotion dur="5.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.600;0.800;1"><mpath href="#fl10"/></animateMotion><animate attributeName="opacity" dur="5.0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.600;0.610;0.790;0.800;1"/></circle>
+<circle r="3" fill="#E3F99B" opacity="0"><animateMotion dur="5.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.600;0.800;1"><mpath href="#fl11"/></animateMotion><animate attributeName="opacity" dur="5.0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.600;0.610;0.790;0.800;1"/></circle>
+<circle r="3" fill="#E3F99B" opacity="0"><animateMotion dur="5.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.600;0.800;1"><mpath href="#fl12"/></animateMotion><animate attributeName="opacity" dur="5.0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.600;0.610;0.790;0.800;1"/></circle>
+<circle r="3" fill="#E3F99B" opacity="0"><animateMotion dur="5.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.600;0.800;1"><mpath href="#fl13"/></animateMotion><animate attributeName="opacity" dur="5.0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.600;0.610;0.790;0.800;1"/></circle>
+<circle r="3" fill="#E3F99B" opacity="0"><animateMotion dur="5.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.600;0.800;1"><mpath href="#fl14"/></animateMotion><animate attributeName="opacity" dur="5.0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.600;0.610;0.790;0.800;1"/></circle>
+<circle r="3" fill="#E3F99B" opacity="0"><animateMotion dur="5.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.600;0.800;1"><mpath href="#fl15"/></animateMotion><animate attributeName="opacity" dur="5.0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.600;0.610;0.790;0.800;1"/></circle>
+<circle r="4" fill="#B6F04A" opacity="0"><animateMotion dur="5.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.800;0.999;1"><mpath href="#fl16"/></animateMotion><animate attributeName="opacity" dur="5.0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.800;0.810;0.989;0.999;1"/></circle>
+<circle r="4" fill="#B6F04A" opacity="0"><animateMotion dur="5.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.800;0.999;1"><mpath href="#fl17"/></animateMotion><animate attributeName="opacity" dur="5.0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.800;0.810;0.989;0.999;1"/></circle>
+<g opacity="0"><animateMotion dur="5.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.001;0.200;1"><mpath href="#fl0"/></animateMotion><animate attributeName="opacity" dur="5.0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.001;0.011;0.190;0.200;1"/><rect x="-31.0" y="-30" width="62" height="20" rx="10" fill="#1E2A10" stroke="#B6F04A" stroke-width="1"/><text y="-16" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="11" font-weight="600" fill="#D9F99D">485 AED</text></g>
+<g opacity="0"><animateMotion dur="5.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.200;0.400;1"><mpath href="#fl1"/></animateMotion><animate attributeName="opacity" dur="5.0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.200;0.210;0.390;0.400;1"/><rect x="-29.0" y="-30" width="58" height="20" rx="10" fill="#1E2A10" stroke="#B6F04A" stroke-width="1"/><text y="-16" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="11" font-weight="600" fill="#D9F99D">paid ✓</text></g>
+<g opacity="0"><animateMotion dur="5.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.400;0.600;1"><mpath href="#fl3"/></animateMotion><animate attributeName="opacity" dur="5.0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.400;0.410;0.590;0.600;1"/><rect x="-69.0" y="-30" width="138" height="20" rx="10" fill="#1E2A10" stroke="#B6F04A" stroke-width="1"/><text y="-16" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="11" font-weight="600" fill="#D9F99D">order #, hashed email</text></g>
+<g opacity="0"><animateMotion dur="5.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.800;0.999;1"><mpath href="#fl16"/></animateMotion><animate attributeName="opacity" dur="5.0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.800;0.810;0.989;0.999;1"/><rect x="-33.0" y="-30" width="66" height="20" rx="10" fill="#1E2A10" stroke="#B6F04A" stroke-width="1"/><text y="-16" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="11" font-weight="600" fill="#D9F99D">Purchase</text></g>
+<g opacity="0"><animateMotion dur="5.0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.800;0.999;1"><mpath href="#fl17"/></animateMotion><animate attributeName="opacity" dur="5.0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.800;0.810;0.989;0.999;1"/><rect x="-33.0" y="-30" width="66" height="20" rx="10" fill="#1E2A10" stroke="#B6F04A" stroke-width="1"/><text y="-16" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="11" font-weight="600" fill="#D9F99D">Purchase</text></g>
 </g>
 <circle cx="969" cy="250" r="3.2" fill="#9ACD4F"/>
-<circle cx="283" cy="250" r="3.2" fill="#E3F99B"/>
+<circle cx="490" cy="330" r="3.2" fill="#9ACD4F"/>
 <circle cx="623" cy="120" r="3.2" fill="#E3F99B"/>
 <circle cx="623" cy="560" r="3.2" fill="#E3F99B"/>
-<circle cx="298" cy="490" r="3.2" fill="#E3F99B"/>
-<circle cx="335" cy="330" r="3.2" fill="#E3F99B"/>
-<circle cx="468" cy="330" r="3.2" fill="#9ACD4F"/>
 <circle cx="616" cy="280" r="3.2" fill="#E3F99B"/>
-<circle cx="160" cy="330" r="3.2" fill="#E3F99B"/>
+<circle cx="182" cy="330" r="3.2" fill="#E3F99B"/>
 <circle cx="646" cy="430" r="3.2" fill="#E3F99B"/>
 <circle cx="813" cy="310" r="3.2" fill="#9ACD4F"/>
-<circle cx="291" cy="170" r="3.2" fill="#E3F99B"/>
-<circle cx="335" cy="410" r="3.2" fill="#E3F99B"/>
-<rect x="30" y="311.0" width="130" height="38" rx="19.0" fill="#4A4A4A" stroke="#4A4A4A"/>
-<text x="95" y="334.5" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="#F2F2F2">Customer pays</text>
-<rect x="205" y="151.0" width="86" height="38" rx="19.0" fill="#161616" stroke="#3E3E3E"/>
-<text x="248" y="174.5" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="500" fill="#E6E6E6">Shopify</text>
-<rect x="205" y="231.0" width="78" height="38" rx="19.0" fill="#161616" stroke="#3E3E3E"/>
-<text x="244" y="254.5" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="500" fill="#E6E6E6">Stripe</text>
-<rect x="205" y="311.0" width="130" height="38" rx="19.0" fill="#161616" stroke="#3E3E3E"/>
-<text x="270" y="334.5" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="500" fill="#E6E6E6">Tabby · Ziina</text>
-<rect x="205" y="391.0" width="130" height="38" rx="19.0" fill="#161616" stroke="#3E3E3E"/>
-<text x="270" y="414.5" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="500" fill="#E6E6E6">WhatsApp · DM</text>
-<rect x="205" y="471.0" width="93" height="38" rx="19.0" fill="#161616" stroke="#3E3E3E"/>
-<text x="252" y="494.5" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="500" fill="#E6E6E6">In store</text>
-<rect x="390" y="311.0" width="78" height="38" rx="19.0" fill="#B6F04A" stroke="#B6F04A"/>
-<text x="429" y="334.5" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="700" fill="#101010">ProAds</text>
+<circle cx="323" cy="330" r="3.2" fill="#E3F99B"/>
+<rect x="30" y="311.0" width="152" height="38" rx="19.0" fill="#4A4A4A" stroke="#4A4A4A"/>
+<g transform="translate(44,322)" fill="none" stroke="#F2F2F2" stroke-width="1.6"><rect x="0" y="1" width="18" height="13" rx="2.5"/><path d="M0 5.5h18M3.5 10.5h4"/></g>
+<text x="117" y="334.5" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="#F2F2F2">Customer pays</text>
+<rect x="215" y="311.0" width="108" height="38" rx="19.0" fill="#161616" stroke="#3E3E3E"/>
+<g transform="translate(230,321)" fill="none" stroke="#E6E6E6" stroke-width="1.6" stroke-linejoin="round"><path d="M2 5h12l-1 12H3z"/><path d="M5 7V4a3 3 0 0 1 6 0v3"/></g>
+<text x="280" y="334.5" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="500" fill="#E6E6E6">Shopify</text>
+<rect x="390" y="311.0" width="100" height="38" rx="19.0" fill="#B6F04A" stroke="#B6F04A"/>
+<image href="/proads-mark.svg" x="404" y="321" width="18" height="18"/>
+<text x="451" y="334.5" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="700" fill="#101010">ProAds</text>
 <rect x="545" y="101.0" width="78" height="38" rx="19.0" fill="#4A4A4A" stroke="#4A4A4A"/>
 <text x="584" y="124.5" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="#F2F2F2">Checks</text>
 <rect x="545" y="261.0" width="71" height="38" rx="19.0" fill="#4A4A4A" stroke="#4A4A4A"/>
@@ -663,6 +673,60 @@ footer{border-top-color:#1C1C1C}
       btn.disabled = false; btn.textContent = proadsT("create");
     }
   });
+})();
+</script>
+<script>
+// algorithm background: a living neural-network mesh. Dots drift, signals travel along the links, faint formulas behind.
+// Static for people who ask for less motion; paused when the tab is hidden.
+(function () {
+  const c = document.getElementById("bgnet"); if (!c) return;
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const x = c.getContext("2d");
+  let W, H, pts = [], sig = [], seed = 11;
+  const r = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const cols = ["160,160,160", "150,180,110", "160,215,70", "182,240,74"];
+  const col = (px) => cols[Math.max(0, Math.min(3, Math.floor(px / W * 4)))];
+  const F = ["value = margin × (1 − refund_risk)", "P(buy | ad, post, hook)", "θ ~ Beta(α + sales, β + views)", "lift > 1.96σ → boost",
+    "match(email#, phone#)", "CAPI → dataset · dedup(event_id)", "score += future_value"];
+  let words = [];
+  function setup() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2); W = innerWidth; H = innerHeight;
+    c.width = W * dpr; c.height = H * dpr; x.setTransform(dpr, 0, 0, dpr, 0, 0); seed = 11;
+    pts = Array.from({ length: Math.round(W * H / 7000) }, () => ({ x: r() * W, y: r() * H, s: .8 + r() * 1.6, vx: (r() - .5) * .25, vy: (r() - .5) * .25 }));
+    words = Array.from({ length: Math.round(H / 120) }, (_, i) => [F[i % F.length], r() * Math.max(W - 260, 10), 60 + i * 120 + r() * 40]);
+    sig = [];
+  }
+  function frame() {
+    x.clearRect(0, 0, W, H);
+    x.font = "12px ui-monospace, monospace"; x.fillStyle = "rgba(182,240,74,.09)";
+    for (const [t, wx, wy] of words) x.fillText(t, wx, wy);
+    const near = [];
+    x.lineWidth = 1;
+    for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) {
+      const a = pts[i], b = pts[j], d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (d < 110) { x.strokeStyle = `rgba(${col(a.x)},${.10 * (1 - d / 110)})`; x.beginPath(); x.moveTo(a.x, a.y); x.lineTo(b.x, b.y); x.stroke(); if (d < 90) near.push([a, b]); }
+    }
+    for (const p of pts) { x.fillStyle = `rgba(${col(p.x)},.4)`; x.beginPath(); x.arc(p.x, p.y, p.s, 0, 7); x.fill(); }
+    if (!still) {
+      if (near.length && sig.length < 18 && Math.random() < .25) { const [a, b] = near[Math.floor(Math.random() * near.length)]; sig.push({ a, b, t: 0 }); }
+      x.shadowBlur = 10;
+      for (const s of sig) {
+        s.t += .02; const px = s.a.x + (s.b.x - s.a.x) * s.t, py = s.a.y + (s.b.y - s.a.y) * s.t, C = col(px);
+        x.strokeStyle = `rgba(${C},.5)`; x.shadowColor = `rgb(${C})`; x.lineWidth = 1.4;
+        x.beginPath(); x.moveTo(s.a.x, s.a.y); x.lineTo(px, py); x.stroke();
+        x.fillStyle = `rgba(${C},.95)`; x.beginPath(); x.arc(px, py, 2.4, 0, 7); x.fill();
+      }
+      x.shadowBlur = 0; sig = sig.filter((s) => s.t < 1);
+      for (const p of pts) { p.x += p.vx; p.y += p.vy; if (p.x < -20) p.x = W + 20; if (p.x > W + 20) p.x = -20; if (p.y < -20) p.y = H + 20; if (p.y > H + 20) p.y = -20; }
+    }
+  }
+  let last = 0, raf = 0;
+  function loop(t) { raf = requestAnimationFrame(loop); if (t - last < 33) return; last = t; frame(); }   // about 30 frames a second
+  let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { setup(); frame(); }, 200); });
+  document.addEventListener("visibilitychange", () => { if (still) return; if (document.hidden) cancelAnimationFrame(raf); else raf = requestAnimationFrame(loop); });
+  setup(); frame();
+  if (!still) raf = requestAnimationFrame(loop);
+  else document.querySelectorAll(".flowmap").forEach((s) => { try { s.pauseAnimations(); } catch (e) {} s.querySelectorAll(".flowdata").forEach((g) => g.remove()); });
 })();
 </script>
 </body>
