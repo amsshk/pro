@@ -4117,7 +4117,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       const campList = camps.length ? h("div", { style: "display:flex;flex-direction:column;gap:8px" }, h("b", { style: "font-size:14px" }, "Campaigns in your TikTok account"),
         ...camps.map((c) => h("div", { class: "between", style: "gap:10px;font-size:14px;flex-wrap:wrap" },
           h("span", { style: "min-width:0;overflow-wrap:anywhere" }, c.name),
-          h("span", { style: "display:flex;gap:8px;align-items:center" }, h("span", { class: "small" }, fmt.format(Math.round(c.spend)) + " " + cur + " · " + fmt.format(c.results) + " purchases"),
+          h("span", { style: "display:flex;gap:8px;align-items:center" }, h("span", { class: "small" }, fmt.format(Math.round(c.spend)) + " " + cur + " · " + fmt.format(c.impressions || 0) + " impressions · " + fmt.format(c.clicks || 0) + " clicks · " + fmt.format(c.results) + " purchases"),
             h("span", { class: "badge " + (c.on ? "b-measured" : "b-neutral") }, c.on ? (STATUS[c.status] || "Active") : "Off"))))) : null;
       box.replaceChildren(head, kpis, river(stages), truth, verdict, ...(campList ? [campList] : []),
         h("div", { style: "display:flex;flex-direction:column;gap:6px" }, h("b", { style: "font-size:14px" }, "Purchases per day (TikTok)"), barsByDay(r.dates, r.series.results, r.series.spend, cur)),

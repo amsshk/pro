@@ -215,12 +215,14 @@ def live_summary(http, token: str, advertiser_id: str, start: str, end: str) -> 
                 break
             page += 1
         d = report({"advertiser_id": advertiser_id, "report_type": "BASIC", "data_level": "AUCTION_CAMPAIGN", "dimensions": ["campaign_id"],
-                    "start_date": start, "end_date": end, "page_size": 200}, ["spend", "conversion"], "reading campaign results")
+                    "start_date": start, "end_date": end, "page_size": 200}, ["spend", "impressions", "clicks", "conversion"], "reading campaign results")
         for row in d.get("list") or []:
             cid = str((row.get("dimensions") or {}).get("campaign_id") or "")
             if cid in camps:
                 camps[cid]["spend"] = round(num(row.get("metrics") or {}, "spend"), 2)
                 camps[cid]["results"] = bought(row.get("metrics") or {})
+                camps[cid]["impressions"] = int(num(row.get("metrics") or {}, "impressions"))
+                camps[cid]["clicks"] = int(num(row.get("metrics") or {}, "clicks"))
                 camps[cid]["goal_results"] = int(num(row.get("metrics") or {}, "conversion"))
     except TikTokAPIError:
         pass
