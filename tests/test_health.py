@@ -32,7 +32,7 @@ def test_order_trace_shows_what_happened(tmp_path):
                (int(time.time()),))
     db.commit()
     o = c.get("/orders-trace/glow-clinic", headers={"X-API-Key": tok}).json["orders"][0]
-    assert o["amount"] == 250 and o["tiktok"] == "accepted" and o["from_ad"] == "TikTok" and "a@b.com" not in str(o)
+    assert o["amount"] == 250 and o["tiktok"] == "accepted" and o["from_ad"] == "TikTok ad" and "a@b.com" not in str(o)
 
 
 def test_setup_guide_fits_tiktok_only(tmp_path):

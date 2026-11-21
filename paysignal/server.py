@@ -2469,7 +2469,10 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 ref = eng.store.refunded_amount(client_id, ext)
                 t = tt.get(str(ext)[:200])
                 out.append({"order": str(ext)[-8:], "source": src, "amount": amount, "currency": cur, "at": at,
-                            "payment": pm or "", "refunded": round(ref, 2), "from_ad": "TikTok" if ttc else "Meta" if fbc else (utm or ""),
+                            "payment": pm or "", "refunded": round(ref, 2),
+                            "from_ad": "TikTok ad" if ttc else "Facebook / Instagram ad" if fbc else
+                            {"tiktok": "TikTok", "instagram": "Instagram", "ig": "Instagram", "facebook": "Facebook", "fb": "Facebook",
+                             "whatsapp": "WhatsApp", "snapchat": "Snapchat", "google": "Google"}.get((utm or "").lower(), (utm or "").title()) or "Direct / unknown",
                             "meta": "sent" if sent_meta else ("waiting" if meta_live else "not connected"),
                             "tiktok": (t[0] if t else ("waiting" if tt_on else "not connected")), "tiktok_reason": (t[1] if t else None)})
         return {"orders": out}

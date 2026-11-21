@@ -390,6 +390,8 @@ main{background:transparent}
 @media (max-width:640px){.hiw-row{flex-direction:column}.hiw-ar{transform:rotate(90deg)}.hiw-box{flex:none}}
 .hiw-hub{display:flex;flex-direction:column;gap:4px;align-items:center;text-align:center;padding:14px;border-radius:14px;background:var(--card);border:2px solid var(--violet)}
 .hiw-hub b{font-size:17px}.hiw-hub span{font-size:14px;color:var(--muted)}
+  .srctag { font-size: 11px; font-weight: 600; white-space: nowrap; align-self: flex-start; }
+  .elead .srctag { margin-bottom: 4px; }
 </style>
 </head>
 <body>
@@ -3298,6 +3300,30 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     root.replaceChildren(layout("#/buyers", blocks));
   }
 
+  // where a number comes from, shown next to every card on Tracking
+  const SRC = {
+    meta: ["Meta · Facebook + Instagram", "Meta reports Facebook and Instagram together: one Pixel and one learning system serve both."],
+    tiktok: ["TikTok", "Read from TikTok."],
+    shop: ["Your shop · Shopify, Stripe, Tabby, uploads", "Orders as your shop and payment providers sent them to ProAds."],
+    proads: ["ProAds", "Counted by ProAds from your paid orders."],
+    setting: ["Your setting", "A choice you make here; it applies to Meta and TikTok."],
+  };
+  function srcTag(k) {
+    const [t, tip] = SRC[k] || [k, ""];
+    return h("span", { class: "badge b-neutral srctag", title: tip }, "Source: " + t);
+  }
+  async function tiktokDeliveryCard() {
+    let r; try { r = await api("/proads-results/" + cid()); } catch (e) { return null; }
+    if (!r || r.error || !r.tiktok_sent_total) return null;
+    const k = (label, v, note) => h("div", { class: "ek" }, h("span", { class: "label" }, label), h("b", {}, v), note ? h("span", { class: "small" }, note) : null);
+    return h("section", { class: "card estrip" },
+      h("div", { class: "elead" }, srcTag("tiktok"), h("span", { class: "label" }, "Purchases delivered to TikTok · since you joined"),
+        h("b", { class: "ebig" }, fmt.format(r.sent_tiktok)), h("span", { class: "badge b-measured", style: "align-self:flex-start" }, "Events API")),
+      k("Sent", fmt.format(r.tiktok_sent_total), "paid orders only"),
+      k("Accepted by TikTok", fmt.format(r.sent_tiktok), r.tiktok_sent_total > r.sent_tiktok ? (r.tiktok_sent_total - r.sent_tiktok) + " refused, reasons in Recent orders" : "all accepted"),
+      k("Last 7 days", fmt.format(r.tiktok_7d || 0), "of ~50 TikTok needs to finish learning"));
+  }
+
   // ---------- Meta Learning Accelerator ----------
   async function viewLearning() {
     const head = h("header", {}, h("h1", {}, "Tracking"),
@@ -3311,15 +3337,16 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     const k = (label, v, note, color) => h("div", { class: "ek" }, h("span", { class: "label" }, label), h("b", { style: color ? "color:" + color : "" }, v), note ? h("span", { class: "small" }, note) : null);
     const blocks = [head];
     try { const ib = await impactCard(); if (ib) blocks.push(ib); } catch (e) {}      // Impact lives here, next to the tracking it measures
+    try { const tb = await tiktokDeliveryCard(); if (tb) blocks.push(tb); } catch (e) {}
     try {
       const ot = await api("/orders-trace/" + cid());
       if (ot.orders.length) {
         const tag = (v, reason) => h("span", { class: "badge " + (v === "accepted" || v === "sent" ? "b-measured" : v === "waiting" ? "b-neutral" : v === "not connected" ? "b-neutral" : "b-loss"), title: reason || "" },
           v === "accepted" || v === "sent" ? "✓ " + (v === "sent" ? "sent" : "accepted") : v === "rejected" ? "rejected" : v);
-        blocks.push(h("section", { class: "card" }, h("h2", {}, "Recent orders"),
+        blocks.push(h("section", { class: "card" }, h("div", { class: "between" }, h("h2", {}, "Recent orders"), srcTag("shop")),
           h("p", { class: "sub", style: "margin:0;font-size:13px" }, "What happened to each order: paid, refunded, sent to Meta and TikTok. Hover a rejected one for the reason."),
           h("div", { style: "overflow-x:auto" }, h("table", {},
-            h("thead", {}, h("tr", {}, ["When", "Order", "Amount", "Paid with", "From ad", "Meta", "TikTok"].map((t) => h("th", { scope: "col" }, t)))),
+            h("thead", {}, h("tr", {}, ["When", "Order", "Amount", "Paid with", "Came from", "Sent to Meta (FB + IG)", "Sent to TikTok"].map((t) => h("th", { scope: "col" }, t)))),
             h("tbody", {}, ot.orders.map((o) => h("tr", {},
               h("td", { style: "white-space:nowrap" }, new Date(o.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })),
               h("td", {}, "…" + o.order),
@@ -3339,7 +3366,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         const label = { CompleteRegistration: "Sign-ups", StartTrial: "Active users", Purchase: "First payments", Refund: "Refunds" };
         const ev = Object.entries(hh.by_event || {});
         blocks.push(h("section", { class: "card estrip" },
-          h("div", { class: "elead" }, h("span", { class: "label" }, "Your events accepted by Meta · 7 days"),
+          h("div", { class: "elead" }, srcTag("meta"), h("span", { class: "label" }, "Your events accepted by Meta · 7 days"),
             h("b", { class: "ebig" }, fmt.format(hh.accepted || 0) + (hh.total ? " / " + fmt.format(hh.total) : "")),
             h("span", { class: "badge " + (hh.healthy ? "b-measured" : ""), style: "align-self:flex-start" + (hh.healthy ? "" : ";background:var(--loss-bg);color:var(--loss-txt)") },
               hh.healthy ? (hh.total ? "Delivering" : "Waiting for first event") : "Problem")),
@@ -3352,7 +3379,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
           h("td", { style: "padding:6px 8px;font-size:13px" }, r.value != null ? money0(r.value, r.currency) : ""),
           h("td", { style: "padding:6px 8px" }, h("span", { class: "badge " + st[r.status][0], style: st[r.status][0] ? "" : "background:var(--loss-bg);color:var(--loss-txt)" }, st[r.status][1]))));
         blocks.push(h("section", { class: "card", style: "display:flex;flex-direction:column;gap:10px" },
-          h("div", { class: "between" }, h("h2", {}, "Did every eligible event reach Meta?"),
+          h("div", { class: "between" }, h("h2", {}, "Did every eligible event reach Meta?"), srcTag("meta"),
             h("span", { class: "badge b-neutral" }, fmt.format(rc.accepted) + " of " + fmt.format(rc.eligible) + " accepted")),
           rows.length ? h("div", { style: "overflow-x:auto" }, h("table", { style: "width:100%;border-collapse:collapse" }, h("tbody", {}, rows)))
             : h("p", { class: "sub", style: "margin:0;font-size:14px" }, "No sign-ups or first payments in the last 7 days."),
@@ -3364,7 +3391,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       const mode = sg.mode === "live" ? ["b-measured", "Sending live"] : sg.mode === "practice" ? ["b-neutral", "Practice mode: nothing sent"] : ["b-neutral", "Nothing sent yet"];
       const acc = sg.sent ? sg.accepted / sg.sent : null;
       blocks.push(h("section", { class: "card estrip" },
-        h("div", { class: "elead" }, h("span", { class: "label" }, "Purchases delivered to Meta · 7 days"),
+        h("div", { class: "elead" }, srcTag("meta"), h("span", { class: "label" }, "Purchases delivered to Meta · 7 days"),
           h("b", { class: "ebig" }, fmt.format(sg.accepted || 0)),
           h("span", { class: "badge " + mode[0], style: "align-self:flex-start" }, mode[1])),
         k("Sales sent live", fmt.format(sg.purchases_live != null ? sg.purchases_live : (sg.purchases || 0)),
@@ -3388,7 +3415,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
           viewLearning();
         } catch (e) { if (e.message !== "signed out") toast(e.message); }
       };
-      blocks.push(h("section", { class: "card" }, h("h2", {}, "What each purchase is worth to Meta and TikTok"),
+      blocks.push(h("section", { class: "card" }, h("div", { class: "between" }, h("h2", {}, "What each purchase is worth to Meta and TikTok"), srcTag("setting")),
         h("div", { class: "row", style: "align-items:stretch" },
           vm("amount", "Amount paid (recommended)", "The real price the customer paid (from Stripe or your shop). Your ROAS stays true, and the ad engines learn from real money."),
           vm("profit", "Product-cost-adjusted value", d.costs_known ? "Price minus your product cost" + (d.cost_share != null ? " (" + d.cost_share + "% of the price, unless an order lists its own item costs)" : " from your sales data") + ". It is not full profit: delivery, payment fees and other costs aren't taken off. The engines then lean towards higher-margin orders; ROAS will read lower." : "Enter your product cost below first.")),
@@ -3403,7 +3430,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       // match keys
       const keys = (sg.match_keys || []);
       blocks.push(h("section", { class: "card" },
-        h("div", { class: "between" }, h("h2", {}, "How well Meta can match your buyers"), h("span", { class: "small" }, fmt.format(sg.events_with_keys || 0) + " purchases checked")),
+        h("div", { class: "between" }, h("h2", {}, "How well Meta can match your buyers"), srcTag("meta"), h("span", { class: "small" }, fmt.format(sg.events_with_keys || 0) + " purchases checked")),
         h("p", { class: "sub", style: "margin:0;font-size:14px" }, "The more of these each purchase carries, the more buyers Meta can recognise, and the faster it learns. Personal details are scrambled (hashed) before sending."),
         sg.events_with_keys ? h("div", { class: "mkeys" }, keys.map((x) => h("div", { class: "mkey" },
           h("div", { class: "between" }, h("span", {}, x.label), h("b", {}, Math.round(x.share * 100) + "%")),
@@ -3413,7 +3440,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       if (d.double_count) {
         const dc = d.double_count;
         blocks.push(h("section", { class: "card", style: dc.status === "warning" ? "border-color: var(--amber)" : "" },
-          h("div", { class: "between" }, h("h2", {}, "Counted twice?"), h("span", { class: "badge " + (dc.status === "warning" ? "b-est" : dc.status === "ok" ? "b-measured" : "b-neutral") },
+          h("div", { class: "between" }, h("h2", {}, "Counted twice?"), srcTag("meta"), h("span", { class: "badge " + (dc.status === "warning" ? "b-est" : dc.status === "ok" ? "b-measured" : "b-neutral") },
             dc.status === "warning" ? "Possible double counting" : dc.status === "ok" ? "Looks clean" : "Can't tell yet")),
           h("p", { style: "margin:0" }, dc.message), dc.fix ? h("p", { class: "sub", style: "margin:0" }, h("b", {}, "Fix: "), dc.fix) : null));
       }
@@ -3422,7 +3449,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     const camps = d.campaigns || [];
     const LS = { learning: ["b-neutral", "Learning"], learned: ["b-measured", "Learned"], limited: ["b-est", "Learning limited"], unknown: ["b-neutral", "–"] };
     blocks.push(camps.length ? h("section", { class: "card" },
-      h("div", { class: "between" }, h("h2", {}, "Learning status"), h("span", { class: "small" }, "from Meta · ad sets usually need about 50 results a week")),
+      h("div", { class: "between" }, h("h2", {}, "Learning status"), srcTag("meta"), h("span", { class: "small" }, "ad sets usually need about 50 results a week")),
       camps.map((c) => h("div", { class: "adset", style: "gap:10px" },
         h("div", { class: "between" }, h("b", {}, c.name || c.campaign_id), h("span", { class: "small" }, campState(c.status))),
         c.error ? h("span", { class: "small" }, c.error) : [
