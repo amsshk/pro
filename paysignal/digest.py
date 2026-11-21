@@ -103,7 +103,7 @@ def render(name: str, cur: str, d: dict, spend: Optional[float], waiting: Option
     if leak:
         lines.append(f"One thing to fix: {leak['title']}.")
     text = "Good morning,\n\n" + "\n".join("- " + l for l in lines) + \
-        f"\n\nOpen ProAds: {app_url}\n\nSales count only when paid, refunds taken off. Turn this email off in ProAds: Connect & upload."
+        f"\n\nOpen ProAds: {app_url}\n\nSales count only when paid, refunds taken off. Turn this email off in ProAds: Connect."
     esc = html.escape
     lis = "".join(f'<li style="margin:0 0 8px">{esc(l)}</li>' for l in lines)
     body = (f'<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#141414">'
@@ -112,5 +112,5 @@ def render(name: str, cur: str, d: dict, spend: Optional[float], waiting: Option
             f'<p style="margin:0 0 16px;color:#333">really paid on {esc(day)}{esc(_chg(d["vs_last_week"]))}</p>'
             f'<ul style="padding-left:18px;font-size:15px;line-height:1.5">{lis}</ul>'
             f'<p><a href="{esc(app_url)}" style="background:#5E9400;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;font-weight:700">Open ProAds</a></p>'
-            f'<p style="font-size:12px;color:#5C5C5C">Sales count only when paid, refunds taken off. Turn this email off in ProAds: Connect &amp; upload.</p></div>')
+            f'<p style="font-size:12px;color:#5C5C5C">Sales count only when paid, refunds taken off. Turn this email off in ProAds: Connect.</p></div>')
     return subject, text, body

@@ -2593,7 +2593,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     def run_audience_sync(client_id: str) -> dict:
         s = state.ads_settings(client_id, is_admin(client_id))
         if not s or not s.get("ad_account"):
-            return {"ok": False, "error": "Connect Facebook and choose an ad account first (Connect & upload)."}
+            return {"ok": False, "error": "Connect Facebook and choose an ad account first (Connect)."}
         cfg = state.config(client_id)
         with state.lock:
             rows = audiences.buyers(state.store, client_id)
@@ -2882,7 +2882,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         state.require_key(client_id)
         row = tiktok_ads_ready(client_id)
         if not row:
-            abort(400, "Connect the TikTok ad account first (Connect & upload > TikTok).")
+            abort(400, "Connect the TikTok ad account first (Connect > TikTok).")
         try:
             px = tiktok_api.pixels(tt_http(), tt_token(client_id, row), row["advertiser_id"])
         except tiktok_api.TikTokAPIError as e:
@@ -2897,7 +2897,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         state.require_key(client_id)
         row = tiktok_ads_ready(client_id)
         if not row:
-            abort(400, "Connect the TikTok ad account first (Connect & upload > TikTok).")
+            abort(400, "Connect the TikTok ad account first (Connect > TikTok).")
         if not is_admin(client_id):
             gate_ads(client_id)
         body = request.get_json(silent=True) or {}
@@ -3093,7 +3093,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         else:
             tokens = library_tokens(client_id)
             if not tokens:
-                abort(409, "Connect your Facebook & Instagram first (Connect & upload), or paste the competitor's ads.")
+                abort(409, "Connect your Facebook & Instagram first (Connect), or paste the competitor's ads.")
             q = (body.get("query") or "").strip()
             page_ids = re.findall(r"\d{6,}", q) if re.search(r"facebook\.com|^\d{6,}$", q) else []
             country = (body.get("country") or "AE").strip().upper()[:2]
@@ -3269,7 +3269,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             abort(resp)
         s = state.ads_settings(client_id, is_admin(client_id))
         if s is None:
-            abort(409, "Connect your Facebook & Instagram first (Connect & upload), and pick an ad account, Page and Pixel.")
+            abort(409, "Connect your Facebook & Instagram first (Connect), and pick an ad account, Page and Pixel.")
         return meta_ads.Publisher(state.ads_http, s)
 
     # ---------------- media library: the client's own photos and videos for ads ----------------
@@ -3473,7 +3473,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         state.require_key(client_id)
         row = tiktok_ads_ready(client_id)
         if not row:
-            abort(400, "Connect the TikTok ad account first (Connect & upload > TikTok).")
+            abort(400, "Connect the TikTok ad account first (Connect > TikTok).")
         try:
             vids = tiktok_api.library_videos(tt_http(), tt_token(client_id, row), row["advertiser_id"])
         except tiktok_api.TikTokAPIError as e:
@@ -3494,7 +3494,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         state.require_key(client_id)
         row = tiktok_ads_ready(client_id)
         if not row:
-            abort(400, "Connect the TikTok ad account first (Connect & upload > TikTok).")
+            abort(400, "Connect the TikTok ad account first (Connect > TikTok).")
         try:
             posts, problems = tiktok_api.tiktok_posts(tt_http(), tt_token(client_id, row), row["advertiser_id"])
         except tiktok_api.TikTokAPIError as e:
@@ -4408,7 +4408,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             ("WhatsApp chats from ads", bool(wa["app_secret"] and wa["verify_token"]),
              "Set META_APP_SECRET and PROADS_WHATSAPP_VERIFY_TOKEN, then the webhook in Meta."),
             ("Your own ads can be published", state.ads_settings(admin_id, True) is not None,
-             "Connect your own Facebook in Connect & upload (easiest), or set PROADS_AD_ACCOUNT_ID, "
+             "Connect your own Facebook in Connect (easiest), or set PROADS_AD_ACCOUNT_ID, "
              "PROADS_PAGE_ID and PROADS_ADS_TOKEN."),
             ("Clients can connect Facebook & Instagram", meta_connect.available(),
              "Set META_APP_ID, META_APP_SECRET, META_LOGIN_CONFIG_ID and PROADS_SECRET_KEY (Facebook Login for Business)."),
@@ -5524,7 +5524,7 @@ table{{width:100%;border-collapse:collapse;font-size:14px}}td,th{{text-align:lef
         alerts = []
         if conn and not meta_connect.public_view(conn)["ready"]:
             alerts.append({"level": "bad", "text": "Your Facebook connection has expired or was signed out by Facebook, so no "
-                           "sales are reaching Meta.", "fix": "Reconnect Facebook in Connect & upload."})
+                           "sales are reaching Meta.", "fix": "Reconnect Facebook in Connect."})
         if meta.get("live") and stuck:
             alerts.append({"level": "bad", "text": f"{len(stuck)} paid order{'s' if len(stuck) != 1 else ''} older than 2 hours "
                            "haven't been sent to Meta yet.", "fix": (sig.get("last_error") or {}).get("message")})

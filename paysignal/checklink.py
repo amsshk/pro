@@ -149,7 +149,7 @@ def verdict(d: dict) -> str:
     last = d["days"][-1], d["days"][-2]
     if any(r["practice"] for r in last) and not any(r["meta_accepted"] for r in last):
         parts.append("PROBLEM: the latest sales went to Meta in practice mode only (not to the ads), so ProAds has no "
-                     "working Meta connection for this business. Reconnect the Meta Pixel in Connect & upload; the waiting "
+                     "working Meta connection for this business. Reconnect the Meta Pixel in Connect; the waiting "
                      "sales are then sent (Meta takes sales up to 7 days old).")
     elif not t["orders"]:
         parts.append("If the shop did sell, the sales aren't reaching ProAds: check the Shopify connection below.")

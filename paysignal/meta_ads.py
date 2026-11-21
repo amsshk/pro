@@ -121,7 +121,7 @@ class Publisher:
                         pass
                 err = PublishError(self.s.get("token_invalid_message") or
                                    "Facebook signed ProAds out (a password change or a Facebook security check). "
-                                   "Reconnect Facebook in Connect & upload; your campaigns keep running meanwhile.")
+                                   "Reconnect Facebook in Connect; your campaigns keep running meanwhile.")
                 err.code = 190
                 err.token_invalid = True
                 raise err

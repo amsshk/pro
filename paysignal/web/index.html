@@ -698,7 +698,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       h("b", { style: "font-size:15px" }, title, " \u2192"), h("span", { class: "small" }, text));
     card.append(h("div", { class: "between" }, h("h2", { id: "wn-h" }, "New in ProAds 2.0"), h("button", { class: "btn btn-ghost", type: "button", onclick: close, "aria-label": "Close" }, "Got it")),
       h("div", { style: "display:flex;gap:16px;flex-wrap:wrap" },
-        item("ProAds Impact", "The difference ProAds makes, in percentages, each with its source. On Details.", "#/details"),
+        item("ProAds Impact", "The difference ProAds makes, in percentages, each with its source. On Tracking.", "#/learning"),
         item("Follow-ups in Competitor X-ray", "Recover unpaid checkouts, win back past buyers, ask for reviews. One tap on WhatsApp.", "#/followups"),
         item("Auto buyer audiences", "Your real buyers kept up to date in Meta daily, plus a lookalike.", "#/buyers"),
         item("Morning summary", "Yesterday's real money in your inbox every morning.", "#/upload")));
@@ -715,15 +715,13 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   ];
   // the deeper tools: one click away under "More tools", so the menu stays short
   const NAV_MORE = [
-    ["#/audit", "Audit (money leaks)", "M3 12h4l3 8 4-16 3 8h4"],
-    ["#/buyers", "Buyer quality", "M16 11a4 4 0 1 0-8 0 4 4 0 0 0 8 0zM4 21c1.5-4 4.5-6 8-6s6.5 2 8 6M19 3l1.5 1.5L23 2"],
+    ["#/audit", "Audit", "M3 12h4l3 8 4-16 3 8h4"],
+    ["#/buyers", "Buyers", "M16 11a4 4 0 1 0-8 0 4 4 0 0 0 8 0zM4 21c1.5-4 4.5-6 8-6s6.5 2 8 6M19 3l1.5 1.5L23 2"],
     ["#/funnel", "Purchase funnel", "M3 4h18l-7 8v6l-4 2v-8z"],
-    ["#/learning", "Meta learning", "M4 19V5M4 19h16M8 15l3-4 3 2 5-7"],
-    ["#/engines", "Profit engine", "M12 3v3M12 18v3M4.6 6.6l2.1 2.1M17.3 15.3l2.1 2.1M3 12h3M18 12h3M4.6 17.4l2.1-2.1M17.3 8.7l2.1-2.1M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"],
-    ["#/experiments", "Experiments", "M9 3h6M10 3v6L5 19a1.5 1.5 0 0 0 1.3 2h11.4a1.5 1.5 0 0 0 1.3-2L14 9V3M7.5 15h9"],
-    ["#/whatsapp", "WhatsApp", "M12 3a9 9 0 0 0-7.8 13.5L3 21l4.6-1.2A9 9 0 1 0 12 3z"],
-    ["#/platforms", "Where you sell", "M3 9l1.5-5h15L21 9M4 9v11h16V9M3 9h18M9 20v-6h6v6"],
+    ["#/learning", "Tracking", "M4 19V5M4 19h16M8 15l3-4 3 2 5-7"],
   ];
+  // pages that live inside another one: the menu highlights the parent
+  const PARENT = { "#/engines": "#/assistant", "#/experiments": "#/assistant", "#/whatsapp": "#/upload", "#/platforms": "#/upload", "#/followups": "#/competitors" };
   function statusRows() {
     if (!status) return [];
     const c = status.connections;
@@ -738,6 +736,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       h("span", { class: "dot", "aria-hidden": "true", style: "background:#22C55E;box-shadow:0 0 6px #22C55E" }), text));
   }
   function layout(active, content) {
+    active = PARENT[active] || active;
     return h("div", { class: "shell" },
       h("nav", { class: "side", "aria-label": "Main" },
         h("div", { class: "brand" }, logo(), "ProAds"),
@@ -945,7 +944,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
           h("span", { class: "val" }, fmt.format(t.value_per_1k_views) + " " + cur + " ", h("small", {}, "per 1k views")),
           h("span", { class: "sub", style: "font-size:13px" }, fmt.format(t.views) + " views")))),
         p.watchers_only.length ? h("p", { class: "sub", style: "margin:0" }, "Watchers only (views, no buyers): " + p.watchers_only.join(", ")) : null,
-        estimated ? h("p", { class: "sub", style: "margin:0" }, "Add a tracking link or code to every new post in Connect & upload. In a few weeks these numbers become measured.") : null));
+        estimated ? h("p", { class: "sub", style: "margin:0" }, "Add a tracking link or code to every new post in Connect. In a few weeks these numbers become measured.") : null));
     }
     body.replaceChildren(...blocks);
   }
@@ -1897,7 +1896,8 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       h("div", {}, h("h2", { id: "pick-h" }, "What do you use?"), h("p", { class: "sub", style: "margin:4px 0 0" }, "Tap everything your business uses. ProAds shows how to connect each one.")),
       h("div", { style: "display:flex;flex-direction:column;gap:8px" }, h("b", { style: "font-size:13px;color: var(--muted)" }, "Social media"), h("div", { class: "uchips" }, SOCIAL.map(([k, l]) => chip(k, l)))),
       h("div", { style: "display:flex;flex-direction:column;gap:8px" }, h("b", { style: "font-size:13px;color: var(--muted)" }, "Where you get paid"), h("div", { class: "uchips" }, SHOPS.map(([k, l]) => chip(k, l)))),
-      h("a", { href: "#/platforms", style: "font-size:13px;align-self:flex-start" }, "Don't see yours? More platforms by country"));
+      h("div", { style: "display:flex;gap:16px;flex-wrap:wrap;font-size:13px" }, h("a", { href: "#/platforms" }, "Don't see yours? More platforms by country"),
+        h("a", { href: "#/whatsapp" }, "Sell on WhatsApp? Import chats")));
     const NAME = Object.fromEntries(SOCIAL.concat(SHOPS));
     const socialCard = (k) => h("section", { class: "card" },
       h("div", { class: "between" }, h("h2", {}, NAME[k]), h("span", { class: "badge b-neutral" }, k === "whatsapp" ? "Chats" : "Direct connection coming soon")),
@@ -2204,7 +2204,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     }
 
     root.replaceChildren(layout("#/upload", [
-      h("header", {}, h("h1", {}, "Connect & upload"), h("p", { class: "sub" }, "Pick what you use, connect it, or upload your sales history. Your audit is ready right after.")),
+      h("header", {}, h("h1", {}, "Connect"), h("p", { class: "sub" }, "Pick what you use, connect it, or upload your sales history. Your audit is ready right after.")),
       picker, chosen,
       (() => {
         const up = h("section", { class: "card", "aria-labelledby": "s1" },
@@ -2288,7 +2288,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       const tt = platformSel.value === "tiktok";
       curLabel.textContent = "Daily budget (" + (tt && ttA.currency ? ttA.currency : adsCurrency()) + ")";
       ttNote.textContent = tt ? (ttA.advertiser_id ? "TikTok needs at least about 20 USD a day per ad group, and a video for every ad." :
-        "Connect the TikTok ad account first (Connect & upload > TikTok) to publish. You can still plan here.") : "";
+        "Connect the TikTok ad account first (Connect > TikTok) to publish. You can still plan here.") : "";
     };
     platformSel.addEventListener("change", syncPlatform); syncPlatform();
     const out = h("div", { style: "display:flex;flex-direction:column;gap:12px" });
@@ -2351,7 +2351,8 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
 
     root.replaceChildren(layout("#/assistant", [
       h("header", { class: "between", style: "align-items:flex-end" },
-        h("div", {}, h("h1", {}, "Ask & campaigns"), h("p", { class: "sub" }, "Answers come from your own numbers. The AI never sees customer names, emails or phones."))),
+        h("div", {}, h("h1", {}, "Campaigns"), h("p", { class: "sub" }, "Build, launch and review campaigns. Ask questions about your numbers.")),
+        h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, h("a", { class: "btn btn-ghost", href: "#/engines" }, "Profit engine"), h("a", { class: "btn btn-ghost", href: "#/experiments" }, "Experiments"))),
       h("div", { class: "row", style: "align-items:flex-start" },
         h("section", { class: "card", "aria-labelledby": "chat" }, h("h2", { id: "chat" }, "Ask about your results"), chat, chips, chatForm),
         h("section", { class: "card", "aria-labelledby": "camp" },
@@ -2410,7 +2411,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
             r.link ? h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => copy(r.link) }, "Copy link") : null,
             h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => copy((x.caption || "") + (r.link ? "\n\n" + r.link : "")) }, "Copy caption + link")));
         }
-        btn.replaceWith(h("p", { class: "sub", style: "margin:0;font-size:13px" }, "Done. Each post now has its own link and code, so sign-ups and sales show which post brought them. Find them all under Connect & upload."));
+        btn.replaceWith(h("p", { class: "sub", style: "margin:0;font-size:13px" }, "Done. Each post now has its own link and code, so sign-ups and sales show which post brought them. Find them all under Connect."));
       } catch (e) { if (e.message !== "signed out") { btn.disabled = false; toast(e.message); } }
     });
     return h("div", { class: "adset", style: "gap:10px" },
@@ -2714,7 +2715,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   function tiktokPublishSection(r, sets) {
     if (r.tiktok_launch) return h("div", { class: "adset", style: "gap:12px" }, h("b", {}, "Created in TikTok"), tiktokLaunchCard(r.tiktok_launch));
     if (!r.can_publish) return h("div", { class: "result err" }, h("span", {}, "To publish this to TikTok, ",
-      h("a", { href: "#/upload" }, "connect the TikTok ad account"), " (Connect & upload > TikTok) and choose it."));
+      h("a", { href: "#/upload" }, "connect the TikTok ad account"), " (Connect > TikTok) and choose it."));
     const media = {}, cards = [], setters = [];
     const landing = h("input", { id: "tt-url", value: r.landing_url || "", placeholder: "https://your-website.com", required: true });
     const pixelSel = h("select", { "aria-label": "Pixel" }, h("option", { value: "" }, "Loading your Pixels…"));
@@ -3197,8 +3198,8 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
 
   // ---------- Meta Learning Accelerator ----------
   async function viewLearning() {
-    const head = h("header", {}, h("h1", {}, "Meta learning"),
-      h("p", { class: "sub" }, "Meta learns who buys from the purchases it receives. This page shows what reached Meta, how well Meta can match it, and what's slowing your campaigns' learning."));
+    const head = h("header", {}, h("h1", {}, "Tracking"),
+      h("p", { class: "sub" }, "What reached Meta and TikTok, how well it matches, and the difference it made."));
     root.replaceChildren(layout("#/learning", [head, loading("Checking with Meta…")]));
     let d;
     let dv = null;
@@ -3207,6 +3208,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     const ago = (t) => { if (!t) return "never"; const m = Math.round((Date.now() / 1000 - t) / 60); return m < 1 ? "just now" : m < 60 ? m + " min ago" : m < 1440 ? Math.round(m / 60) + " h ago" : Math.round(m / 1440) + " days ago"; };
     const k = (label, v, note, color) => h("div", { class: "ek" }, h("span", { class: "label" }, label), h("b", { style: color ? "color:" + color : "" }, v), note ? h("span", { class: "small" }, note) : null);
     const blocks = [head];
+    try { const ib = await impactCard(); if (ib) blocks.push(ib); } catch (e) {}      // Impact lives here, next to the tracking it measures
     const alertBox = (a) => h("div", { class: a.level === "bad" ? "result err" : "result", role: a.level === "bad" ? "alert" : null },
       h("span", {}, h("b", {}, a.text), a.fix ? h("span", { style: "display:block;margin-top:4px" }, "Fix: " + a.fix) : null));
     if (d.admin) {
@@ -3580,7 +3582,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         p.creator_brief ? h("div", { class: "result", style: "flex-direction:column;align-items:stretch;gap:4px" }, h("b", {}, "Creator brief"),
           h("span", { class: "small" }, h("b", {}, "Who: "), p.creator_brief.who), h("span", { class: "small" }, h("b", {}, "Send: "), p.creator_brief.send),
           h("span", { class: "small" }, h("b", {}, "Ask: "), p.creator_brief.ask), list("Deliverables", p.creator_brief.deliverables), list("Rules", p.creator_brief.rules),
-          h("span", { class: "small" }, "Give each creator their own link in Connect & upload → Track every new post, so ProAds shows which one brings paid orders.")) : null,
+          h("span", { class: "small" }, "Give each creator their own link in Connect → Track every new post, so ProAds shows which one brings paid orders.")) : null,
         list("Keep your ad accounts safe", p.watch_out));
     }
     return h("section", { class: "card", "aria-labelledby": "wc-h", style: "background: var(--violet-card); border-color: var(--violet-edge)" },
@@ -4405,7 +4407,8 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       draw();
       return;
     }
-    const [adsBox, fcBox, lk, leadsBox, impactBox] = await Promise.all([adsSection(homePeriod), forecastSection(), api("/leaks/" + cid()).catch(() => null), leadsCard(), impactCard()]);
+    const [adsBox, fcBox, lk, leadsBox] = await Promise.all([adsSection(homePeriod), forecastSection(), api("/leaks/" + cid()).catch(() => null), leadsCard()]);
+    const impactBox = null;                                   // shown on Tracking, not repeated here
     const leakNote = lk && lk.leaks && lk.leaks.length ? h("a", { href: "#/audit", class: "result err", style: "text-decoration:none;color:inherit" },
       h("span", {}, h("b", {}, "Money leaks: "), (lk.measured_per_month ? "about " + fmt.format(Math.round(lk.measured_per_month)) + " " + lk.currency + " a month measured" : "")
         + (lk.at_stake_per_month ? (lk.measured_per_month ? ", " : "") + "up to " + fmt.format(Math.round(lk.at_stake_per_month)) + " " + lk.currency + " more at stake" : "")
