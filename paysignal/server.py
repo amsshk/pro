@@ -2365,6 +2365,19 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if isinstance(mq, dict) and mq.get("match_quality") is not None and mq["match_quality"] < 6:
             out.append({"level": "bad", "text": f"Meta can match only {mq['match_quality']:.1f}/10 of your purchases to people.",
                         "fix": "More orders with email and phone (Shopify customer data access) raise it. Fix this before raising budgets."})
+        try:                                                  # one or two ads per campaign: the platform has little to test
+            since3 = (datetime.now(timezone.utc) - timedelta(days=3)).date().isoformat()
+            by_camp = {}
+            for r in state.windsor.spend_by_ad(client_id, since3):
+                if (r.get("spend") or 0) > 0:
+                    by_camp.setdefault(r.get("campaign") or r.get("campaign_id") or "a campaign", set()).add(r["ad_id"])
+            thin = [(c, len(a)) for c, a in by_camp.items() if len(a) < 3]
+            if thin:
+                c, n = thin[0]
+                out.append({"level": "warn", "text": f"\u201c{c}\u201d is running only {n} ad{'s' if n != 1 else ''}.",
+                            "fix": "Add 3 to 5 clearly different videos (different hooks, people, angles) so TikTok can find what sells."})
+        except Exception:
+            pass
         for name, sent, ok in (("TikTok", tt_sent, tt_ok), ("Meta", m_sent, m_ok)):
             if sent >= 5 and ok / sent < 0.9:
                 out.append({"level": "bad", "text": f"{name} accepted only {ok} of {sent} sales sent in the last 7 days.",
@@ -2376,6 +2389,42 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     def alerts_view(client_id):
         state.require_key(client_id)
         return {"alerts": health_alerts(client_id)}
+
+    @flask.post("/sales/<client_id>/add")
+    def add_sale(client_id):
+        """One sale that didn't happen on the website (WhatsApp, Instagram DM, phone, store), typed in 10 seconds.
+        It is sent to Meta with the matching source (chat, phone_call, physical_store) so it counts as real, offline
+        volume. It isn't sent to the TikTok website Pixel, which is only for website purchases."""
+        state.require_key(client_id)
+        b = request.get_json(silent=True) or {}
+        try:
+            amount = float(b.get("amount"))
+        except (TypeError, ValueError):
+            abort(400, "Enter the amount paid.")
+        if amount <= 0 or amount > 1_000_000:
+            abort(400, "Enter the amount paid.")
+        where = str(b.get("where") or "whatsapp")
+        channel = {"whatsapp": "chat", "instagram": "chat", "phone": "phone_call", "store": "physical_store"}.get(where)
+        if not channel:
+            abort(400, "Choose where the sale happened.")
+        email, phone = (str(b.get("email") or "").strip()[:200] or None), (str(b.get("phone") or "").strip()[:40] or None)
+        if not (email or phone):
+            abort(400, "Add the customer's phone or email, so Meta can match the sale.")
+        day = str(b.get("date") or "")[:10]
+        try:
+            when = datetime.fromisoformat(day).replace(hour=12, tzinfo=timezone.utc) if day else datetime.now(timezone.utc)
+        except ValueError:
+            abort(400, "Date must look like 2026-11-21.")
+        if when > datetime.now(timezone.utc) + timedelta(minutes=5) or when < datetime.now(timezone.utc) - timedelta(days=60):
+            abort(400, "Use a date in the last 60 days.")
+        cur = (str(b.get("currency") or state.config(client_id).get("currency", "AED"))[:3]).upper()
+        product = str(b.get("product") or "").strip()[:120]
+        p = Payment(client_id=client_id, source="manual", external_id="m-" + secrets.token_hex(6), kind="purchase", amount=round(amount, 2),
+                    currency=cur, occurred_at=when, email=email, phone=phone, channel=channel, utm_source=where, utm_medium="offline",
+                    items=[LineItem(sku=product, name=product, quantity=1, unit_price=round(amount, 2))] if product else [],
+                    payment_method={"whatsapp": "WhatsApp order", "instagram": "Instagram DM order", "phone": "Phone order", "store": "In store"}[where])
+        res = state.ingest(client_id, [p])
+        return {"ok": True, "added": res.get("new", 0), "order": p.external_id[-8:]}
 
     @flask.get("/orders-trace/<client_id>")
     def orders_trace(client_id):

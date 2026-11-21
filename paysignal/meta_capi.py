@@ -23,8 +23,8 @@ VALUE_MODES = ("amount", "profit")
 
 def _action_source(p: Payment) -> str:
     """Where the sale really happened. Uploaded files can't prove a website checkout, so they're 'other'."""
-    if p.channel == "physical_store":
-        return "physical_store"
+    if p.channel in ("physical_store", "chat", "phone_call"):     # Meta's own sources for store, DM/WhatsApp and phone sales
+        return p.channel
     if p.source in ("upload", "csv") and not p.event_source_url:
         return "other"
     return "website"

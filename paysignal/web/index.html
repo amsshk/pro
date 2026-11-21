@@ -2260,6 +2260,32 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("section", { class: "card", "aria-labelledby": "s3" },
           h("div", { class: "srow", style: "gap:12px" }, h("span", { class: "num-dot" }, "3"), h("h2", { id: "s3" }, "Track every new post")),
           tForm, tOut, h("h3", { style: "margin:8px 0 0;font-size:15px" }, "Your codes"), tList)),
+      (() => {
+        const f = (id, label, el) => h("label", { class: "f", for: id, style: "flex:1 1 150px" }, label, el);
+        const amount = h("input", { id: "as-amount", type: "number", min: "1", step: "0.01", required: true, placeholder: "485" });
+        const where = h("select", { id: "as-where" }, [["whatsapp", "WhatsApp"], ["instagram", "Instagram DM"], ["phone", "Phone call"], ["store", "In store"]].map(([v, t]) => h("option", { value: v }, t)));
+        const phone = h("input", { id: "as-phone", type: "tel", placeholder: "0501234567" });
+        const email = h("input", { id: "as-email", type: "email", placeholder: "optional" });
+        const product = h("input", { id: "as-product", placeholder: "optional, e.g. N°6 Extrait" });
+        const day = h("input", { id: "as-date", type: "date", value: new Date().toISOString().slice(0, 10) });
+        const msg = h("span", { class: "small", role: "status" });
+        const btn = h("button", { class: "btn btn-primary", type: "submit" }, "Add sale");
+        return h("form", { class: "card", "aria-labelledby": "as-h", onsubmit: async (e) => {
+          e.preventDefault(); btn.disabled = true; msg.textContent = "";
+          try {
+            const r = await api("/sales/" + cid() + "/add", { method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ amount: amount.value, where: where.value, phone: phone.value, email: email.value, product: product.value, date: day.value }) });
+            msg.textContent = "Added. Meta gets it as a " + (where.value === "store" ? "store" : where.value === "phone" ? "phone" : "chat") + " sale within a minute.";
+            amount.value = ""; phone.value = ""; email.value = ""; product.value = "";
+          } catch (e2) { if (e2.message !== "signed out") msg.textContent = e2.message; }
+          btn.disabled = false;
+        } },
+          h("h2", { id: "as-h" }, "Add a sale from WhatsApp, DM, phone or store"),
+          h("p", { class: "sub", style: "margin:0;font-size:14px" }, "Sales that never touched the website. Meta counts them as offline purchases, so your ads learn from these buyers too."),
+          h("div", { style: "display:flex;gap:10px;flex-wrap:wrap" }, f("as-amount", "Amount paid", amount), f("as-where", "Where", where), f("as-date", "Date", day)),
+          h("div", { style: "display:flex;gap:10px;flex-wrap:wrap" }, f("as-phone", "Customer phone", phone), f("as-email", "Customer email", email), f("as-product", "Product", product)),
+          h("div", { style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap" }, btn, msg));
+      })(),
       h("details", { class: "card settingsfold", id: "settings", open: (params && params.get && params.get("open") === "settings") || null },
         h("summary", {}, h("h2", { style: "margin:0" }, "Settings & your data"),
           h("span", { class: "sub", style: "font-size:13px" }, "Morning email, anonymous lessons, start fresh, delete account")),

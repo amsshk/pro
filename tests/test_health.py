@@ -39,3 +39,19 @@ def test_setup_guide_fits_tiktok_only(tmp_path):
     app, c, tok = app_and_token(tmp_path)
     labels = [x["label"] for x in c.get("/dashboard/glow-clinic", headers={"X-API-Key": tok}).json["setup"]]
     assert "Send sales to your ad platforms" in labels and "Connect Facebook & Instagram" not in labels
+
+
+def test_add_offline_sale_goes_to_meta_as_chat_not_tiktok(tmp_path):
+    from paysignal import meta_capi, tiktok
+    app, c, tok = app_and_token(tmp_path)
+    r = c.post("/sales/glow-clinic/add", headers={"X-API-Key": tok}, json={"amount": 485, "where": "whatsapp", "phone": "0501234567"})
+    assert r.status_code == 200 and r.json["added"] == 1
+    assert c.post("/sales/glow-clinic/add", headers={"X-API-Key": tok}, json={"amount": 485, "where": "whatsapp"}).status_code == 400
+    st = app.extensions["paysignal"]
+    p = st.store.purchases("glow-clinic")[0]
+    assert p.channel == "chat" and meta_capi._action_source(p) == "chat"
+
+    class S:
+        def was_sent(self, *a): return False
+    pl = tiktok.plan([p], S(), "glow-clinic", lambda p: 0, lambda p: p.amount)
+    assert pl["send"] == []

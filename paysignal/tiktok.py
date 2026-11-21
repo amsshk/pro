@@ -253,6 +253,8 @@ def plan(payments: list[Payment], store: "TikTokStore", client_id: str, refunded
     for p in payments:
         if p.kind != "purchase" or p.occurred_at < now - MAX_AGE or store.was_sent(client_id, pixel_code, event_id(p)):
             continue
+        if p.channel in ("chat", "phone_call"):    # typed-in WhatsApp / DM / phone sales: Meta gets them as offline, not this website Pixel
+            continue
         if p.occurred_at > now - hold:
             out["held"] += 1
             continue
