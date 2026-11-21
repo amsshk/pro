@@ -4371,6 +4371,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         require_admin(admin_id)
         with state.lock:
             rows = state.accounts.overview()
+            for r in rows:                                  # the ad test end as stored, so the admin sees what's real
+                acc = state.billing.ads_access(r["client_id"])
+                r["ads_trial_ends"] = acc["trial_ends"] if not acc["plan"] else None
         week_ago = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(time.time() - 7 * 86400))
         return {"accounts": rows, "email_on": mailer.available(), "totals": {
             "accounts": len(rows), "activated": sum(1 for r in rows if r["activated_at"]),
