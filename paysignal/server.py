@@ -2547,7 +2547,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if tt_link and tt_link["advertiser_id"]:                 # purchase campaigns running at once share the same buyers
             try:
                 live = tiktok_live_data(client_id, "7")
-                active = [c for c in live.get("campaigns", []) if c.get("on") and not c.get("promote")]
+                active = [c for c in live.get("campaigns", []) if c.get("on") and not c.get("promote")   # switched on AND
+                          and (c.get("spend") or 0) > 0]                                             # actually spending
                 rt = re.compile(r"retarget|remarket|\brt\b|returning|existing|إعادة", re.I)
                 prospecting = [c for c in active if not rt.search(str(c.get("name") or ""))]   # one retargeting campaign is fine
                 out["tiktok_split"] = len(prospecting) if len(prospecting) > 1 else None
