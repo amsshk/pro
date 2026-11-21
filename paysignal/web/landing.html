@@ -5,6 +5,7 @@
 <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48.png">
 <link rel="apple-touch-icon" href="/favicon-192.png">
 <meta charset="utf-8">
+<meta name="theme-color" content="#0B0B0B">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ProAds: Meta and TikTok server-side purchase tracking for Shopify, Stripe and Tabby | UAE</title>
 <meta name="description" content="ProAds sends your real paid sales (Shopify, Stripe, Tabby, Ziina) to Meta and TikTok from the server, with refunds removed, so your ads find buyers. Free audit the day you upload your sales.">
@@ -64,7 +65,7 @@ input,select{font:inherit;color:var(--text);background:var(--field);border:1px s
 input::placeholder{color:#6E6E6E}
 .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
 .check{display:flex;gap:10px;align-items:flex-start;font-size:14px;color:#333}
-.check input{width:20px;min-height:20px;height:20px;margin-top:2px;accent-color:#5E9400}
+.check input{width:20px;min-height:20px;height:20px;margin-top:2px;accent-color:#B6F04A}
 .err{color:var(--amber-txt);font-size:14px;margin:0}
 .err:empty{display:none}
 .navnews{font-weight:600;font-size:14px;color:inherit;text-decoration:none;padding:8px 6px}
@@ -75,7 +76,7 @@ input::placeholder{color:#6E6E6E}
 .prefsrc-wrap{display:flex;justify-content:center;padding:8px 0 28px}
 .prefsrc{display:inline-flex;align-items:center;gap:8px;padding:10px 18px;border-radius:999px;border:1px solid var(--soft);background:#fff;color:#1F1F1F;font-weight:600;font-size:14px;text-decoration:none;box-shadow:0 1px 3px rgba(0,0,0,.08)}
 .prefsrc:hover{box-shadow:0 2px 8px rgba(0,0,0,.14)}
-.prefsrc svg{color:#5E9400}
+.prefsrc svg{color:#B6F04A}
 footer{border-top:1px solid var(--soft);padding:28px 0 40px;color:var(--muted);font-size:14px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .cookie{position:fixed;left:16px;right:16px;bottom:16px;max-width:620px;margin:0 auto;background:var(--card);border:1px solid var(--edge);border-radius:14px;padding:16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;z-index:10;box-shadow:0 10px 40px rgba(0,0,0,.5)}
 .cookie p{margin:0;font-size:14px;color:#333;flex:1 1 280px}
@@ -120,6 +121,28 @@ html[dir=rtl] h1,html[lang=hi] h1,html[lang=th] h1{line-height:1.3}
 .flowhint{color:#9A9A9A}
 .flowscroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
 .flowmap{display:block;width:100%;min-width:880px;height:auto}
+/* ---- dark homepage, same look as the flow map: near-black canvas, rounded pills, lime highlights ---- */
+:root{color-scheme:dark;--ink:#0B0B0B;--card:#151515;--line:#262626;--soft:#1B1B1B;--field:#111111;--edge:#383838;
+  --text:#F2F2F2;--muted:#A6A6A6;--dim:#8A8A8A;--violet:#B6F04A;--violet-hi:#CFFA6E;--violet-txt:#B6F04A;--violet-card:#182010;--violet-edge:#3A4A1F;
+  --amber:#F87171;--amber-txt:#FCA5A5;--amber-bg:#2A1617;--win-txt:#86EFAC}
+body{background:var(--ink)}
+.btn{border-radius:999px}
+.btn-primary{background:#B6F04A;color:#0B0B0B}.btn-primary:hover{background:#CFFA6E;color:#0B0B0B}
+.btn-ghost{border-color:#3A3A3A;color:var(--text)}.btn-ghost:hover{border-color:#B6F04A;color:#fff}
+.step{background:#B6F04A;color:#0B0B0B}
+.card,ul.checks li,.preview{background:var(--card);border-color:var(--line);border-radius:20px}
+.preview .row{background:#1E1E1E}
+.t-loss,.t-est{color:#FCA5A5;background:#3A1D1F}.t-gain{color:#86EFAC;background:#13261A}
+label.f,.check,.cookie p{color:#D4D4D4}
+input,select{background:var(--field);border-color:var(--edge);color:var(--text);border-radius:12px}
+input::placeholder{color:#7A7A7A}
+.prefsrc{background:#161616;color:#EDEDED;border-color:#2E2E2E;box-shadow:none}
+.social .or{color:#8A8A8A}.social .or::before,.social .or::after{background:#2E2E2E}
+section.block{border-top-color:#1C1C1C}
+footer{border-top-color:#1C1C1C}
+.flowpanel{background:#121212;border:1px solid #232323}
+.hiw-why div{border-left-color:#B6F04A}
+.eyebrow{background:#182010;border-color:#3A4A1F;color:#B6F04A}
 </style>
 %%JSONLD%%
 </head>
@@ -287,10 +310,10 @@ html[dir=rtl] h1,html[lang=hi] h1,html[lang=th] h1{line-height:1.3}
     <section class="block" aria-labelledby="uae">
       <h2 id="uae" data-i18n="any_h">Made for how businesses really sell, anywhere</h2>
       <ul class="checks">
-        <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#5E9400" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg><span data-i18n="k1">Connect Shopify or Stripe directly, or upload a sales export from Salla, Zid, WooCommerce or any shop or POS. WhatsApp, cash and walk-in sales count through promo codes</span></li>
+        <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#B6F04A" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg><span data-i18n="k1">Connect Shopify or Stripe directly, or upload a sales export from Salla, Zid, WooCommerce or any shop or POS. WhatsApp, cash and walk-in sales count through promo codes</span></li>
         
-        <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#5E9400" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg><span data-i18n="k3">Any currency: your ads, sales and reports stay in the currency you use</span></li>
-        <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#5E9400" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg><span data-i18n="k4">Your data stays yours: the AI sees totals, never customer names, emails or phones</span></li>
+        <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#B6F04A" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg><span data-i18n="k3">Any currency: your ads, sales and reports stay in the currency you use</span></li>
+        <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#B6F04A" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg><span data-i18n="k4">Your data stays yours: the AI sees totals, never customer names, emails or phones</span></li>
       </ul>
     </section>
 
@@ -312,8 +335,8 @@ html[dir=rtl] h1,html[lang=hi] h1,html[lang=th] h1{line-height:1.3}
         <h2 id="signup-h" data-i18n="cta">Get your free audit</h2>
         <p class="sub" data-i18n="su_sub">Create your account, upload your sales, and see your audit right away.</p>
         <ul class="checks" style="grid-template-columns:1fr">
-          <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#5E9400" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg><span data-i18n="su1">Free to start, no card</span></li>
-          <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#5E9400" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg><span data-i18n="su2">Delete your data any time</span></li>
+          <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#B6F04A" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg><span data-i18n="su1">Free to start, no card</span></li>
+          <li><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#B6F04A" stroke-width="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg><span data-i18n="su2">Delete your data any time</span></li>
         </ul>
       </div>
       <form class="card" id="signup-form" novalidate>
