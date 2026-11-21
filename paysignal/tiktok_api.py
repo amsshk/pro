@@ -554,3 +554,37 @@ def tiktok_posts(http, token: str, advertiser_id: str, limit: int = 60) -> tuple
             if not d.get("has_more") or not cursor or len(posts) >= limit:
                 break
     return posts[:limit], problems
+
+
+def campaign_totals(http, token: str, advertiser_id: str, ids: list[str], start: str, end: str) -> dict:
+    """Spend, clicks and purchases (Complete payment) of the given campaigns over any length of time (read in 28-day
+    pieces, TikTok's limit)."""
+    from datetime import date, timedelta
+    out = {"spend": 0.0, "clicks": 0, "purchases": 0}
+    if not ids:
+        return out
+    want, a, b = set(ids), date.fromisoformat(start), date.fromisoformat(end)
+    metrics = ["spend", "clicks", "complete_payment"]
+    while a <= b:
+        piece_end = min(b, a + timedelta(days=MAX_SPAN_DAYS - 1))
+        params = {"advertiser_id": advertiser_id, "report_type": "BASIC", "data_level": "AUCTION_CAMPAIGN",
+                  "dimensions": ["campaign_id", "stat_time_day"], "start_date": a.isoformat(), "end_date": piece_end.isoformat(),
+                  "page_size": 1000, "filtering": [{"field_name": "campaign_ids", "filter_type": "IN", "filter_value": json.dumps(sorted(want))}]}
+        try:
+            d = _get(http, token, "report/integrated/get", {**params, "metrics": metrics}, "reading ProAds campaigns")
+        except TikTokAPIError:
+            if "complete_payment" not in metrics:
+                raise
+            metrics = ["spend", "clicks"]
+            d = _get(http, token, "report/integrated/get", {**params, "metrics": metrics}, "reading ProAds campaigns")
+        for row in d.get("list") or []:
+            if str((row.get("dimensions") or {}).get("campaign_id") or "") not in want:
+                continue
+            m = row.get("metrics") or {}
+            f = lambda k: float(m.get(k) or 0) if str(m.get(k) or "0").replace(".", "", 1).isdigit() else 0.0
+            out["spend"] += f("spend")
+            out["clicks"] += int(f("clicks"))
+            out["purchases"] += int(f("complete_payment"))
+        a = piece_end + timedelta(days=1)
+    out["spend"] = round(out["spend"], 2)
+    return out

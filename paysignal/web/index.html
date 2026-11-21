@@ -342,6 +342,32 @@ main{background:transparent}
   :root[data-theme="dark"] .topbar,:root[data-theme="dark"] .tabbar{background:rgba(20,20,20,.94)}
   :root[data-theme="dark"] .tabbar [aria-current="page"]{color:#9ACD4F}
 }
+
+  /* Home: what ProAds did */
+  .hero { gap: 18px; }
+  .flow { display: flex; align-items: flex-start; gap: 6px; flex-wrap: wrap; }
+  .flowstep { flex: 1 1 110px; min-width: 104px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; }
+  .flowdot { width: 104px; height: 104px; border-radius: 50%; display: grid; place-items: center; padding: 8px; background: var(--soft); border: 2px solid var(--line); }
+  .flowdot b { font-family: var(--head); font-size: 19px; line-height: 1.15; word-break: break-word; }
+  .flowstep.strong .flowdot { background: var(--violet-card); border-color: var(--violet); }
+  .flowstep.strong .flowdot b { color: var(--violet-txt); }
+  .flowlbl { font-size: 13px; font-weight: 600; }
+  .flownote { font-size: 12px; color: var(--muted); }
+  .flowarrow { align-self: center; margin-top: -30px; color: var(--dim); font-size: 20px; }
+  .bgwork { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--line); padding-top: 14px; }
+  .bggrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; }
+  .bggrid > div { display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+  @media (max-width: 640px) { .flowarrow { display: none; } .flowstep { flex: 1 1 40%; } .flowdot { width: 92px; height: 92px; } }
+  .navmore summary { display: flex; align-items: center; gap: 12px; padding: 11px 12px; border-radius: 10px; color: var(--muted); font-size: 14px; min-height: 44px; cursor: pointer; list-style: none; }
+  .navmore summary::-webkit-details-marker { display: none; }
+  .navmore summary:hover { background: var(--violet-chip); color: var(--text); }
+  .navmore[open] summary { color: var(--text); font-weight: 600; }
+  .navmore a { padding-left: 22px !important; }
+  .settingsfold summary { display: flex; flex-direction: column; gap: 4px; cursor: pointer; list-style: none; }
+  .settingsfold summary::-webkit-details-marker { display: none; }
+  .settingsfold summary h2::after { content: " ▾"; color: var(--muted); font-size: 16px; }
+  .settingsfold[open] summary h2::after { content: " ▴"; }
+  .settingsfold .card { box-shadow: none; }
 </style>
 </head>
 <body>
@@ -672,7 +698,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       h("b", { style: "font-size:15px" }, title, " \u2192"), h("span", { class: "small" }, text));
     card.append(h("div", { class: "between" }, h("h2", { id: "wn-h" }, "New in ProAds 2.0"), h("button", { class: "btn btn-ghost", type: "button", onclick: close, "aria-label": "Close" }, "Got it")),
       h("div", { style: "display:flex;gap:16px;flex-wrap:wrap" },
-        item("ProAds Impact", "The difference ProAds makes, in percentages, each with its source. On Home.", "#/home"),
+        item("ProAds Impact", "The difference ProAds makes, in percentages, each with its source. On Details.", "#/details"),
         item("Follow-ups in Competitor X-ray", "Recover unpaid checkouts, win back past buyers, ask for reviews. One tap on WhatsApp.", "#/followups"),
         item("Auto buyer audiences", "Your real buyers kept up to date in Meta daily, plus a lookalike.", "#/buyers"),
         item("Morning summary", "Yesterday's real money in your inbox every morning.", "#/upload")));
@@ -682,17 +708,21 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   // ---------- layout ----------
   const NAV = [
     ["#/home", "Home", "M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"],
-    ["#/audit", "Audit", "M3 12h4l3 8 4-16 3 8h4"],
-    ["#/platforms", "Where you sell", "M3 9l1.5-5h15L21 9M4 9v11h16V9M3 9h18M9 20v-6h6v6"],
-    ["#/upload", "Connect & upload", "M12 16V4M6 10l6-6 6 6M4 20h16"],
-    ["#/whatsapp", "WhatsApp", "M12 3a9 9 0 0 0-7.8 13.5L3 21l4.6-1.2A9 9 0 1 0 12 3z"],
-    ["#/assistant", "Ask & campaigns", "M4 5h16v11H8l-4 4z"],
-    ["#/funnel", "Purchase funnel", "M3 4h18l-7 8v6l-4 2v-8z"],
-    ["#/experiments", "Experiments", "M9 3h6M10 3v6L5 19a1.5 1.5 0 0 0 1.3 2h11.4a1.5 1.5 0 0 0 1.3-2L14 9V3M7.5 15h9"],
+    ["#/assistant", "Campaigns", "M4 5h16v11H8l-4 4z"],
+    ["#/details", "Details", "M4 19V5M4 19h16M8 15V11M12 15V8M16 15v-5"],
+    ["#/upload", "Connect", "M12 16V4M6 10l6-6 6 6M4 20h16"],
+    ["#/competitors", "Competitor X-ray", "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM16 16l5 5M8 11h6M11 8v6", "Premium"],
+  ];
+  // the deeper tools: one click away under "More tools", so the menu stays short
+  const NAV_MORE = [
+    ["#/audit", "Audit (money leaks)", "M3 12h4l3 8 4-16 3 8h4"],
     ["#/buyers", "Buyer quality", "M16 11a4 4 0 1 0-8 0 4 4 0 0 0 8 0zM4 21c1.5-4 4.5-6 8-6s6.5 2 8 6M19 3l1.5 1.5L23 2"],
+    ["#/funnel", "Purchase funnel", "M3 4h18l-7 8v6l-4 2v-8z"],
     ["#/learning", "Meta learning", "M4 19V5M4 19h16M8 15l3-4 3 2 5-7"],
     ["#/engines", "Profit engine", "M12 3v3M12 18v3M4.6 6.6l2.1 2.1M17.3 15.3l2.1 2.1M3 12h3M18 12h3M4.6 17.4l2.1-2.1M17.3 8.7l2.1-2.1M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"],
-    ["#/competitors", "Competitor X-ray", "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM16 16l5 5M8 11h6M11 8v6", "Premium"],
+    ["#/experiments", "Experiments", "M9 3h6M10 3v6L5 19a1.5 1.5 0 0 0 1.3 2h11.4a1.5 1.5 0 0 0 1.3-2L14 9V3M7.5 15h9"],
+    ["#/whatsapp", "WhatsApp", "M12 3a9 9 0 0 0-7.8 13.5L3 21l4.6-1.2A9 9 0 1 0 12 3z"],
+    ["#/platforms", "Where you sell", "M3 9l1.5-5h15L21 9M4 9v11h16V9M3 9h18M9 20v-6h6v6"],
   ];
   function statusRows() {
     if (!status) return [];
@@ -713,10 +743,13 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("div", { class: "brand" }, logo(), "ProAds"),
         h("div", { class: "biz" }, h("small", {}, "Business"), status ? status.name : session.client, bizSwitcher()),
         h("div", { class: "navlinks" }, NAV.concat(status && status.admin ? [["#/admin", "Admin", "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"]] : [["#/billing", "Plan & billing", "M3 7h18v10H3zM3 11h18"]]).map(([href, label, d, tag]) =>
-          h("a", { href, "aria-current": href === active ? "page" : null }, icon(d), label, tag ? h("span", { class: "navtag" }, tag) : null))),
+          h("a", { href, "aria-current": href === active ? "page" : null }, icon(d), label, tag ? h("span", { class: "navtag" }, tag) : null)),
+          h("details", { class: "navmore", open: NAV_MORE.some(([href]) => href === active) || null },
+            h("summary", {}, icon("M4 6h16M4 12h16M4 18h16"), "More tools"),
+            NAV_MORE.map(([href, label, d]) => h("a", { href, "aria-current": href === active ? "page" : null }, icon(d), label)))),
         h("div", { class: "statusbox" }, statusRows(), themeToggle(),
           h("button", { class: "btn btn-ghost", style: "margin-top:6px", onclick: () => signOut() }, "Sign out"),
-          h("a", { href: "#/home", class: "small", style: "margin-top:4px;color: var(--muted);text-decoration:none", onclick: () => { try { localStorage.removeItem("proads.seen2"); } catch (e) {} } }, "ProAds " + PROADS_VERSION + " · What's new"))),
+          h("a", { href: "#/details", class: "small", style: "margin-top:4px;color: var(--muted);text-decoration:none", onclick: () => { try { localStorage.removeItem("proads.seen2"); } catch (e) {} } }, "ProAds " + PROADS_VERSION + " · What's new"))),
       mobileTop(),
       h("main", {}, h("div", { class: "wrap" }, ...(status && status.viewer ? [h("div", { class: "viewbar", role: "status" },
         h("span", {}, "You're viewing ", h("b", {}, status.name), " as admin · view only (you can connect their Facebook with your own login)"),
@@ -725,14 +758,14 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   }
 
   // ---------- iPhone navigation ----------
-  const TABS = [["#/home", "Home", NAV[0][2]], ["#/audit", "Audit", NAV[1][2]], ["#/assistant", "Campaigns", NAV[5][2]], ["#/upload", "Connect", NAV[3][2]]];
+  const TABS = [["#/home", "Home", NAV[0][2]], ["#/assistant", "Campaigns", NAV[1][2]], ["#/details", "Details", NAV[2][2]], ["#/upload", "Connect", NAV[3][2]]];
   function mobileTop() {
     return h("header", { class: "topbar" }, h("a", { class: "brand", href: "#/home", style: "text-decoration:none" }, logo(), "ProAds"),
       h("span", { class: "bizname" }, status ? status.name : session.client));
   }
   function mobileTabs(active) {
     const extra = status && status.admin ? [["#/admin", "Admin", "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"]] : [["#/billing", "Plan & billing", "M3 7h18v10H3zM3 11h18"]];
-    const rest = NAV.filter(([href]) => !TABS.some((t) => t[0] === href)).concat(extra);
+    const rest = NAV.filter(([href]) => !TABS.some((t) => t[0] === href)).concat(NAV_MORE, extra);
     const inMore = rest.some(([href]) => href === active);
     const bg = h("div", { class: "sheet-bg", onclick: () => close() });
     const sheet = h("div", { class: "sheet", role: "dialog", "aria-label": "More" });
@@ -745,7 +778,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         ...rest.map(([href, label, d, tag]) => h("a", { href, "aria-current": href === active ? "page" : null, onclick: close }, icon(d), label, tag ? h("span", { class: "navtag", style: "margin-left:auto" }, tag) : null)),
         h("div", { class: "sect" }, "Settings"), h("div", { style: "padding:4px 10px" }, themeToggle()),
         h("button", { class: "row-btn", type: "button", onclick: () => { close(); signOut(); } }, icon("M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 17l5-5-5-5M15 12H3"), "Sign out"),
-        h("a", { class: "row-btn", href: "#/home", onclick: () => { close(); try { localStorage.removeItem("proads.seen2"); } catch (e) {} } }, icon("M12 3l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5z"), "ProAds " + PROADS_VERSION + " · What's new"));
+        h("a", { class: "row-btn", href: "#/details", onclick: () => { close(); try { localStorage.removeItem("proads.seen2"); } catch (e) {} } }, icon("M12 3l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5z"), "ProAds " + PROADS_VERSION + " · What's new"));
       bg.classList.add("open"); sheet.classList.add("open"); document.body.style.overflow = "hidden";
     };
     const tabs = h("nav", { class: "tabbar", "aria-label": "Main" },
@@ -2190,9 +2223,11 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("section", { class: "card", "aria-labelledby": "s3" },
           h("div", { class: "srow", style: "gap:12px" }, h("span", { class: "num-dot" }, "3"), h("h2", { id: "s3" }, "Track every new post")),
           tForm, tOut, h("h3", { style: "margin:8px 0 0;font-size:15px" }, "Your codes"), tList)),
-      digestCard(),
-      clearSalesCard(),
-      status && status.self_serve ? deleteCard() : null,
+      h("details", { class: "card settingsfold", id: "settings", open: (params && params.get && params.get("open") === "settings") || null },
+        h("summary", {}, h("h2", { style: "margin:0" }, "Settings & your data"),
+          h("span", { class: "sub", style: "font-size:13px" }, "Morning email, anonymous lessons, start fresh, delete account")),
+        h("div", { style: "display:flex;flex-direction:column;gap:20px;margin-top:16px" },
+          ...[digestCard(), ...[].concat(clearSalesCard()), status && status.self_serve ? deleteCard() : null].filter(Boolean))),
     ]));
     drawChosen();
     loadCodes();
@@ -4235,7 +4270,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       "aria-label": "Average price of one sale in " + cur, style: "max-width:140px" });
     const save = h("button", { class: "btn btn-ghost", type: "button", onclick: async () => {
       save.disabled = true;
-      try { await api("/leads/" + cid() + "/price", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ price: price.value || null }) }); viewHome(); }
+      try { await api("/leads/" + cid() + "/price", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ price: price.value || null }) }); route(); }
       catch (e) { toast(e.message); save.disabled = false; } } }, "Save");
     const lowSent = L.buyers >= 5 && L.sent_to_meta < L.buyers / 2;
     return h("section", { class: "card", "aria-labelledby": "leads-h" },
@@ -4261,11 +4296,12 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("span", { class: "sub", style: "font-size:13px" }, "Turns buyers into money. Upload a newer export from Meta Business Suite → Leads anytime.")));
   }
 
-  async function viewHome() {
+  async function viewDetails(_params, asHome) {
+    const here = asHome ? "#/home" : "#/details";
     const body = h("div", { style: "display:contents" }, loading());
     const periods = h("div", { class: "periods", role: "group", "aria-label": "Time period" }, PERIOD_LABELS.map(([v, label]) =>
       h("button", { type: "button", "aria-pressed": v === homePeriod ? "true" : "false", onclick: () => {
-        homePeriod = v; try { localStorage.setItem("proads.period", v); } catch (e) {} viewHome(); } }, label)));
+        homePeriod = v; try { localStorage.setItem("proads.period", v); } catch (e) {} viewDetails(null, asHome); } }, label)));
     const dl = async (fmt_, btn) => {
       btn.disabled = true; const was = btn.textContent; btn.textContent = "Preparing…";
       try {
@@ -4283,9 +4319,9 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     const download = h("details", { class: "dlmenu" }, h("summary", { class: "btn btn-ghost", "aria-label": "Download report" },
         icon("M12 4v11M7 10l5 5 5-5M5 20h14"), h("span", { class: "dltext" }, "Download report")),
       h("div", { class: "dlpop" }, dlBtn("pdf", "PDF report"), dlBtn("xlsx", "Excel (.xlsx)"), dlBtn("csv", "CSV (orders)")));
-    root.replaceChildren(layout("#/home", [
+    root.replaceChildren(layout(here, [
       h("header", { class: "between homehead", style: "align-items:flex-end;flex-wrap:wrap;gap:12px" },
-        h("div", {}, h("h1", {}, "Home"), h("p", { class: "sub" }, "Compared with the previous period")),
+        h("div", {}, h("h1", {}, asHome ? "Home" : "Details"), h("p", { class: "sub" }, asHome ? "Compared with the previous period" : "Everything in detail, compared with the previous period")),
         h("div", { class: "homectl", style: "display:flex;gap:10px;align-items:center;flex-wrap:wrap;min-width:0;max-width:100%" }, periods, download)),
       body]));
     let d;
@@ -4376,7 +4412,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         + ". Biggest: " + lk.leaks[0].title + "."), h("span", { class: "ok" }, "See all →")) : null;
     body.replaceChildren(
       ...[adsBanner(d.ads_access), leakNote].filter(Boolean),
-      ...[whatsNewCard()].filter(Boolean), strip, profitNote(d), ...[impactBox].filter(Boolean), adsBox,
+      ...[asHome ? null : whatsNewCard()].filter(Boolean), strip, profitNote(d), ...[impactBox].filter(Boolean), adsBox,
       h("section", { class: "card", "aria-label": "Chart" },
         h("div", { class: "between" }, h("h2", {}, label + " over time"),
           h("div", { style: "display:flex;gap:14px" }, h("span", { class: "key" }, h("i"), "This period"), h("span", { class: "key" }, h("i", { class: "prev" }), "Previous period"))),
@@ -4384,7 +4420,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       ...[fcBox].filter(Boolean),
       h("div", { class: "row", style: "align-items:flex-start" },
         h("div", { style: "flex:3 1 420px;display:flex;flex-direction:column;gap:24px;min-width:0" }, ...[sources, leadsBox, methodsCard, products].filter(Boolean)),
-        h("div", { style: "flex:2 1 300px;display:flex;flex-direction:column;gap:24px;min-width:0" }, guide, camps)));
+        h("div", { style: "flex:2 1 300px;display:flex;flex-direction:column;gap:24px;min-width:0" }, asHome ? guide : null, camps)));
     draw();
     let lastW = chartHost.clientWidth, timer = null;
     const onResize = () => {
@@ -4394,6 +4430,62 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     window.addEventListener("resize", onResize);
     // keep the chart title in sync with the chosen metric
     strip.addEventListener("click", () => { const t = body.querySelector("section[aria-label=Chart] h2"); if (t) t.textContent = (M[homeMetric] || M.sales).label + " over time"; });
+  }
+
+  // ---------- Home: only what ProAds did, since the business joined (the details live on #/details) ----------
+  function setupGuide(d) {
+    const doneN = (d.setup || []).filter((x) => x.done).length;
+    if (!d.setup || doneN === d.setup.length) return null;
+    return h("section", { class: "card", "aria-labelledby": "guide-h" },
+      h("div", { class: "between" }, h("h2", { id: "guide-h" }, "Finish setting up"), h("span", { class: "sub", style: "font-size:13px" }, doneN + " of " + d.setup.length + " done")),
+      h("div", { class: "progress", role: "progressbar", "aria-valuemin": 0, "aria-valuemax": d.setup.length, "aria-valuenow": doneN }, h("div", { style: "width:" + Math.round(100 * doneN / d.setup.length) + "%" })),
+      h("div", { class: "guide" }, d.setup.filter((x) => !x.done).slice(0, 3).map((x) => h("a", { href: x.href },
+        h("span", { class: "tick", "aria-hidden": "true" }),
+        h("span", { style: "display:flex;flex-direction:column;gap:2px" }, h("b", { style: "font-size:14px" }, x.label), h("span", { class: "sub", style: "font-size:13px" }, x.how))))));
+  }
+  function resultsHero(r, name) {
+    const cur = r.currency || "AED", m = (v) => fmt.format(Math.round(v)) + " " + cur;
+    const since = r.since ? new Date(r.since * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : null;
+    const step = (value, label, note, strong) => h("div", { class: "flowstep" + (strong ? " strong" : "") },
+      h("div", { class: "flowdot" }, h("b", {}, value)), h("span", { class: "flowlbl" }, label), note ? h("span", { class: "flownote" }, note) : null);
+    const arrow = () => h("span", { class: "flowarrow", "aria-hidden": "true" }, "→");
+    const steps = [
+      step(fmt.format(r.campaigns), "campaigns made with ProAds", r.live ? r.live + " running now" : null),
+      step(r.spend === null ? "–" : m(r.spend), "spent on them", r.spend === null ? "connect the ad account to see it" : null),
+      step(r.clicks === null ? "–" : fmt.format(r.clicks), "clicks"),
+      step(fmt.format(r.orders), "paid orders from your ads", r.orders ? [r.orders_by.tiktok ? r.orders_by.tiktok + " TikTok" : null, r.orders_by.meta ? r.orders_by.meta + " Meta" : null].filter(Boolean).join(" · ") : null, true),
+      step(m(r.money), "money kept", "refunds taken off", true)];
+    const flow = h("div", { class: "flow", role: "list" }, ...steps.flatMap((x, i) => i ? [arrow(), x] : [x]));
+    const verdict = !r.campaigns ? "You haven't run a campaign with ProAds yet. Build one and this page shows what it brought you, in real paid orders."
+      : r.spend && r.orders ? "Every 1 " + cur + " spent through ProAds brought back " + r.back_per_1.toFixed(2) + " " + cur + " in paid orders (" + m(r.cost_per_order) + " per order)."
+      : r.spend ? "No paid orders from ProAds campaigns yet. ProAds only counts orders that were really paid, so this number is honest from day one."
+      : "Your ProAds campaigns haven't spent yet.";
+    const bg = [
+      ["Real sales sent to TikTok", r.sent_tiktok, "so TikTok learns who actually buys"],
+      ["Real sales sent to Meta", r.sent_meta, "so Facebook and Instagram learn who actually buys"],
+      ["Buyers ProAds knows", r.buyers, "ready to exclude or find more like them"]].filter(([, v]) => v);
+    return h("section", { class: "card hero", "aria-labelledby": "res-h" },
+      h("div", {}, h("h2", { id: "res-h", style: "font-size:22px;margin:0" }, "What ProAds did for " + name),
+        h("p", { class: "sub", style: "margin:4px 0 0" }, since ? "Since you joined on " + since : "Since you started")),
+      flow,
+      h("p", { style: "margin:0;font-size:16px;font-weight:600" }, verdict),
+      !r.campaigns ? h("a", { class: "btn btn-primary", href: "#/assistant", style: "align-self:flex-start" }, "Build a campaign") : null,
+      bg.length ? h("div", { class: "bgwork" }, h("b", { style: "font-size:14px" }, "Working for you in the background"),
+        h("div", { class: "bggrid" }, bg.map(([t, v, why]) => h("div", {}, h("b", { style: "font-size:22px" }, fmt.format(v)), h("span", {}, t), h("span", { class: "sub", style: "font-size:12px" }, why))))) : null,
+      h("span", { class: "sub", style: "font-size:12px" }, "Counts only orders that came through a ProAds tracking link or an ad click and were really paid. Nothing here is estimated."));
+  }
+  async function viewHome() {
+    const name = status ? status.name : session.client;
+    const body = h("div", { style: "display:contents" }, loading("Adding up what ProAds did for you…"));
+    root.replaceChildren(layout("#/home", [h("header", {}, h("h1", {}, "Home")), body]));
+    let d, r;
+    try { [d, r] = await Promise.all([api("/dashboard/" + cid() + "?period=30"), api("/proads-results/" + cid()).catch((e) => ({ error: e.message }))]); }
+    catch (e) { if (e.message !== "signed out") body.replaceChildren(errorCard(e.message)); return; }
+    if (d.mode === "proads") return viewDetails(null, true);          // ProAds' own admin home keeps the full view
+    const more = h("section", { class: "card", style: "gap:10px" },
+      h("div", { class: "between" }, h("h2", {}, "Want the details?"), h("a", { class: "btn btn-ghost", href: "#/details" }, "See all details")),
+      h("p", { class: "sub", style: "margin:0;font-size:14px" }, "Sales over time, every ad's results, products, money leaks and more are on the Details page."));
+    body.replaceChildren(...[adsBanner(d.ads_access), r.error ? errorCard(r.error) : resultsHero(r, name), setupGuide(d), more].filter(Boolean));
   }
 
   // ---------- where you sell: platforms by country ----------
@@ -4493,7 +4585,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
   }
 
   // ---------- router ----------
-  const VIEWS = { "#/platforms": viewPlatforms, "#/home": viewHome, "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling, "#/competitors": viewCompetitors, "#/engines": viewEngines, "#/learning": viewLearning, "#/buyers": viewBuyers, "#/experiments": viewExperiments, "#/funnel": viewFunnel, "#/followups": viewCompetitors };
+  const VIEWS = { "#/platforms": viewPlatforms, "#/home": viewHome, "#/details": viewDetails, "#/audit": viewAudit, "#/upload": viewUpload, "#/whatsapp": viewWhatsApp, "#/assistant": viewAssistant, "#/admin": viewAdmin, "#/billing": viewBilling, "#/competitors": viewCompetitors, "#/engines": viewEngines, "#/learning": viewLearning, "#/buyers": viewBuyers, "#/experiments": viewExperiments, "#/funnel": viewFunnel, "#/followups": viewCompetitors };
   function go(hash) { if (location.hash !== hash) location.hash = hash; else route(); }
   async function route() {
     const [path, query] = location.hash.split("?");

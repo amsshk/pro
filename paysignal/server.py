@@ -46,7 +46,7 @@ from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
-from . import affiliates, audience_sync, checklink, trial_mail, audiences, digest, followups, impact, leads, results, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
+from . import affiliates, audience_sync, checklink, proads_results, trial_mail, audiences, digest, followups, impact, leads, results, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
 from .identity import hash_phone, normalize_phone
 from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
@@ -2319,6 +2319,66 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             return sum(d["spend"] for d in live["days"].values())
         except Exception:
             return None
+
+    @flask.get("/proads-results/<client_id>")
+    def proads_results_view(client_id):
+        """Home: only what ProAds did for this business since it signed up (campaigns, spend, paid orders from
+        ProAds-tracked ads, real sales delivered to Meta and TikTok, buyers known)."""
+        state.require_key(client_id)
+        hit = state.ads_cache.get(("results", client_id))
+        if hit and time.time() - hit[0] < 1800 and not request.args.get("fresh"):
+            return hit[1]
+        acct = state.accounts.get(client_id) or {}
+        since = proads_results.parse_created(acct.get("created_at"))
+        today = datetime.now(timezone.utc).date()
+        start = (since.date() if since else today - timedelta(days=89)).isoformat()
+        with state.lock:
+            eng = state.engine(client_id)
+            purchases = eng.store.purchases(client_id)
+            refunded = {p.external_id: eng.store.refunded_amount(client_id, p.external_id) for p in purchases}
+            meta_l = state.launches.list(client_id)
+            tt_rows = state.store.db.execute("SELECT campaign_id, data, status FROM tiktok_launches WHERE client_id=? AND status<>'REMOVED'",
+                                             (client_id,)).fetchall()
+            t0 = int(since.timestamp()) if since else 0
+            sent_meta = state.store.db.execute("SELECT COALESCE(SUM(purchases),0) FROM capi_log WHERE client_id=? AND mode='live'"
+                                               " AND error IS NULL AND COALESCE(received,0)>0 AND at>=?", (client_id, t0)).fetchone()[0]
+            sent_tt = state.store.db.execute("SELECT COUNT(*) FROM tiktok_delivered WHERE client_id=? AND status='accepted'"
+                                             " AND event_id NOT LIKE '%refund%' AND sent_at>=?", (client_id, t0)).fetchone()[0]
+            try:
+                n_buyers = len(audiences.buyers(eng.store, client_id))
+            except Exception:
+                n_buyers = None
+            tt_link = state.tiktok_ads.get(client_id)
+        camps = [{"platform": "Meta", "id": l["campaign_id"], "name": l.get("name") or l["campaign_id"], "status": l["status"]} for l in meta_l]
+        camps += [{"platform": "TikTok", "id": cid_, "name": (json.loads(d or "{}").get("name") or cid_), "status": st} for cid_, d, st in tt_rows]
+        spend, known = {"spend": 0.0, "clicks": 0}, False
+        tt_ids = [c["id"] for c in camps if c["platform"] == "TikTok"]
+        if tt_ids and tt_link and tt_link["advertiser_id"]:
+            try:
+                t = tiktok_api.campaign_totals(tt_http(), tt_token(client_id, tt_link), tt_link["advertiser_id"], tt_ids, start, today.isoformat())
+                spend["spend"] += t["spend"]; spend["clicks"] += t["clicks"]; known = True
+            except Exception as e:
+                log.warning("ProAds results: TikTok campaigns for %s: %s", client_id, e)
+        meta_ids = [c["id"] for c in camps if c["platform"] == "Meta"]
+        s_ = state.ads_settings(client_id, is_admin(client_id)) if meta_ids else None
+        for mid in meta_ids if s_ else []:
+            try:
+                r = state.ads_http.get(f"https://graph.facebook.com/{meta_ads.settings()['version']}/{mid}/insights",
+                                       params={"access_token": s_["token"], "fields": "spend,clicks",
+                                               "time_range": json.dumps({"since": start, "until": today.isoformat()})}, timeout=20)
+                body = r.json()
+                if r.status_code == 200 and "error" not in body:
+                    for x in body.get("data") or []:
+                        spend["spend"] += float(x.get("spend") or 0); spend["clicks"] += int(float(x.get("clicks") or 0))
+                    known = True
+            except Exception:
+                pass
+        spend["known"] = known or not camps
+        out = proads_results.build(purchases, lambda p: refunded.get(p.external_id, 0.0), since, camps, spend,
+                                   {"meta": sent_meta, "tiktok": sent_tt}, n_buyers)
+        out["currency"] = state.config(client_id).get("currency", "AED")
+        state.ads_cache[("results", client_id)] = (time.time(), out)
+        return out
 
     @flask.get("/impact/<client_id>")
     def impact_view(client_id):
