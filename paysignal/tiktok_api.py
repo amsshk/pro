@@ -150,28 +150,43 @@ def live_summary(http, token: str, advertiser_id: str, start: str, end: str) -> 
             return float(m.get(k) or 0)
         except (TypeError, ValueError):
             return 0.0
+    # "results" = purchases (TikTok's Complete payment count). TikTok's own "conversion" is each campaign's goal, which
+    # for Promote boosts is views or follows, so it is kept apart as goal_results and never shown as purchases.
+    state = {"purchases": True}
+
+    def report(params: dict, metrics: list, what: str) -> dict:
+        if state["purchases"]:
+            try:
+                return _get(http, token, "report/integrated/get", {**params, "metrics": metrics + ["complete_payment"]}, what)
+            except TikTokAPIError as e:
+                if "complete_payment" not in str(e) and "metric" not in str(e).lower():
+                    raise
+                state["purchases"] = False                    # this account can't report purchases: say so, don't guess
+        return _get(http, token, "report/integrated/get", {**params, "metrics": metrics}, what)
+
+    def bought(m) -> int:
+        return int(num(m, "complete_payment")) if state["purchases"] else 0
+
     days, a, b = {}, date.fromisoformat(start), date.fromisoformat(end)
     while a <= b:
         piece_end = min(b, a + timedelta(days=MAX_SPAN_DAYS - 1))
-        d = _get(http, token, "report/integrated/get", {
-            "advertiser_id": advertiser_id, "report_type": "BASIC", "data_level": "AUCTION_ADVERTISER",
-            "dimensions": ["advertiser_id", "stat_time_day"], "metrics": ["spend", "impressions", "clicks", "conversion"],
-            "start_date": a.isoformat(), "end_date": piece_end.isoformat(), "page_size": 1000}, "reading ad results")
+        d = report({"advertiser_id": advertiser_id, "report_type": "BASIC", "data_level": "AUCTION_ADVERTISER",
+                    "dimensions": ["advertiser_id", "stat_time_day"], "start_date": a.isoformat(), "end_date": piece_end.isoformat(),
+                    "page_size": 1000}, ["spend", "impressions", "clicks", "conversion"], "reading ad results")
         for row in d.get("list") or []:
             dim, m = row.get("dimensions") or {}, row.get("metrics") or {}
             day = str(dim.get("stat_time_day") or "")[:10]
             if day:
                 days[day] = {"spend": num(m, "spend"), "impressions": int(num(m, "impressions")), "clicks": int(num(m, "clicks")),
-                             "results": int(num(m, "conversion"))}
+                             "results": bought(m), "goal_results": int(num(m, "conversion"))}
         a = piece_end + timedelta(days=1)
 
     def breakdown(dim):
         for dims in ([dim], ["advertiser_id", dim]):
             try:
-                d = _get(http, token, "report/integrated/get", {
-                    "advertiser_id": advertiser_id, "report_type": "AUDIENCE", "data_level": "AUCTION_ADVERTISER",
-                    "dimensions": dims, "metrics": ["spend", "clicks", "conversion"], "start_date": start, "end_date": end,
-                    "page_size": 100}, "reading where results came from")
+                d = report({"advertiser_id": advertiser_id, "report_type": "AUDIENCE", "data_level": "AUCTION_ADVERTISER",
+                            "dimensions": dims, "start_date": start, "end_date": end, "page_size": 100},
+                           ["spend", "clicks"], "reading where results came from")
             except TikTokAPIError:
                 continue
             out = {}
@@ -181,7 +196,7 @@ def live_summary(http, token: str, advertiser_id: str, start: str, end: str) -> 
                 if name and name not in ("-", "None"):
                     o = out.setdefault(name, {"name": name, "clicks": 0, "results": 0})
                     o["clicks"] += int(num(m, "clicks"))
-                    o["results"] += int(num(m, "conversion"))
+                    o["results"] += bought(m)
             return sorted(out.values(), key=lambda x: (-x["results"], -x["clicks"]))[:6]
         return []
     # every campaign in the account (made in ProAds or in TikTok Ads Manager), with its spend in the period
@@ -199,18 +214,20 @@ def live_summary(http, token: str, advertiser_id: str, start: str, end: str) -> 
             if page >= int((d.get("page_info") or {}).get("total_page") or 1) or page >= 10:
                 break
             page += 1
-        d = _get(http, token, "report/integrated/get", {
-            "advertiser_id": advertiser_id, "report_type": "BASIC", "data_level": "AUCTION_CAMPAIGN", "dimensions": ["campaign_id"],
-            "metrics": ["spend", "conversion"], "start_date": start, "end_date": end, "page_size": 200}, "reading campaign results")
+        d = report({"advertiser_id": advertiser_id, "report_type": "BASIC", "data_level": "AUCTION_CAMPAIGN", "dimensions": ["campaign_id"],
+                    "start_date": start, "end_date": end, "page_size": 200}, ["spend", "conversion"], "reading campaign results")
         for row in d.get("list") or []:
             cid = str((row.get("dimensions") or {}).get("campaign_id") or "")
             if cid in camps:
                 camps[cid]["spend"] = round(num(row.get("metrics") or {}, "spend"), 2)
-                camps[cid]["results"] = int(num(row.get("metrics") or {}, "conversion"))
+                camps[cid]["results"] = bought(row.get("metrics") or {})
+                camps[cid]["goal_results"] = int(num(row.get("metrics") or {}, "conversion"))
     except TikTokAPIError:
         pass
     campaigns = sorted(camps.values(), key=lambda c: (not c["on"], c["promote"], -c["spend"]))
-    return {"days": days, "countries": breakdown("country_code"), "placements": breakdown("placement"), "campaigns": campaigns}
+    countries, placements = breakdown("country_code"), breakdown("placement")
+    return {"days": days, "countries": countries, "placements": placements, "campaigns": campaigns,
+            "purchases_known": state["purchases"]}
 
 
 def set_campaign_status(http, token: str, advertiser_id: str, campaign_id: str, enable: bool) -> None:

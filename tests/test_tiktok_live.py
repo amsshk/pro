@@ -24,18 +24,18 @@ class TT:
                 {"campaign_id": 2, "campaign_name": "promote_1794", "operation_status": "ENABLE", "secondary_status": "CAMPAIGN_STATUS_ENABLE"},
                 {"campaign_id": 3, "campaign_name": "Old", "operation_status": "DISABLE"}], "page_info": {"total_page": 1}}})
         if params.get("data_level") == "AUCTION_CAMPAIGN":
-            return R({"code": 0, "data": {"list": [{"dimensions": {"campaign_id": "1"}, "metrics": {"spend": "180", "conversion": "3"}},
-                                                    {"dimensions": {"campaign_id": "2"}, "metrics": {"spend": "20", "conversion": "0"}}]}})
+            return R({"code": 0, "data": {"list": [{"dimensions": {"campaign_id": "1"}, "metrics": {"spend": "180", "conversion": "3", "complete_payment": "3"}},
+                                                    {"dimensions": {"campaign_id": "2"}, "metrics": {"spend": "20", "conversion": "0", "complete_payment": "0"}}]}})
         if params.get("report_type") == "BASIC":
             return R({"code": 0, "data": {"list": [
-                {"dimensions": {"stat_time_day": "2026-11-15 00:00:00"}, "metrics": {"spend": "120.5", "impressions": "9000", "clicks": "150", "conversion": "2"}},
-                {"dimensions": {"stat_time_day": "2026-11-16 00:00:00"}, "metrics": {"spend": "79.5", "impressions": "6000", "clicks": "90", "conversion": "1"}}]}})
+                {"dimensions": {"stat_time_day": "2026-11-15 00:00:00"}, "metrics": {"spend": "120.5", "impressions": "9000", "clicks": "150", "conversion": "2", "complete_payment": "2"}},
+                {"dimensions": {"stat_time_day": "2026-11-16 00:00:00"}, "metrics": {"spend": "79.5", "impressions": "6000", "clicks": "90", "conversion": "1", "complete_payment": "1"}}]}})
         if dims == ["country_code"]:
             return R({"code": 40002, "message": "dimension needs an id"})          # first shape refused: retried
         if "country_code" in dims:
-            return R({"code": 0, "data": {"list": [{"dimensions": {"country_code": "AE"}, "metrics": {"clicks": "200", "conversion": "3"}},
-                                                    {"dimensions": {"country_code": "QA"}, "metrics": {"clicks": "40", "conversion": "0"}}]}})
-        return R({"code": 0, "data": {"list": [{"dimensions": {"placement": "PLACEMENT_TIKTOK"}, "metrics": {"clicks": "240", "conversion": "3"}}]}})
+            return R({"code": 0, "data": {"list": [{"dimensions": {"country_code": "AE"}, "metrics": {"clicks": "200", "conversion": "3", "complete_payment": "3"}},
+                                                    {"dimensions": {"country_code": "QA"}, "metrics": {"clicks": "40", "conversion": "0", "complete_payment": "0"}}]}})
+        return R({"code": 0, "data": {"list": [{"dimensions": {"placement": "PLACEMENT_TIKTOK"}, "metrics": {"clicks": "240", "conversion": "3", "complete_payment": "3"}}]}})
 
 
 def test_tiktok_live_card(tmp_path, monkeypatch):
@@ -92,3 +92,20 @@ def test_assistant_sees_the_live_tiktok_campaigns_and_no_fake_profit(tmp_path, m
     blob = json.dumps(seen["msgs"], ensure_ascii=False)
     assert "BYNAWI GCC Purchase Conversions" in blob and "tiktok_ad_account_live" in blob and "last_7_days" in blob
     assert "profit_note" in blob and "never call it profit" in blob
+
+
+def test_promote_results_are_not_called_purchases():
+    from paysignal import tiktok_api
+
+    class H:
+        def get(self, url, params=None, headers=None, timeout=None):
+            dims = params.get("dimensions", "")
+            if "campaign/get" in url:
+                return R({"code": 0, "data": {"list": [], "page_info": {"total_page": 1}}})
+            if "stat_time_day" in dims:
+                return R({"code": 0, "data": {"list": [{"dimensions": {"stat_time_day": "2026-11-15 00:00:00"},
+                          "metrics": {"spend": "50", "impressions": "9000", "clicks": "20", "conversion": "252", "complete_payment": "0"}}]}})
+            return R({"code": 0, "data": {"list": []}})
+    out = tiktok_api.live_summary(H(), "t", "A", "2026-11-15", "2026-11-15")
+    assert out["days"]["2026-11-15"]["results"] == 0 and out["days"]["2026-11-15"]["goal_results"] == 252
+    assert out["purchases_known"] is True

@@ -1614,6 +1614,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                          "currency": state.config(client_id).get("currency", "AED"),
                          "cost_per_tracked_order": round(tot["spend"] / tracked, 2) if tracked and tot["spend"] else None},
                "countries": live["countries"], "campaigns": live.get("campaigns", []),
+               "purchases_known": live.get("purchases_known", True),
                "placements": [{**x, "name": PLACEMENT_NAMES.get(x["name"], x["name"].replace("PLACEMENT_", "").title())} for x in live["placements"]],
                "updated_at": int(time.time())}
         state.ads_cache[(client_id, "tt", period)] = (time.time(), out)

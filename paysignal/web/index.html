@@ -4000,7 +4000,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       const t = r.totals, cur = r.currency, tr = r.truth || {};
       const kpis = h("div", { class: "adkpis" },
         [["Spent", fmt.format(t.spend) + " " + cur], ["Views", fmt.format(t.impressions)], ["Clicks", fmt.format(t.clicks) + " · " + (t.ctr * 100).toFixed(1) + "%"],
-         ["TikTok says purchases", fmt.format(t.results)],
+         ["TikTok says purchases", r.purchases_known === false ? "not reported" : fmt.format(t.results)],
          tr.tracked ? ["Cost per TikTok order", fmt.format(Math.round(t.spend / tr.tracked)) + " " + cur] : ["Cost per purchase (TikTok's count)", t.cost_per_result ? fmt.format(t.cost_per_result) + " " + cur : "–"]]
           .map(([a, b]) => h("div", {}, h("span", {}, a), h("b", {}, b))));
       const stages = [
