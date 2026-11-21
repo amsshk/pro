@@ -80,3 +80,23 @@ def test_check_page_counts_orders_with_contact(app):
     link = c.post("/admin/pro/check-link/glow-clinic", headers=ADMIN, json={}).json["link"]
     body = c.get(link.replace("https://pro.example.net", "")).get_data(as_text=True)
     assert "1 with email, 0 with phone, 1 with neither" in body and "a@b.com" not in body
+
+
+def test_campaign_log_has_clicks_and_no_customer_data(app):
+    import json as _j
+    c = app.test_client()
+    tok = c.post("/auth/signup", json=ACCT).json["token"]
+    day = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+    c.post("/import/glow-clinic", data=f"id,date,amount,currency,email,ttclid\nORD-991,{day},250,AED,secret.buyer@mail.com,abc\n",
+           headers={"X-API-Key": tok})
+    db = app.extensions["paysignal"].store.db
+    db.execute("INSERT INTO tiktok_spend (client_id, day, ad_id, campaign, ad_name, spend, impressions, clicks) VALUES ('glow-clinic',?,?,?,?,?,?,?)",
+               (day, "A1", "GCC Purchase", "Shop N6", 150, 9000, 120))
+    db.commit()
+    r = c.get("/admin/pro/campaign-log/glow-clinic", headers=ADMIN)
+    body = r.get_data(as_text=True)
+    d = _j.loads(body)
+    assert r.status_code == 200 and "attachment" in r.headers["Content-Disposition"]
+    assert d["tiktok_totals_by_campaign"]["GCC Purchase"]["clicks"] == 120 and sum(d["clicks_that_became_paid_orders"].values()) == 1
+    assert "secret.buyer" not in body and "ORD-991" not in body and "owner@glow.ae" not in body
+    assert c.get("/admin/pro/campaign-log/glow-clinic", headers={"X-API-Key": tok}).status_code in (401, 403)

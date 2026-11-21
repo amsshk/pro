@@ -1507,6 +1507,16 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
               h("button", { class: "btn btn-primary", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => viewBusiness(a.client_id) }, "Open"),
               h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => makeLink(a) }, "Reset link"),
               h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: () => checkLink(a) }, "Check link"),
+              h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: async (ev) => {
+                const b = ev.currentTarget; b.disabled = true;
+                try {
+                  const res = await fetch("/admin/" + cid() + "/campaign-log/" + encodeURIComponent(a.client_id), { headers: { "X-API-Key": session.key } });
+                  if (!res.ok) { let m = "Couldn't make the file"; try { m = (await res.json()).error || m; } catch (e) {} throw new Error(m); }
+                  const url = URL.createObjectURL(await res.blob());
+                  const link = h("a", { href: url, download: "proads-campaign-log-" + a.client_id + ".json" }); document.body.appendChild(link); link.click(); link.remove();
+                  setTimeout(() => URL.revokeObjectURL(url), 4000);
+                } catch (e) { toast(e.message); }
+                b.disabled = false; } }, "Campaign log"),
               (() => {
                 const endTxt = (t) => !t ? "no ad test" : t * 1000 < Date.now() ? "ad test ended" : "ad test until " + new Date(t * 1000).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
                 const now_ = h("span", { class: "small", style: "color: var(--muted)" }, endTxt(a.ads_trial_ends));

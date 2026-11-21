@@ -4756,6 +4756,96 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         log.info("admin %s gave %s %.1f more ad-test days", admin_id, client_id, days)
         return a
 
+    @flask.get("/admin/<admin_id>/campaign-log/<client_id>")
+    def admin_campaign_log(admin_id, client_id):
+        """A JSON file of one business's TikTok campaign history as ProAds holds it: daily spend / impressions / clicks
+        per ad, which clicks became paid orders (counts), what was sent to TikTok, every campaign ProAds built (its plan,
+        reasoning and stop rules) and its launches. No customer names, emails, phones, order numbers or tokens."""
+        require_admin(admin_id)
+        if state.clients.get(client_id) is None and not state.accounts.get(client_id):
+            abort(404, "unknown account")
+        db = state.store.db
+        with state.lock:
+            cfg = state.config(client_id)
+            ads = [dict(zip(("day", "campaign", "campaign_id", "ad_group", "ad_name", "ad_id", "spend", "impressions", "clicks"), r))
+                   for r in db.execute("SELECT day, campaign, campaign_id, ad_group, ad_name, ad_id, spend, impressions, clicks"
+                                       " FROM tiktok_spend WHERE client_id=? ORDER BY day, campaign, ad_name", (client_id,))]
+            eng = state.engine(client_id)
+            purchases = eng.store.purchases(client_id)
+            sent = db.execute("SELECT sent_at, status, reason FROM tiktok_delivered WHERE client_id=? AND event_id NOT LIKE '%refund%'"
+                              " ORDER BY sent_at", (client_id,)).fetchall()
+            drafts = db.execute("SELECT data, campaign_id, created_at FROM campaign_drafts WHERE client_id=? ORDER BY created_at",
+                                (client_id,)).fetchall()
+            launches = db.execute("SELECT campaign_id, data, status, created_at FROM tiktok_launches WHERE client_id=? ORDER BY created_at",
+                                  (client_id,)).fetchall()
+        totals = {}
+        for a in ads:
+            t = totals.setdefault(a["campaign"] or a["campaign_id"] or "?", {"spend": 0.0, "impressions": 0, "clicks": 0, "days": set()})
+            t["spend"] += a["spend"] or 0; t["impressions"] += a["impressions"] or 0; t["clicks"] += a["clicks"] or 0; t["days"].add(a["day"])
+        totals = {k: {"spend": round(v["spend"], 2), "impressions": v["impressions"], "clicks": v["clicks"],
+                      "from": min(v["days"]), "to": max(v["days"])} for k, v in totals.items()}
+        day_ = lambda ts: datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d")
+        click_orders = {}
+        for p in purchases:
+            if p.ttclid and p.amount - eng.store.refunded_amount(client_id, p.external_id) > 0.005:
+                d = p.occurred_at.strftime("%Y-%m-%d")
+                click_orders[d] = click_orders.get(d, 0) + 1
+        by_day, reasons = {}, {}
+        for ts, st, reason in sent:
+            row = by_day.setdefault(day_(ts), {"sent": 0, "accepted": 0, "rejected": 0})
+            row["sent"] += 1
+            row["accepted" if st == "accepted" else "rejected"] += 1
+            if st != "accepted":
+                reasons[str(reason or st)[:160]] = reasons.get(str(reason or st)[:160], 0) + 1
+        built = []
+        for data, camp, created in drafts:
+            r = json.loads(data or "{}")
+            pl = r.get("plan") or {}
+            built.append({"built_at": created, "published_campaign_id": camp, "platform": pl.get("platform") or "meta",
+                          "name": pl.get("name"), "daily_budget": pl.get("daily_budget"), "currency": pl.get("currency"),
+                          "optimization": pl.get("optimization"), "targeting": pl.get("targeting"), "why": pl.get("rationale"),
+                          "ad_groups": [{"name": a.get("name"), "audience": a.get("audience"), "budget_share": a.get("budget_share"),
+                                         "ads": [{k: ad.get(k) for k in ("hook", "headline", "primary_text", "video_brief", "why", "source_post_id")}
+                                                 for ad in a.get("ads") or []]} for a in pl.get("ad_sets") or []],
+                          "tests": pl.get("tests"), "stop_rules": pl.get("kill_rules"), "what_to_watch": pl.get("what_to_watch"),
+                          "checks": r.get("problems") or [], "notes": r.get("notes") or [], "ai_model": r.get("model")})
+        launched = []
+        for camp, data, st, created in launches:
+            d = json.loads(data or "{}")
+            launched.append({"campaign_id": camp, "name": d.get("name"), "status_now": st,
+                             "created": datetime.fromtimestamp(created, timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if created else None,
+                             "event": d.get("event"), "pixel_id": d.get("pixel_id"),
+                             "ad_groups": [{k: g.get(k) for k in ("id", "name", "budget")} for g in d.get("adgroups") or []]})
+        try:
+            alerts_now = health_alerts(client_id)
+        except Exception:
+            alerts_now = []
+        out = {
+            "business": cfg.get("name") or client_id, "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+            "how_to_read": [
+                "Clicks are stored as TikTok reports them: totals per ad per day (tiktok_ads_daily). TikTok doesn't give "
+                "advertisers the person behind each click; a single click is only known when that person buys, through the "
+                "TikTok click id on the order (clicks_that_became_paid_orders).",
+                "What ProAds does with these numbers: shows them on Home and the TikTok card, gives them to the campaign "
+                "builder when it writes the next campaign (tiktok_ads_last_90_days), and raises alerts (fewer than 3 ads, "
+                "tired ads, spend with no paid orders).",
+                "What ProAds changes in TikTok: it creates campaigns (paused) from the builder and turns them on or off only "
+                "when someone presses the button. It never edits budgets, audiences or ads by itself.",
+                "Removed from this file: customer names, emails, phones, addresses, order numbers, access tokens and keys."],
+            "tiktok_totals_by_campaign": totals,
+            "tiktok_ads_daily": ads,
+            "clicks_that_became_paid_orders": click_orders,
+            "sent_to_tiktok_by_day": by_day, "tiktok_rejection_reasons": reasons,
+            "campaigns_built_in_proads": built, "campaigns_launched_from_proads": launched,
+            "alerts_now": alerts_now,
+        }
+        body = json.dumps(out, ensure_ascii=False, indent=2, default=str)
+        for k in ("@",):                                      # last guard: no email addresses can slip through free text
+            body = re.sub(r"[\w.+-]+@[\w-]+\.[\w.]+", "[email removed]", body)
+        name = re.sub(r"[^a-z0-9-]", "", (cfg.get("name") or client_id).lower().replace(" ", "-"))[:40] or "business"
+        return Response(body, mimetype="application/json",
+                        headers={"Content-Disposition": f'attachment; filename="proads-campaign-log-{name}.json"', "Cache-Control": "no-store"})
+
     @flask.post("/admin/<admin_id>/check-link/<client_id>")
     def admin_check_link(admin_id, client_id):
         """A private read-only page of one business's tracking totals (no customer details) for 24 hours, for
