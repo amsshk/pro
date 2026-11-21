@@ -69,3 +69,14 @@ def test_check_page_second_address(app):
     c.post("/auth/signup", json=ACCT)
     link = c.post("/admin/pro/check-link/glow-clinic", headers=ADMIN, json={}).json["link"]
     assert c.get(link.replace("https://pro.example.net/check/", "/tracking-check/")).status_code == 200
+
+
+def test_check_page_counts_orders_with_contact(app):
+    c = app.test_client()
+    tok = c.post("/auth/signup", json=ACCT).json["token"]
+    day = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+    c.post("/import/glow-clinic", data=f"id,date,amount,currency,email\nA1,{day},250,AED,a@b.com\nA2,{day},100,AED,\n",
+           headers={"X-API-Key": tok})
+    link = c.post("/admin/pro/check-link/glow-clinic", headers=ADMIN, json={}).json["link"]
+    body = c.get(link.replace("https://pro.example.net", "")).get_data(as_text=True)
+    assert "1 with email, 0 with phone, 1 with neither" in body and "a@b.com" not in body

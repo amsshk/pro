@@ -89,12 +89,17 @@ def build(db, client_id: str, purchases, refunded: Callable, tz: str = "Asia/Dub
     row = {d: {"day": d.isoformat(), "orders": 0, "money": 0.0, "meta_sent": 0, "meta_accepted": 0, "tiktok_accepted": 0,
                "practice": 0} for d in days}
     day_of = lambda ts: datetime.fromtimestamp(ts, z).date()
+    contact = {"email": 0, "phone": 0, "neither": 0}
     for p in purchases:
         kept = p.amount - refunded(p)
         d = p.occurred_at.astimezone(z).date()
         if d in row and kept > 0.005:
             row[d]["orders"] += 1
             row[d]["money"] += kept
+            em, ph = bool((p.email or "").strip()), bool((p.phone or "").strip())
+            contact["email"] += em
+            contact["phone"] += ph
+            contact["neither"] += not (em or ph)
     meta_err = None
     for at, mode, purch, received, err in db.execute(
             "SELECT at, mode, purchases, received, error FROM capi_log WHERE client_id=? AND at>=? ORDER BY at", (client_id, since)):
@@ -133,7 +138,7 @@ def build(db, client_id: str, purchases, refunded: Callable, tz: str = "Asia/Dub
             "last_meta_accepted": last("SELECT MAX(at) FROM capi_log WHERE client_id=? AND mode='live' AND error IS NULL AND COALESCE(received,0)>0"),
             "last_tiktok_accepted": last_tt,
             "last_sale": max((int(p.occurred_at.timestamp()) for p in purchases), default=None),
-            "meta_error": meta_err, "tiktok_error": tt_err}
+            "meta_error": meta_err, "tiktok_error": tt_err, "contact": contact}
 
 
 def verdict(d: dict) -> str:
@@ -172,6 +177,7 @@ th:first-child,td:first-child{{text-align:left}}.v{{font-size:18px;font-weight:7
 <p>Last 7 days ({esc(d['tz'])}): {t['orders']} paid orders, {t['money']:,.0f} {esc(cur)} really paid (refunds taken off).</p>
 <p>Last sale: {when(d['last_sale'])} · Last accepted by Meta: {when(d['last_meta_accepted'])} · Last accepted by TikTok: {when(d['last_tiktok_accepted'])}</p>
 {errs}
+{contact_html(d.get("contact"), t["orders"])}
 {shopify_html(d.get("shopify"), when, esc)}
 <table><thead><tr><th>Day</th><th>Paid orders</th><th>Paid ({esc(cur)})</th><th>Sent to Meta</th><th>Meta accepted</th><th>TikTok accepted</th><th>Practice only</th></tr></thead>
 <tbody>{rows}<tr><th>Total</th><th>{t['orders']}</th><th>{t['money']:,.0f}</th><th>{t['meta_sent']}</th><th>{t['meta_accepted']}</th><th>{t['tiktok_accepted']}</th><th>{t['practice']}</th></tr></tbody></table>
@@ -193,3 +199,13 @@ def shopify_html(sh: Optional[dict], when, esc) -> str:
         lines.append(f"<span class='err'>Last rejected {when(sh['last_rejected']['at'])}: {esc(sh['last_rejected']['why'])}</span>")
     return "<h2>Shopify connection</h2>" + "".join(f"<p>{l}</p>" for l in lines) + \
         "<p class='s'>Webhook counting started 20 Nov 2026, so earlier days show none.</p>"
+
+
+def contact_html(c: Optional[dict], orders: int) -> str:
+    if not c or not orders:
+        return ""
+    warn = ("<p class='err'>Some orders arrived with no email or phone: ProAds can't count them as buyers and TikTok/Meta "
+            "can't match them to a person. In Shopify, the ProAds app needs access to customer data (Protected customer "
+            "data), or use a webhook from Settings > Notifications, which includes the email.</p>") if c["neither"] else ""
+    return (f"<p>Contact details on these {orders} orders: {c['email']} with email, {c['phone']} with phone, "
+            f"{c['neither']} with neither (counts only).</p>" + warn)
