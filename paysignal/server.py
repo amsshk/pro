@@ -4871,8 +4871,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         to = str((request.get_json(silent=True) or {}).get("to") or "").strip()
         if "@" not in to or len(to) > 200:
             abort(400, "Enter an email address.")
-        ok, why = mailer.send_checked(to, "ProAds test email", "This is a test from ProAds. Email sending works.",
-                                      "<p>This is a test from <b>ProAds</b>. Email sending works.</p>")
+        ok, why = mailer.send_checked(to, "ProAds test email", "Hello,\n\nThis is a test email from ProAds. Email sending works.",
+                                      '<p style="margin:0 0 12px">Hello,</p><p style="margin:0 0 12px">This is a test email from '
+                                      '<b>ProAds</b>. Email sending works.</p>')
         with state.lock:
             sent = [dict(zip(("client_id", "kind", "sent_at"), r)) for r in state.store.db.execute(
                 "SELECT client_id, kind, sent_at FROM trial_mails ORDER BY sent_at DESC LIMIT 10")]

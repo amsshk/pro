@@ -23,6 +23,29 @@ def send(to: str, subject: str, text: str, html: str | None = None) -> bool:
     return send_checked(to, subject, text, html)[0]
 
 
+BRAND_URL = "https://pro.ezdevsoft.net"
+
+
+def brand(html_body: str | None, text: str) -> tuple[str, str]:
+    """Every ProAds email: logo on top, the message, then the ProAds signature and footer (light card, works in dark mode)."""
+    import html as _h
+    base = (os.environ.get("PROADS_PUBLIC_URL") or BRAND_URL).rstrip("/")
+    body = html_body or "".join(f'<p style="margin:0 0 12px">{_h.escape(par).replace(chr(10), "<br>")}</p>' for par in text.split("\n\n"))
+    page = (f'<div style="background:#F4F4F2;padding:24px 12px;font-family:Arial,Helvetica,sans-serif">'
+            f'<div style="max-width:600px;margin:0 auto;background:#FFFFFF;border-radius:14px;overflow:hidden;border:1px solid #E6E6E1">'
+            f'<div style="background:#0B0B0B;padding:18px 24px"><a href="{base}" style="text-decoration:none">'
+            f'<img src="{base}/proads-logo.png" width="36" height="36" alt="ProAds" style="vertical-align:middle;border-radius:8px">'
+            f'<span style="color:#FFFFFF;font-size:18px;font-weight:700;vertical-align:middle;margin-left:10px">ProAds</span></a></div>'
+            f'<div style="padding:24px;color:#141414;font-size:15px;line-height:1.55">{body}</div>'
+            f'<div style="padding:18px 24px;border-top:1px solid #EEEEEA;color:#5C5C5C;font-size:13px;line-height:1.5">'
+            f'<b style="color:#141414">The ProAds team</b><br>Ads that learn from real paid orders<br>'
+            f'<a href="{base}" style="color:#4A7600">pro.ezdevsoft.net</a> · Reply to this email for help</div></div>'
+            f'<p style="max-width:600px;margin:12px auto 0;color:#8A8A8A;font-size:11px;text-align:center">'
+            f'You get this email because you have a ProAds account. <a href="{base}/app#/upload" style="color:#8A8A8A">Email settings</a></p></div>')
+    plain = text.rstrip() + "\n\n--\nThe ProAds team\nAds that learn from real paid orders\n" + base + "\n"
+    return page, plain
+
+
 def send_checked(to: str, subject: str, text: str, html: str | None = None) -> tuple[bool, str]:
     """(sent, why not) - the reason is shown to the admin, never the password."""
     if not available():
@@ -32,9 +55,9 @@ def send_checked(to: str, subject: str, text: str, html: str | None = None) -> t
     msg["From"] = os.environ["SMTP_FROM"]
     msg["To"] = to
     msg["Subject"] = subject
+    html, text = brand(html, text)
     msg.set_content(text)
-    if html:
-        msg.add_alternative(html, subtype="html")
+    msg.add_alternative(html, subtype="html")
     host, port = os.environ["SMTP_HOST"], int(os.environ.get("SMTP_PORT", "587"))
     user, password = os.environ.get("SMTP_USER", ""), os.environ.get("SMTP_PASSWORD", "")
     try:
