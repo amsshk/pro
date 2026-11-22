@@ -38,11 +38,11 @@ def brand(html_body: str | None, text: str) -> tuple[str, str]:
             f'<span style="color:#FFFFFF;font-size:18px;font-weight:700;vertical-align:middle;margin-left:10px">ProAds</span></a></div>'
             f'<div style="padding:24px;color:#141414;font-size:15px;line-height:1.55">{body}</div>'
             f'<div style="padding:18px 24px;border-top:1px solid #EEEEEA;color:#5C5C5C;font-size:13px;line-height:1.5">'
-            f'<b style="color:#141414">The ProAds team</b><br>Ads that learn from real paid orders<br>'
+            f'<b style="color:#141414">The ProAds team</b><br>Turn ad spend into paid orders<br>'
             f'<a href="{base}" style="color:#4A7600">pro.ezdevsoft.net</a> · Reply to this email for help</div></div>'
             f'<p style="max-width:600px;margin:12px auto 0;color:#8A8A8A;font-size:11px;text-align:center">'
             f'You get this email because you have a ProAds account. <a href="{base}/app#/upload" style="color:#8A8A8A">Email settings</a></p></div>')
-    plain = text.rstrip() + "\n\n--\nThe ProAds team\nAds that learn from real paid orders\n" + base + "\n"
+    plain = text.rstrip() + "\n\n--\nThe ProAds team\nTurn ad spend into paid orders\n" + base + "\n"
     return page, plain
 
 
