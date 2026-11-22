@@ -1495,15 +1495,17 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         (() => {
           const to = h("input", { type: "email", placeholder: "your email", "aria-label": "Send a test email to", style: "max-width:260px;min-height:36px" });
           const out = h("span", { class: "small", role: "status" });
+          const kindSel = h("select", { "aria-label": "Which email", style: "min-height:36px" },
+            [["", "Test email"], ["soon", "Reminder: test ends tomorrow"], ["ended", "Reminder: test ended"], ["followup", "Reminder: follow-up"]].map(([v, t]) => h("option", { value: v }, t)));
           const b = h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: async () => {
             b.disabled = true; out.textContent = "Sending…";
             try {
-              const r = await api("/admin/" + cid() + "/test-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: to.value }) });
+              const r = await api("/admin/" + cid() + "/test-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: to.value, kind: kindSel.value }) });
               out.textContent = (r.sent ? "Sent ✓ check the inbox (and spam)." : "Not sent: " + r.error) + " · from " + (r.from || "–") + " via " + (r.host || "–") + ":" + r.port
                 + (r.recent_reminders.length ? " · last reminder: " + r.recent_reminders[0].client_id + " (" + r.recent_reminders[0].kind + ", " + new Date(r.recent_reminders[0].sent_at * 1000).toLocaleString("en-GB") + ")" : " · no payment reminders sent yet");
             } catch (e) { out.textContent = e.message; }
             b.disabled = false; } }, "Send test email");
-          return h("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" }, to, b, out);
+          return h("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" }, to, kindSel, b, out);
         })(),
         d.accounts.length ? h("div", { class: "scroll" }, h("table", { style: "min-width:1040px" },
           h("thead", {}, h("tr", {}, ["Business", "Signed up", "Status", "Plan", "Connected", "Orders", "Campaigns", "Last sale", ""].map((x) => h("th", { scope: "col" }, x)))),

@@ -49,3 +49,5 @@ def test_failed_reminder_is_retried_and_test_email_reports_why(tmp_path, monkeyp
     assert len(tries) == 2                                    # failed once, retried, then marked sent
     r = c.post("/admin/pro/test-email", headers={"X-API-Key": "admin-key-0123456789abc"}, json={"to": "me@x.com"}).json
     assert r["sent"] is True and r["recent_reminders"][0]["client_id"] == "glow-clinic"
+    r = c.post("/admin/pro/test-email", headers={"X-API-Key": "admin-key-0123456789abc"}, json={"to": "me@x.com", "kind": "ended"}).json
+    assert r["sent"] is True and tries[-1] == "[Test] Test business: your free ad test has ended"
