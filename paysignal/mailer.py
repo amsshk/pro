@@ -33,8 +33,9 @@ def brand(html_body: str | None, text: str) -> tuple[str, str]:
     body = html_body or "".join(f'<p style="margin:0 0 12px">{_h.escape(par).replace(chr(10), "<br>")}</p>' for par in text.split("\n\n"))
     page = (f'<div style="background:#F4F4F2;padding:24px 12px;font-family:Arial,Helvetica,sans-serif">'
             f'<div style="max-width:600px;margin:0 auto;background:#FFFFFF;border-radius:14px;overflow:hidden;border:1px solid #E6E6E1">'
-            f'<a href="{base}" style="display:block;background:#0B0B0B;line-height:0">'
-            f'<img src="cid:proads-header" width="600" alt="ProAds" style="display:block;width:100%;max-width:600px;height:auto;border:0"></a>'
+            f'<a href="{base}" style="display:block;background:#0B0B0B;text-decoration:none;padding:26px 24px" bgcolor="#0B0B0B">'
+            f'<span style="display:block;color:#FFFFFF;font-size:28px;font-weight:700;letter-spacing:.3px">Pro<span style="color:#8DC63F">Ads</span></span>'
+            f'<span style="display:block;color:#B8B8B0;font-size:13px;margin-top:4px">Turn ad spend into paid orders</span></a>'
             f'<div style="padding:24px;color:#141414;font-size:15px;line-height:1.55">{body}</div>'
             f'<div style="padding:18px 24px;border-top:1px solid #EEEEEA;color:#5C5C5C;font-size:13px;line-height:1.5">'
             f'<b style="color:#141414">The ProAds team</b><br>Turn ad spend into paid orders<br>'
@@ -57,12 +58,6 @@ def send_checked(to: str, subject: str, text: str, html: str | None = None) -> t
     html, text = brand(html, text)
     msg.set_content(text)
     msg.add_alternative(html, subtype="html")
-    try:                                         # the logo travels inside the email, so it shows without "load images"
-        logo = os.path.join(os.path.dirname(__file__), "web", "proads-email-header.png")
-        with open(logo, "rb") as f:
-            msg.get_payload()[1].add_related(f.read(), maintype="image", subtype="png", cid="<proads-header>", filename="proads.png")
-    except Exception:
-        pass
     host, port = os.environ["SMTP_HOST"], int(os.environ.get("SMTP_PORT", "587"))
     user, password = os.environ.get("SMTP_USER", ""), os.environ.get("SMTP_PASSWORD", "")
     try:
