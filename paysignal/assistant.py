@@ -12,11 +12,17 @@ a person's explicit 'go live' starts spending.
 from __future__ import annotations
 
 import json
-from typing import Optional
+import logging
+import os
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date
+from typing import Callable, Optional
 
 from .ai import MetaAI, Reply
 from .engine import Engine
 from .organic import OrganicEngine
+
+log = logging.getLogger("paysignal.ai_features")
 
 
 def business_context(engine: Engine, organic: Optional[OrganicEngine] = None, currency: str = "AED") -> dict:
@@ -73,6 +79,8 @@ SYSTEM_CAMPAIGN = (
     "where this business's own data is thin, and say they are general benchmarks, not this business's results.\n"
     "- Use the product description in the brief for what the business offers. Never invent prices, results, "
     "reviews, discounts or numbers that are not in the data.\n"
+    "- If the data has market_research (web research per country), use it to choose audience, interests, angles and "
+    "proof points for each country. Use only facts in it.\n"
     "- Write every ad and post in English only.\n"
     "- call_to_action must be one of: " + ", ".join(CTAS) + ".\n"
     "- Stay within the daily budget. Respect Meta advertising policies; no sensitive-trait targeting.\n"
@@ -91,54 +99,46 @@ SYSTEM_CAMPAIGN = (
 )
 
 SYSTEM_TIKTOK = (
-    "You are a senior TikTok ads strategist. Plan a TikTok campaign (TikTok placement only, website conversions) "
-    "for this business AND the organic TikTok/Instagram posts that go with it. It will be published as written.\n"
+    "You are a TikTok campaign BUILDER, not an analyst. Output the execution spec only: what to build, nothing about why. "
+    "Plan a TikTok campaign (TikTok placement only, website conversions) for this business. It will be published as written.\n"
     "Rules:\n"
-    "- Read the product description and the business's products carefully: write about what THIS business actually "
-    "sells (its real product names and category). Never describe it as something else.\n"
-    "- TikTok ads are short vertical videos. For each ad give: hook = what is said or shown in the first 2 seconds "
-    "(max 40 characters, used as the ad name), primary_text = the caption under the video (max 100 characters, "
-    "no hashtag spam, at most 2 hashtags), video_brief = what the video should show (for the business to film or "
-    "to pick from its videos), call_to_action one of: SHOP_NOW, ORDER_NOW, LEARN_MORE.\n"
-    "- Native TikTok style: people, hands, real use, unboxing, before/after, a reason to buy now. No TV-ad tone.\n"
-    "- Optimisation event: if the notes ask for purchases, use 'purchase'. Otherwise 'purchase' when the business has "
-    "about 20+ verified purchases a week or the daily budget is at least the budget_needed_for_learning in the data; "
-    "below that 'checkout' (checkout started, the closest step to a purchase) so TikTok has enough events to learn. "
-    "Say which and why in rationale, with the numbers.\n"
-    "- Build EXACTLY what the notes ask. If the notes give a number of campaigns, ad groups, ads or videos, a budget, "
-    "a bid method, an audience or an age range, use them as written and add nothing: no extra ads, angles or audiences. "
-    "Only when the notes say nothing: ONE ad group for new buyers (all the budget, broad targeting; a second ad group "
-    "only for retargeting, with a bigger budget, and its name must start with 'RT') and 3-5 clearly different ads, "
-    "plus the business's best organic posts as Spark Ads when they exist (source_post_id).\n"
-    "- Bidding: Maximum Delivery with no bid cap and no cost cap, unless the notes say otherwise. Never write a target "
-    "CPA or cost cap into the setup. A break-even or CPA figure from the notes is an internal benchmark: it appears only "
-    "in what_to_watch, worded as 'internal break-even reference'.\n"
-    "- When the data has the price, free delivery or instalments (Tabby/Tamara), say them in the first seconds or the "
-    "caption: buyers who know the price before clicking are the ones who pay. Never invent any of them.\n"
-    "- Learning is ON (never 'skip learning'). Tell the business not to edit the ad group for 5-7 days so delivery can "
-    "stabilise and the result stays easy to read. Do not say this guarantees a stable or final result.\n"
-    "- Keep the three parts apart. Setup (objective, event, budget, audience, ads) goes in the plan fields. kill_rules are "
-    "guardrails only: what not to touch or switch, and what counts as clearly broken. what_to_watch is monitoring, not "
-    "pass/fail: is it spending, are clicks coming, any add-to-cart or checkout, do purchases appear, how the cost trend "
-    "develops after enough spend. No fixed CTR or CPA thresholds in the first 24-48 hours; early numbers are signals, "
-    "not verdicts.\n"
-    "- State only facts that are in the data. Never write 'verified orders' or 'proven winning angle' unless the data shows "
-    "it. Label every hypothesis as a hypothesis and every untested idea as a test.\n"
-    "- Build on proven winners in the data; anything not proven is labelled a test. Avoid what lost money.\n"
-    "- Never invent prices, results, reviews, discounts or numbers that are not in the data.\n"
-    "- Write the ads in English unless the notes ask for Arabic (then Arabic).\n"
-    "- Stay within the daily budget. Respect TikTok advertising policies; no sensitive-trait targeting.\n"
-    "- organic_plan: 5-7 posts for the next 7 days (TikTok first, Instagram Reels too) that test different hooks; "
-    "each asks people to use its own link or code (ProAds creates them).\n"
+    "- Build EXACTLY what the notes ask. If the notes give a number of campaigns, ad groups, ads or videos, a budget, a bid "
+    "method, an audience or an age range, use them as written and add nothing: no extra ads, angles or audiences. Only "
+    "when the notes say nothing: ONE ad group for new buyers (all the budget, broad targeting; a second ad group only for "
+    "retargeting, with a bigger budget, and its name must start with 'RT') and 3-5 clearly different ads, plus the "
+    "business's best organic posts as Spark Ads when they exist (source_post_id).\n"
+    "- Write about what THIS business actually sells (its real product names and category) from the product description "
+    "and data. Never describe it as something else. Never invent prices, results, reviews, discounts or numbers.\n"
+    "- Ads are short vertical videos. Per ad: hook = ad name, what is said or shown in the first 2 seconds (max 40 "
+    "characters); primary_text = caption under the video (max 100 characters, at most 2 hashtags); headline; "
+    "video_brief = creative direction, what the video shows; call_to_action one of SHOP_NOW, ORDER_NOW, LEARN_MORE. "
+    "Native TikTok style, no TV-ad tone. When the data has the price, free delivery or instalments (Tabby/Tamara), put "
+    "them in the first seconds or the caption.\n"
+    "- optimization: 'purchase' if the notes ask for purchases; otherwise 'purchase' when the business has about 20+ "
+    "verified purchases a week or the daily budget is at least budget_needed_for_learning in the data, else 'checkout'.\n"
+    "- bid_strategy: 'Maximum Delivery' with no bid cap and no cost cap, unless the notes say otherwise. Never put a "
+    "target CPA or cost cap in the setup.\n"
+    "- If the data has market_research (web research per country), use it to choose audience, interests, creative direction "
+    "and proof points (price, payment methods, delivery) for each country. Use only facts in it. Never copy it into the output.\n"
+    "- Learning is ON (never 'skip learning'). Stay within the daily budget. Respect TikTok advertising policies; no "
+    "sensitive-trait targeting. English unless the notes ask for Arabic.\n"
+    "- Output boundary: the reply is the JSON object and nothing else: no intro line, no summary of the brief, no text before or after. Must-build items are the plan fields; notes are optional and never needed to build.\n"
+    "- Keep a line only if it changes what gets built. NO explanations, strategy, rationale, learning commentary, "
+    "performance interpretation, QA language ('checks passed'), and no 'why', 'tests', 'stop rules' or 'what to watch'. "
+    "Leave rationale empty, tests, kill_rules, what_to_watch and organic_plan as [] and every ad 'why' empty.\n"
+    "- notes: at most 3 short lines, each under 120 characters, none explaining setup: (1) a verified-fact context line "
+    "only if the data shows it (e.g. '2 verified paid orders in the last 7 days'); (2) the guardrail 'Don't change "
+    "settings for 5-7 days unless delivery is clearly broken'; (3) if the notes give a break-even/CPA figure: "
+    "'<figure> is internal only, not a bid cap'. Otherwise leave notes out.\n"
     "Reply with only a JSON object in this shape:\n"
-    '{"name": str, "objective": "WEB_CONVERSIONS", "optimization": "purchase" or "checkout" or "add_to_cart", "daily_budget": number, '
-    '"currency": str, "rationale": str, "targeting": {"countries": [two-letter codes], "age_min": number}, '
-    '"ad_sets": [{"name": str, "audience": str, "budget_share": number, "placements": "TikTok", '
+    '{"name": str, "platform": "TikTok", "objective": "WEB_CONVERSIONS", "conversion_location": "Website", '
+    '"optimization": "purchase" or "checkout" or "add_to_cart", "bid_strategy": str, "daily_budget": number, '
+    '"currency": str, "rationale": "", "targeting": {"countries": [two-letter codes], "age_min": number}, '
+    '"ad_sets": [{"name": str, "audience": "broad" or "interest" or "retargeting", "interests": [str], '
+    '"budget_share": number, "placements": "TikTok", '
     '"ads": [{"source_post_id": str or null, "format": "video", "hook": str, "video_brief": str, '
-    '"primary_text": str, "headline": str, "call_to_action": str, "why": str}]}], '
-    '"organic_plan": [{"day": str, "platform": "tiktok" or "instagram", "format": str, "hook": str, '
-    '"caption": str, "why": str}], '
-    '"tests": [str], "kill_rules": [str], "what_to_watch": [str]}'
+    '"primary_text": str, "headline": str, "call_to_action": str, "why": ""}]}], '
+    '"organic_plan": [], "tests": [], "kill_rules": [], "what_to_watch": [], "notes": [str]}'
 )
 
 PROADS_PRODUCT = (
@@ -217,6 +217,10 @@ def tidy_plan(plan: dict, conversion: str) -> dict:
     return plan
 
 
+NOTE_BANNED = ("why", "because", "learning", "expect", "monitor", "watch", "test", "volatil", "should perform",
+               "checks passed", "threshold", "hypothes", "optimi", "strategy", "recommend")
+
+
 def tidy_tiktok(plan: dict) -> dict:
     plan["objective"] = "WEB_CONVERSIONS"
     plan["platform"] = "tiktok"
@@ -238,12 +242,111 @@ def tidy_tiktok(plan: dict) -> dict:
             ad["headline"] = str(ad.get("headline") or ad.get("hook") or "")[:40]
             ad["primary_text"] = str(ad.get("primary_text") or "")[:100]
     plan["organic_plan"] = [p for p in plan.get("organic_plan") or [] if isinstance(p, dict)][:10]
+    # execution spec only: anything outside the build fields is dropped, whatever the model wrote
+    plan.setdefault("conversion_location", "Website")
+    plan["bid_strategy"] = str(plan.get("bid_strategy") or "Maximum Delivery")
+    plan["name"] = str(plan.get("name") or "")[:100]
+    for s in plan.get("ad_sets") or []:
+        s["interests"] = [str(i)[:60] for i in (s.get("interests") or []) if str(i).strip()][:15] if isinstance(s.get("interests"), list) else []
+        for ad in s.get("ads") or []:
+            ad["why"] = ""
+            ad["video_brief"] = str(ad.get("video_brief") or "")[:280]
+            ad["hook"] = str(ad.get("hook") or "")[:40]
+        s_keep = ("name", "audience", "interests", "budget_share", "placements", "ads")
+        for k in [k for k in s if k not in s_keep]:
+            del s[k]
+        ad_keep = ("source_post_id", "format", "hook", "video_brief", "primary_text", "headline", "call_to_action", "why")
+        for ad in s.get("ads") or []:
+            for k in [k for k in ad if k not in ad_keep]:
+                del ad[k]
+    notes = plan.get("notes") if isinstance(plan.get("notes"), list) else []
+    plan["notes"] = [str(n).strip()[:120] for n in notes
+                     if str(n).strip() and not any(w in str(n).lower() for w in NOTE_BANNED)][:3]
+    keep = ("name", "platform", "objective", "conversion_location", "optimization", "bid_strategy", "daily_budget",
+            "currency", "targeting", "ad_sets", "notes")
+    for k in [k for k in plan if k not in keep]:
+        del plan[k]
+    plan["rationale"] = ""                      # empty, not missing, so screens that read these keys keep working
+    plan["organic_plan"], plan["tests"], plan["kill_rules"], plan["what_to_watch"] = [], [], [], []
     return plan
+
+
+COUNTRY_NAMES = {"AE": "United Arab Emirates", "SA": "Saudi Arabia", "KW": "Kuwait", "QA": "Qatar", "BH": "Bahrain",
+                 "OM": "Oman", "EG": "Egypt", "JO": "Jordan", "US": "United States", "GB": "United Kingdom",
+                 "TH": "Thailand", "IN": "India"}
+
+MARKET_QUERIES = (
+    "{product} best selling online {country} {year}",
+    "{country} online shopping buying habits payment methods cash on delivery Tabby Tamara",
+    "{product} TikTok ads {country} creatives that drive purchases",
+    "{product} competitors ads offers price {country}",
+    "{country} peak shopping days seasons demand {product}",
+)
+
+SYSTEM_RESEARCH = (
+    "You summarise web search results about ONE country market for an ads builder. Use ONLY the snippets given: every "
+    "item must be supported by a snippet. Never invent numbers, prices or sources; if the snippets don't support "
+    "something, leave that list empty. Reply with only a JSON object: "
+    '{"country": str, "what_sells": [str], "buyer_habits": [str], "payment_methods": [str], "price_range": str or null, '
+    '"peak_times": [str], "creative_styles_that_convert": [str], "competitor_angles": [str], "sources": [url]}. '
+    "Keep every item under 140 characters."
+)
+
+
+def brave_search(query: str, count: int = 8) -> str:
+    """Web search through the Brave Search API (key in PAYSIGNAL_SEARCH_KEY). Returns plain-text snippets."""
+    import requests
+    key = os.environ.get("PAYSIGNAL_SEARCH_KEY", "").strip()
+    if not key:
+        return ""
+    r = requests.get("https://api.search.brave.com/res/v1/web/search", timeout=30,
+                     params={"q": query, "count": count},
+                     headers={"X-Subscription-Token": key, "Accept": "application/json"})
+    if r.status_code >= 400:
+        raise RuntimeError(f"search failed: HTTP {r.status_code}")
+    rows = ((r.json() or {}).get("web") or {}).get("results") or []
+    return "\n".join(f"- {x.get('title', '')}: {x.get('description', '')} ({x.get('url', '')})" for x in rows[:count])
+
+
+def research_markets(ai: MetaAI, countries: list[str], product: str, search: Optional[Callable[[str], str]] = None,
+                     max_countries: int = 12) -> tuple[dict, list[str]]:
+    """Deep web research per target country: what sells, how people pay, what creatives drive purchases.
+    Returns ({country: summary}, problems). Needs a search function (default: Brave, PAYSIGNAL_SEARCH_KEY)."""
+    search = search or (brave_search if os.environ.get("PAYSIGNAL_SEARCH_KEY") else None)
+    if search is None:
+        return {}, ["Market research skipped: no search API is set up (add PAYSIGNAL_SEARCH_KEY in Render)."]
+    out, problems = {}, []
+    for code in [c.upper() for c in countries][:max_countries]:
+        name = COUNTRY_NAMES.get(code, code)
+        queries = [q.format(product=product or "", country=name, year=date.today().year).strip() for q in MARKET_QUERIES]
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            def one(q):
+                try:
+                    return search(q) or ""
+                except Exception as e:
+                    log.warning("market search failed (%s): %s", q, e)
+                    return ""
+            snippets = [t for t in pool.map(one, queries) if t]
+        if not snippets:
+            problems.append(f"Market research for {name}: no search results.")
+            continue
+        try:
+            reply = ai.chat("campaign_builder", [
+                {"role": "developer", "content": SYSTEM_RESEARCH},
+                {"role": "user", "content": f"Country: {name}\nProduct: {product}\n\nSearch results:\n" + "\n\n".join(snippets)}],
+                max_completion_tokens=3000, reasoning_effort="medium")
+            out[code] = _extract_json(reply.text)
+        except Exception as e:
+            log.warning("market research summary failed for %s: %s", code, e)
+            problems.append(f"Market research for {name} failed: {str(e)[:120]}")
+    return out, problems
 
 
 def build_campaign(ai: MetaAI, context: dict, daily_budget: float, goal: str = "",
                    extra_instructions: str = "", conversion: str = "purchase", product: str = "",
-                   landing_url: str = "", budget_currency: str = "", platform: str = "meta") -> dict:
+                   landing_url: str = "", budget_currency: str = "", platform: str = "meta",
+                   countries: Optional[list] = None, research: bool = True,
+                   search: Optional[Callable[[str], str]] = None) -> dict:
     conversion = "signup" if conversion == "signup" else "purchase"
     brief = {"daily_budget": daily_budget, "currency": budget_currency or context.get("currency", "AED"),
              "conversion": conversion,
@@ -251,6 +354,11 @@ def build_campaign(ai: MetaAI, context: dict, daily_budget: float, goal: str = "
                               else "more paying customers who keep what they buy"),
              "product": product, "landing_page": landing_url, "notes": extra_instructions}
     tiktok = platform == "tiktok"
+    countries = [c.upper() for c in (countries or []) if isinstance(c, str) and len(c) == 2] or ["AE"]
+    brief["countries"] = countries
+    market, research_problems = (research_markets(ai, countries, product, search) if research else ({}, []))
+    if market:
+        context = {**context, "market_research": market}
     reply = ai.chat("campaign_builder", [
         {"role": "developer", "content": SYSTEM_TIKTOK if tiktok else SYSTEM_CAMPAIGN},
         {"role": "user", "content": "Brief:\n" + json.dumps(brief, ensure_ascii=False) +
@@ -264,7 +372,7 @@ def build_campaign(ai: MetaAI, context: dict, daily_budget: float, goal: str = "
         for s_ in plan.get("ad_sets") or []:             # TikTok ads have a hook, not a headline: fill it first
             for ad in s_.get("ads") or []:
                 ad.setdefault("headline", ad.get("hook") or "")
-    notes = []
+    notes = list(research_problems)
     try:                                                   # the budget box is the limit: an AI that copied a bigger
         if daily_budget and float(plan.get("daily_budget") or 0) > daily_budget * 1.001:   # number from the notes is
             notes.append(f"Budget set to {daily_budget:g} a day, the amount in the budget box (the plan asked for "   # brought back,
@@ -277,4 +385,5 @@ def build_campaign(ai: MetaAI, context: dict, daily_budget: float, goal: str = "
         plan = tidy_tiktok(plan) if tiktok else tidy_plan(plan, conversion)
         plan["currency"] = brief["currency"]
     return {"plan": plan, "problems": problems, "notes": notes, "model": reply.model, "landing_url": landing_url,
+            "research_sources": {c: m.get("sources", []) for c, m in market.items()},
             "cost_usd": reply.cost_usd, "status": "draft - review before launching"}
