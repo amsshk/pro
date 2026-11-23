@@ -36,6 +36,7 @@ import secrets
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from typing import Optional
 from urllib.parse import urlencode
@@ -46,7 +47,7 @@ from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
-from . import affiliates, audience_sync, checklink, proads_results, trial_mail, audiences, digest, followups, impact, leads, results, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
+from . import affiliates, audience_sync, checklink, proads_results, trial_mail, client_mail, audiences, digest, followups, impact, leads, results, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
 from .identity import hash_phone, normalize_phone
 from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
@@ -197,6 +198,7 @@ class App:
         self.results = results.ResultStore(self.store.db)
         self.check_links = checklink.CheckLinkStore(self.store.db)
         self.trial_mails = trial_mail.TrialMailStore(self.store.db)
+        self.client_mails = client_mail.ClientMailStore(self.store.db)
         self.store.db.execute("CREATE TABLE IF NOT EXISTS meta_pixel_links (client_id TEXT PRIMARY KEY, pixel_id TEXT NOT NULL,"
                               " name TEXT, token_enc TEXT NOT NULL, added_at INTEGER NOT NULL)")
         self.store.db.commit()
@@ -2757,7 +2759,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 if not email:
                     continue
                 name = state.config(cid).get("name") or (acct or {}).get("business") or cid
-                ok, why = mailer.send_checked(email, *trial_mail.render(kind, name, plan_prices(), f"{billing.fee_percent():g}%", base))
+                ends_txt = datetime.fromtimestamp(acc["trial_ends"], ZoneInfo(state.config(cid).get("timezone") or "Asia/Dubai")).strftime("%d %b %Y, %H:%M")
+                ok, why = mailer.send_checked(email, *trial_mail.render(kind, name, plan_prices(), f"{billing.fee_percent():g}%", base, ends=ends_txt))
                 if ok:                                          # marked only once it really went, so a failure is retried
                     with state.lock:
                         state.trial_mails.mark(cid, kind, acc["trial_ends"])
@@ -2767,6 +2770,176 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             except Exception:
                 log.exception("ad-test email failed for %s", cid)
     state.trial_mail_all = trial_mail_all
+
+    # ---------------- automatic client emails: orders, weekly report, campaign live/paused, plan renewal ----------------
+    def mail_base() -> str:
+        return os.environ.get("PROADS_PUBLIC_URL", "").strip().rstrip("/") or "https://pro.ezdevsoft.net"
+
+    def client_address(cid: str):
+        """(email, business name) to write to, or None."""
+        acct = state.accounts.get(cid)
+        cfg = state.config(cid)
+        email = (acct or {}).get("email") or cfg.get("email")
+        if not email:
+            return None
+        return email, cfg.get("name") or (acct or {}).get("business") or cid
+
+    def deliver_client_mail(cid: str, kind: str, data: dict) -> bool:
+        if not mailer.available() or is_admin(cid) or not state.known(cid):
+            return False
+        who = client_address(cid)
+        if not who:
+            return False
+        subject, text, page = client_mail.render(kind, who[1], data, mail_base())
+        ok, why = mailer.send_checked(who[0], subject, text, page)
+        if not ok:
+            log.warning("%s email to %s not sent: %s", kind, cid, why)
+        return ok
+
+    def notify_campaign(cid: str, name: str, platform: str, status: str, reason: str = "") -> None:
+        """Email the client when a campaign goes live or is paused (in the background, never slows the button)."""
+        kind = "live" if status == "ACTIVE" else "paused"
+        data = {"campaign": name, "platform": platform, "reason": reason}
+
+        def run():
+            try:
+                deliver_client_mail(cid, kind, data)
+            except Exception:
+                log.exception("campaign email failed for %s", cid)
+        threading.Thread(target=run, daemon=True, name="campaign-mail").start()
+
+    def mail_client_ids() -> list:
+        with state.lock:
+            return sorted(set(state.clients) | {r[0] for r in state.store.db.execute("SELECT client_id FROM accounts")})
+
+    def order_origin(p) -> str:
+        if p.ttclid:
+            return "TikTok ad"
+        if p.fbclid:
+            return "Facebook / Instagram ad"
+        u = (p.utm_source or "").lower()
+        names = {"tiktok": "TikTok", "instagram": "Instagram", "ig": "Instagram", "facebook": "Facebook", "fb": "Facebook",
+                 "whatsapp": "WhatsApp", "google": "Google", "snapchat": "Snapchat"}
+        return names.get(u, u.title()) or "Direct / unknown"
+
+    def order_mails_all() -> None:
+        """New paid orders of the last 24 hours, one email per client per cycle (every ~10 minutes at most)."""
+        if not mailer.available():
+            return
+        with state.lock:
+            installed = state.client_mails.installed_at()
+        now = time.time()
+        for cid in mail_client_ids():
+            try:
+                if is_admin(cid) or not state.known(cid):
+                    continue
+                fresh = []
+                with state.lock:
+                    eng = state.engine(cid)
+                    for p in eng.store.purchases(cid):
+                        occurred = p.occurred_at if p.occurred_at.tzinfo else p.occurred_at.replace(tzinfo=timezone.utc)
+                        t = occurred.timestamp()
+                        if t < installed or now - t > 24 * 3600 or state.client_mails.sent(cid, "order", p.external_id):
+                            continue
+                        kept = p.amount - eng.store.refunded_amount(cid, p.external_id)
+                        if kept <= 0.005:
+                            continue
+                        fresh.append({"ref": p.external_id, "order": str(p.external_id)[-8:], "amount": round(kept, 2),
+                                      "from": order_origin(p)})
+                if not fresh:
+                    continue
+                cur = state.config(cid).get("currency", "AED")
+                if deliver_client_mail(cid, "orders", {"currency": cur, "orders": fresh}):
+                    with state.lock:
+                        for o in fresh:
+                            state.client_mails.mark(cid, "order", o["ref"])
+                    log.info("emailed %d new order(s) to %s", len(fresh), cid)
+            except Exception:
+                log.exception("order email failed for %s", cid)
+    state.order_mails_all = order_mails_all
+
+    def weekly_mails_all() -> None:
+        """Monday morning in the client's time: last week's paid orders, money kept and ad spend."""
+        if not mailer.available():
+            return
+        for cid in mail_client_ids():
+            try:
+                if is_admin(cid) or not state.known(cid):
+                    continue
+                cfg = state.config(cid)
+                today, hour = digest.local_day(cfg.get("timezone") or "Asia/Dubai")
+                if today.weekday() != 0 or hour < 9:
+                    continue
+                ref = today.isoformat()
+                with state.lock:
+                    if state.client_mails.sent(cid, "weekly", ref):
+                        continue
+                start, end = today - timedelta(days=7), today - timedelta(days=1)
+                orders, kept, refunds = 0, 0.0, 0.0
+                with state.lock:
+                    eng = state.engine(cid)
+                    for p in eng.store.purchases(cid):
+                        if not (start <= p.occurred_at.date() <= end):
+                            continue
+                        r = min(eng.store.refunded_amount(cid, p.external_id), p.amount)
+                        refunds += r
+                        if p.amount - r > 0.005:
+                            orders += 1
+                            kept += p.amount - r
+                    has_campaigns = bool(state.launches.list(cid))
+                parts = [x for x in (meta_spend(cid, start.isoformat(), end.isoformat()),
+                                     tiktok_spend(cid, start.isoformat(), end.isoformat())) if x is not None]
+                spend = round(sum(parts), 2) if parts else None
+                if not orders and not spend and not has_campaigns:
+                    continue
+                cur = cfg.get("currency", "AED")
+                spend_cur = ads_currency(cid)
+                data = {"currency": cur, "orders": orders, "kept": round(kept, 2), "refunds": round(refunds, 2),
+                        "spend": spend, "spend_currency": spend_cur,
+                        "cost_per_order": round(spend / orders, 2) if spend and orders and spend_cur.upper() == cur.upper() else None,
+                        "from": start.strftime("%d %b"), "to": end.strftime("%d %b")}
+                if deliver_client_mail(cid, "weekly", data):
+                    with state.lock:
+                        state.client_mails.mark(cid, "weekly", ref)
+                    log.info("sent weekly report to %s", cid)
+            except Exception:
+                log.exception("weekly report failed for %s", cid)
+    state.weekly_mails_all = weekly_mails_all
+
+    def plan_mails_all() -> None:
+        """Paid plans: one reminder about 3 days before the plan renews (or ends, if it was cancelled)."""
+        if not mailer.available():
+            return
+        with state.lock:
+            ids = [r[0] for r in state.store.db.execute("SELECT client_id FROM billing")]
+        now = time.time()
+        for cid in ids:
+            try:
+                if is_admin(cid) or not state.known(cid):
+                    continue
+                with state.lock:
+                    b = state.billing.get(cid) or {}
+                    tier = state.billing.tier(cid)
+                end = b.get("period_end")
+                if b.get("status") not in billing.ACTIVE or not end:
+                    continue
+                days = (float(end) - now) / 86400
+                if not 1 < days <= 3:
+                    continue
+                with state.lock:
+                    if state.client_mails.sent(cid, "renews", end):
+                        continue
+                tz = ZoneInfo(state.config(cid).get("timezone") or "Asia/Dubai")
+                data = {"plan": str(tier or "pro").title(), "days_left": max(1, round(days)),
+                        "ends": datetime.fromtimestamp(float(end), tz).strftime("%d %b %Y"),
+                        "cancels": bool(b.get("cancel_at_period_end"))}
+                if deliver_client_mail(cid, "renews", data):
+                    with state.lock:
+                        state.client_mails.mark(cid, "renews", end)
+                    log.info("sent plan reminder to %s", cid)
+            except Exception:
+                log.exception("plan reminder failed for %s", cid)
+    state.plan_mails_all = plan_mails_all
 
     @flask.get("/digest/<client_id>")
     def digest_view(client_id):
@@ -3176,6 +3349,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             if status == "ACTIVE" and not is_admin(client_id):
                 state.billing.start_ads_trial(client_id)
         log.info("%s set TikTok campaign %s to %s", client_id, campaign_id, status)
+        notify_campaign(client_id, launch.get("name") or campaign_id, "TikTok", status)
         return {**launch, "status": status}
 
     @flask.get("/campaign/<client_id>/history")
@@ -3948,6 +4122,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             if status == "ACTIVE" and not is_admin(client_id):
                 state.billing.start_ads_trial(client_id)
         log.info("%s set campaign %s to %s", client_id, campaign_id, status)
+        notify_campaign(client_id, launch.get("name") or campaign_id, "Facebook & Instagram", status)
         return {**launch, "status": status}
 
     launch_checked: dict = {}
@@ -4201,6 +4376,11 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
     def proads_logo_full():
         """The full logo: cube, name and tagline."""
         return send_from_directory(WEB_DIR, "proads-logo-full.png", max_age=7 * 86400)
+
+    @flask.get("/proads-email-header.png")
+    def proads_email_header():
+        """The banner at the top of every ProAds email (emails load it from this address)."""
+        return send_from_directory(WEB_DIR, "proads-email-header.png", max_age=7 * 86400)
 
     @flask.get("/proads-logo.png")
     def proads_logo():
@@ -4759,9 +4939,32 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         log.info("admin %s made a reset link for %s", admin_id, client_id)
         return {"link": reset_link(token), "expires_in_minutes": 60}
 
+    def email_ads_extended(client_id: str, base: str) -> None:
+        """Tell the business its ad access was extended, with the new end time."""
+        try:
+            if not mailer.available() or is_admin(client_id):
+                return
+            with state.lock:
+                acc = state.billing.ads_access(client_id)
+            if acc.get("plan") or not acc.get("trial_ends"):
+                return
+            cfg = state.config(client_id)
+            acct = state.accounts.get(client_id)
+            email = (acct or {}).get("email") or cfg.get("email")
+            if not email:
+                return
+            ends = datetime.fromtimestamp(acc["trial_ends"], ZoneInfo(cfg.get("timezone") or "Asia/Dubai")).strftime("%d %b %Y, %H:%M")
+            name = cfg.get("name") or (acct or {}).get("business") or client_id
+            subject, text, page = trial_mail.render("extended", name, plan_prices(), f"{billing.fee_percent():g}%", base, ends=ends)
+            ok, why = mailer.send_checked(email, subject, text, page)
+            if not ok:
+                log.warning("ad-access extended email to %s not sent: %s", client_id, why)
+        except Exception:
+            log.exception("ad-access extended email failed for %s", client_id)
+
     @flask.post("/admin/<admin_id>/ads-trial/<client_id>")
     def admin_ads_trial(admin_id, client_id):
-        """Give a business extra days of the free ad test (1 by default, up to 30)."""
+        """Give a business extra days of the free ad test (1 by default, up to 30), and email them."""
         require_admin(admin_id)
         if state.clients.get(client_id) is None and not state.accounts.get(client_id):
             abort(404, "unknown account")
@@ -4772,6 +4975,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         with state.lock:
             a = state.billing.extend_ads_trial(client_id, days)
         log.info("admin %s gave %s %.1f more ad-test days", admin_id, client_id, days)
+        threading.Thread(target=email_ads_extended, args=(client_id, public_base()), daemon=True).start()
         return a
 
     @flask.get("/admin/<admin_id>/campaign-log/<client_id>")
@@ -4872,8 +5076,11 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if "@" not in to or len(to) > 200:
             abort(400, "Enter an email address.")
         kind = str((request.get_json(silent=True) or {}).get("kind") or "")
-        if kind in ("soon", "ended", "followup"):    # the real ad-test reminder, with a sample business name
+        if kind in ("soon", "ended", "followup", "left3"):    # the real ad-test reminder, with a sample business name
             subj, text, page = trial_mail.render(kind, "Test business", plan_prices(), f"{billing.fee_percent():g}%", public_base())
+            ok, why = mailer.send_checked(to, "[Test] " + subj, text, page)
+        elif kind in client_mail.KINDS:             # orders, weekly, live, paused, renews: made-up numbers
+            subj, text, page = client_mail.render(kind, "Test business", client_mail.sample(kind), public_base())
             ok, why = mailer.send_checked(to, "[Test] " + subj, text, page)
         else:
             ok, why = mailer.send_checked(to, "ProAds test email", "Hello,\n\nThis is a test email from ProAds. Email sending works.",
@@ -5648,6 +5855,7 @@ table{{width:100%;border-collapse:collapse;font-size:14px}}td,th{{text-align:lef
                 with state.lock:
                     state.launches.set_status(cid, l["campaign_id"], want_to)
                 changed.append(f"{cid}:{l['campaign_id']}:{want_to}")
+                notify_campaign(cid, l.get("name") or l["campaign_id"], "Facebook & Instagram", want_to, "" if allowed else "billing")
                 log.info("%s campaign %s of %s", "resumed" if allowed else "paused (test ended)", l["campaign_id"], cid)
         return changed
     state.enforce_ads_trials = enforce_ads_trials
@@ -6691,7 +6899,7 @@ def _start_worker(state: App, every: int) -> None:
                     state.enforce_ads_trials()
             except Exception:
                 log.exception("ad test check failed")
-            for job in ("sync_all_launch_status", "tiktok_push_all", "windsor_sync_all", "tiktok_ads_sync_all", "retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees", "audience_sync_all", "digest_all", "trial_mail_all"):
+            for job in ("sync_all_launch_status", "tiktok_push_all", "windsor_sync_all", "tiktok_ads_sync_all", "retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees", "audience_sync_all", "digest_all", "trial_mail_all", "order_mails_all", "weekly_mails_all", "plan_mails_all"):
                 try:
                     if getattr(state, job, None):
                         getattr(state, job)()
