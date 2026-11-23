@@ -1,0 +1,127 @@
+"""Automatic emails to clients: new paid orders, weekly ads report, campaign live / paused, plan renewal.
+
+Each email is built here as (subject, text, html). Sending, timing and the "already sent" check live in server.py.
+Orders and reports only ever show amounts and order numbers, never customer names, emails or phones.
+"""
+from __future__ import annotations
+
+import html
+import time
+
+KINDS = ("orders", "weekly", "live", "paused", "renews")
+
+
+class ClientMailStore:
+    def __init__(self, db):
+        self.db = db
+        self.db.execute("CREATE TABLE IF NOT EXISTS client_mails (client_id TEXT NOT NULL, kind TEXT NOT NULL, ref TEXT NOT NULL,"
+                        " sent_at INTEGER NOT NULL, PRIMARY KEY (client_id, kind, ref))")
+        self.db.commit()
+
+    def sent(self, client_id: str, kind: str, ref: str) -> bool:
+        return bool(self.db.execute("SELECT 1 FROM client_mails WHERE client_id=? AND kind=? AND ref=?",
+                                    (client_id, kind, str(ref))).fetchone())
+
+    def mark(self, client_id: str, kind: str, ref: str) -> None:
+        self.db.execute("INSERT OR IGNORE INTO client_mails VALUES (?,?,?,?)", (client_id, kind, str(ref), int(time.time())))
+        self.db.commit()
+
+    def installed_at(self) -> int:
+        """When these emails were switched on. Orders from before that are never emailed (no flood on first deploy)."""
+        row = self.db.execute("SELECT sent_at FROM client_mails WHERE client_id='*' AND kind='installed' AND ref='1'").fetchone()
+        if row:
+            return int(row[0])
+        now = int(time.time())
+        self.mark("*", "installed", "1")
+        return now
+
+
+def money(amount: float, currency: str) -> str:
+    return f"{currency} {amount:,.2f}"
+
+
+def _page(name: str, lead: str, body: list[str], app_url: str, button: str = "Open ProAds", why: str = "") -> tuple[str, str]:
+    link = app_url.rstrip("/") + "/app#/home"
+    esc = html.escape
+    paras = "".join(f'<p style="margin:0 0 12px">{esc(b)}</p>' for b in body)
+    page = (f'<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#141414">'
+            f'<p style="font-size:13px;color:#5C5C5C;margin:0">ProAds · {esc(name)}</p>'
+            f'<p style="font-size:22px;font-weight:700;margin:8px 0 14px">{esc(lead)}</p>{paras}'
+            f'<p><a href="{esc(link)}" style="background:#4A7600;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;font-weight:700">{esc(button)}</a></p>'
+            + (f'<p style="font-size:12px;color:#5C5C5C">{esc(why)}</p>' if why else "") + '</div>')
+    text = f"Hello,\n\n{lead}\n\n" + "\n\n".join(body) + f"\n\n{button}: {link}\n\nProAds"
+    return text, page
+
+
+def render(kind: str, name: str, d: dict, app_url: str) -> tuple[str, str, str]:
+    """Subject, text, HTML. d holds the numbers for that kind (see sample())."""
+    cur = d.get("currency") or "AED"
+    why = "You get this because your business uses ProAds."
+    if kind == "orders":
+        orders = d.get("orders") or []
+        n = len(orders)
+        total = sum(o["amount"] for o in orders)
+        subject = f"{name}: {n} new paid order{'s' if n != 1 else ''}"
+        lead = f"You got {n} new paid order{'s' if n != 1 else ''}."
+        body = [f"Total paid: {money(total, cur)} (after refunds)."]
+        lines = [f"#{o['order']} · {money(o['amount'], cur)} · {o['from']}" for o in orders[:10]]
+        if lines:
+            body.append("  |  ".join(lines))
+        if n > 10:
+            body.append(f"and {n - 10} more.")
+    elif kind == "weekly":
+        subject = f"{name}: your ads report for last week"
+        lead = "Your week with ProAds."
+        body = [f"Paid orders: {d['orders']}. Money kept after refunds: {money(d['kept'], cur)}."]
+        if d.get("refunds"):
+            body.append(f"Refunded: {money(d['refunds'], cur)}.")
+        if d.get("spend") is not None:
+            line = f"Ad spend: {money(d['spend'], d.get('spend_currency') or cur)}."
+            if d.get("cost_per_order"):
+                line += f" Cost per paid order: {money(d['cost_per_order'], cur)}."
+            body.append(line)
+        if not d.get("orders") and d.get("spend"):
+            body.append("Ads spent money but no paid orders came in this week. Open ProAds to see what to change.")
+        body.append(f"Period: {d.get('from', '')} to {d.get('to', '')}.")
+    elif kind in ("live", "paused"):
+        camp, plat = d.get("campaign") or "your campaign", d.get("platform") or "your ad account"
+        if kind == "live":
+            subject = f"{name}: your campaign is live"
+            lead = "Your campaign is now live."
+            body = [f"{camp} is running on {plat}."]
+        else:
+            subject = f"{name}: your campaign is paused"
+            lead = "Your campaign is paused."
+            body = [f"{camp} on {plat} is paused."]
+            if d.get("reason") == "billing":
+                body.append("Your free ad test ended, so ProAds paused it. Add a card on Plan & billing and it runs again.")
+        body.append("Spending only happens while a campaign is live.")
+    elif kind == "renews":
+        days = d.get("days_left", 3)
+        if d.get("cancels"):
+            subject = f"{name}: your ProAds plan ends in {days} days"
+            lead = f"Your {d.get('plan', 'ProAds')} plan ends on {d.get('ends', '')}."
+            body = ["You cancelled it, so it won't renew. After that, new campaigns can't be published and ProAds campaigns pause.",
+                    "Changed your mind? Open Plan & billing and keep it."]
+        else:
+            subject = f"{name}: your ProAds plan renews in {days} days"
+            lead = f"Your {d.get('plan', 'ProAds')} plan renews on {d.get('ends', '')}."
+            body = ["Your card is charged automatically, plus the ad spend fee for the campaigns ProAds ran.",
+                    "To change or cancel, open Plan & billing."]
+    else:
+        raise ValueError(kind)
+    text, page = _page(name, lead, body, app_url, why=why)
+    return subject, text, page
+
+
+def sample(kind: str) -> dict:
+    """Made-up numbers for the admin's test email."""
+    return {
+        "orders": {"currency": "AED", "orders": [{"order": "10024", "amount": 280.0, "from": "TikTok ad"},
+                                                   {"order": "10025", "amount": 150.0, "from": "Direct / unknown"}]},
+        "weekly": {"currency": "AED", "orders": 6, "kept": 1480.0, "refunds": 150.0, "spend": 620.0, "cost_per_order": 103.33,
+                   "from": "16 Nov", "to": "22 Nov"},
+        "live": {"campaign": "BYNAWI GCC Purchase Conversions", "platform": "TikTok"},
+        "paused": {"campaign": "BYNAWI GCC Purchase Conversions", "platform": "TikTok", "reason": "billing"},
+        "renews": {"plan": "Pro", "days_left": 3, "ends": "26 Nov 2026"},
+    }[kind]
