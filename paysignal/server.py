@@ -3130,7 +3130,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                     billing_watch["events_ok"] = True
             except Exception as e:
                 log.warning("could not check the Stripe webhook events: %s", e)
-        if now - billing_watch["receipts_at"] < 600:
+        if now - billing_watch["receipts_at"] < 90:
             return
         billing_watch["receipts_at"] = now
         try:
@@ -7138,8 +7138,23 @@ table{{width:100%;border-collapse:collapse;font-size:14px}}td,th{{text-align:lef
     return flask
 
 
+MAIL_JOBS = ("billing_auto", "order_mails_all", "trial_mail_all", "plan_mails_all", "weekly_mails_all", "tiktok_watch_all")
+
+
 def _start_worker(state: App, every: int) -> None:
-    """Background loop: every few minutes, send new payments of every client to Meta."""
+    """Background loop: every few minutes, send new payments of every client to Meta.
+    Emails run in their own loop (first run 20 seconds after start, then every 2 minutes) so a restart or a slow sync never delays them."""
+    def mail_loop():
+        time.sleep(20)
+        while True:
+            for job in MAIL_JOBS:
+                try:
+                    if getattr(state, job, None):
+                        getattr(state, job)()
+                except Exception:
+                    log.exception("%s failed", job)
+            time.sleep(120)
+    threading.Thread(target=mail_loop, daemon=True, name="mail-loop").start()
     def loop():
         while True:
             time.sleep(every)
@@ -7148,7 +7163,7 @@ def _start_worker(state: App, every: int) -> None:
                     state.enforce_ads_trials()
             except Exception:
                 log.exception("ad test check failed")
-            for job in ("sync_all_launch_status", "tiktok_push_all", "windsor_sync_all", "tiktok_ads_sync_all", "retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees", "audience_sync_all", "digest_all", "trial_mail_all", "order_mails_all", "weekly_mails_all", "plan_mails_all", "tiktok_watch_all", "billing_auto", "news_auto"):
+            for job in ("sync_all_launch_status", "tiktok_push_all", "windsor_sync_all", "tiktok_ads_sync_all", "retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees", "audience_sync_all", "digest_all", "news_auto"):
                 try:
                     if getattr(state, job, None):
                         getattr(state, job)()
