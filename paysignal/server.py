@@ -3104,6 +3104,42 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             log.exception("billing email failed")
 
     state.billing_mails = billing_mails
+
+    BILLING_EVENTS = ("checkout.session.completed", "customer.subscription.created", "customer.subscription.updated",
+                      "customer.subscription.deleted", "invoice.created", "invoice.paid", "invoice.payment_failed",
+                      "charge.refunded", "charge.dispute.closed")
+    billing_watch = {"events_ok": False, "events_tried": 0.0, "receipts_at": 0.0}
+
+    def billing_auto() -> None:
+        """Keeps billing emails automatic: (1) makes sure Stripe sends ProAds every event it needs, (2) every 10 minutes
+        emails a receipt for any invoice paid in the last 2 days that has none yet (if a webhook was missed)."""
+        if not billing.available() or not mailer.available():
+            return
+        now = time.time()
+        st = billing.Stripe(state.stripe_http)
+        if not billing_watch["events_ok"] and now - billing_watch["events_tried"] > 6 * 3600:
+            billing_watch["events_tried"] = now
+            try:
+                for ep in st.get("webhook_endpoints", {"limit": 100}).get("data") or []:
+                    if "/webhooks/proads-billing" not in (ep.get("url") or ""):
+                        continue
+                    have = set(ep.get("enabled_events") or [])
+                    if "*" not in have and not set(BILLING_EVENTS) <= have:
+                        st.post(f"webhook_endpoints/{ep['id']}", {"enabled_events[]": sorted(have | set(BILLING_EVENTS))})
+                        log.info("Stripe webhook %s: added %s", ep["id"], ", ".join(sorted(set(BILLING_EVENTS) - have)))
+                    billing_watch["events_ok"] = True
+            except Exception as e:
+                log.warning("could not check the Stripe webhook events: %s", e)
+        if now - billing_watch["receipts_at"] < 600:
+            return
+        billing_watch["receipts_at"] = now
+        try:
+            for inv in st.get("invoices", {"status": "paid", "limit": 50, "created[gte]": int(now - 2 * 86400)}).get("data") or []:
+                if (inv.get("amount_paid") or 0) > 0:
+                    send_receipt(inv)
+        except Exception as e:
+            log.warning("receipt check failed: %s", e)
+    state.billing_auto = billing_auto
     tt_watch_seen: dict = {}
 
     def tiktok_watch_all() -> None:
@@ -7112,7 +7148,7 @@ def _start_worker(state: App, every: int) -> None:
                     state.enforce_ads_trials()
             except Exception:
                 log.exception("ad test check failed")
-            for job in ("sync_all_launch_status", "tiktok_push_all", "windsor_sync_all", "tiktok_ads_sync_all", "retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees", "audience_sync_all", "digest_all", "trial_mail_all", "order_mails_all", "weekly_mails_all", "plan_mails_all", "tiktok_watch_all", "news_auto"):
+            for job in ("sync_all_launch_status", "tiktok_push_all", "windsor_sync_all", "tiktok_ads_sync_all", "retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees", "audience_sync_all", "digest_all", "trial_mail_all", "order_mails_all", "weekly_mails_all", "plan_mails_all", "tiktok_watch_all", "billing_auto", "news_auto"):
                 try:
                     if getattr(state, job, None):
                         getattr(state, job)()

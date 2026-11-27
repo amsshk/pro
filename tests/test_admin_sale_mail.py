@@ -44,3 +44,31 @@ def test_receipt_copy_goes_to_admin(tmp_path, monkeypatch):
     inv = {"id": "in_2", "customer": "cus_y", "customer_email": "c@shop.ae", "amount_paid": 29900, "currency": "aed"}
     app.extensions["paysignal"].billing_mails({"type": "invoice.paid", "data": {"object": inv}}, None)
     assert sent == ["c@shop.ae", "admin@x.net"]
+
+
+def test_billing_auto_fixes_webhook_events_and_sends_missed_receipts(tmp_path, monkeypatch):
+    sent, posts = [], []
+    monkeypatch.setenv("SMTP_HOST", "smtp.x"); monkeypatch.setenv("SMTP_FROM", "ProAds <a@x.net>")
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_x"); monkeypatch.delenv("SMTP_USER", raising=False)
+    monkeypatch.setattr(mailer, "send_checked", lambda to, s, t, html=None: (sent.append(to) or True, ""))
+    from paysignal import billing
+    monkeypatch.setattr(billing, "available", lambda: True)
+
+    class R:
+        def __init__(self, d): self.status_code, self._d = 200, d
+        def json(self): return self._d
+
+    class H:
+        def get(self, url, params=None, **k):
+            if url.endswith("webhook_endpoints"):
+                return R({"data": [{"id": "we_1", "url": "https://pro.x/webhooks/proads-billing", "enabled_events": ["invoice.created"]}]})
+            return R({"data": [{"id": "in_9", "customer": "cus_z", "customer_email": "p@shop.ae", "amount_paid": 29900, "currency": "aed"}]})
+        def post(self, url, data=None, **k):
+            posts.append((url, data)); return R({})
+
+    app = create_app({"pro": {"api_key": "admin-key-0123456789abc"}}, str(tmp_path / "t.db"), start_worker=False)
+    st = app.extensions["paysignal"]
+    st.stripe_http = H()
+    st.billing_auto(); st.billing_auto()
+    assert sent == ["p@shop.ae"]
+    assert len(posts) == 1 and "invoice.paid" in posts[0][1]["enabled_events[]"]
