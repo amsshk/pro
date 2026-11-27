@@ -72,3 +72,20 @@ def test_billing_auto_fixes_webhook_events_and_sends_missed_receipts(tmp_path, m
     st.billing_auto(); st.billing_auto()
     assert sent == ["p@shop.ae"]
     assert len(posts) == 1 and "invoice.paid" in posts[0][1]["enabled_events[]"]
+
+
+def test_signup_and_client_email_copy_reach_admin(tmp_path, monkeypatch):
+    import time
+    sent = []
+    monkeypatch.setenv("SMTP_HOST", "smtp.x"); monkeypatch.setenv("SMTP_FROM", "ProAds <a@x.net>")
+    monkeypatch.setenv("SMTP_USER", "admin@x.net")
+    monkeypatch.setattr(mailer, "send_checked", lambda to, s, t, html=None: (sent.append((to, s)) or True, ""))
+    app = create_app({"pro": {"api_key": "admin-key-0123456789abc"}}, str(tmp_path / "t.db"), start_worker=False)
+    c = app.test_client()
+    c.post("/auth/signup", json={"business": "Glow Clinic", "email": "o@glow.ae", "password": "first-password-1", "terms": True, "phone": "0501234567"})
+    st = app.extensions["paysignal"]
+    assert st.deliver_client_mail("glow-clinic", "plan_ended", {}) is True
+    time.sleep(0.3)
+    subjects = [s for to, s in sent if to == "admin@x.net"]
+    assert any(s.startswith("[ProAds] New sign-up: Glow Clinic") for s in subjects)
+    assert any(s.startswith("[Copy]") for s in subjects)

@@ -1075,6 +1075,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if len(advs) == 1:
             threading.Thread(target=lambda: tiktok_ads_sync(client_id, 90), daemon=True).start() \
                 if state.tiktok_api_http is None else tiktok_ads_sync(client_id, 90)
+        admin_note("TikTok connected: " + str(client_id), [f"Account: {client_id}"])
         return tt_back("connected")
 
     def tt_token(client_id: str, row: dict) -> str:
@@ -2762,6 +2763,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 ends_txt = datetime.fromtimestamp(acc["trial_ends"], ZoneInfo(state.config(cid).get("timezone") or "Asia/Dubai")).strftime("%d %b %Y, %H:%M")
                 ok, why = mailer.send_checked(email, *trial_mail.render(kind, name, plan_prices(), f"{billing.fee_percent():g}%", base, ends=ends_txt))
                 if ok:                                          # marked only once it really went, so a failure is retried
+                    if admin_inbox():
+                        mailer.send_checked(admin_inbox(), f"[Copy] {name}: ad-test {kind} reminder", f"Sent to {email}", None)
                     with state.lock:
                         state.trial_mails.mark(cid, kind, acc["trial_ends"])
                     log.info("sent ad-test %s email to %s", kind, cid)
@@ -2789,6 +2792,19 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         a = (os.environ.get("PROADS_NOTIFY_EMAIL") or os.environ.get("SMTP_USER") or "").strip()
         return a if "@" in a else None
 
+    def admin_note(subject: str, lines: list, to_admin_only: bool = True) -> None:
+        """An email to the ProAds inbox about anything that happens (sign-ups, connections, news, copies of client emails).
+        Runs in the background and never raises."""
+        def run():
+            try:
+                to = admin_inbox()
+                if to and mailer.available():
+                    mailer.send_checked(to, "[ProAds] " + subject, "\n".join(lines), "".join(
+                        f'<p style="margin:0 0 10px">{html.escape(str(x))}</p>' for x in lines))
+            except Exception:
+                log.exception("admin email failed")
+        threading.Thread(target=run, daemon=True, name="admin-note").start()
+
     def deliver_client_mail(cid: str, kind: str, data: dict) -> bool:
         if not mailer.available() or not state.known(cid):
             return False
@@ -2802,7 +2818,11 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         ok, why = mailer.send_checked(who[0], subject, text, page)
         if not ok:
             log.warning("%s email to %s not sent: %s", kind, cid, why)
+        elif not is_admin(cid) and admin_inbox():                 # ProAds gets a copy of everything its clients are emailed
+            mailer.send_checked(admin_inbox(), f"[Copy] {subject}", f"Sent to {who[0]}\n\n" + text, page)
         return ok
+
+    state.deliver_client_mail = deliver_client_mail
 
     def notify_campaign(cid: str, name: str, platform: str, status: str, reason: str = "") -> None:
         """Email the client when a campaign goes live or is paused (in the background, never slows the button)."""
@@ -3001,6 +3021,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 if not test:
                     state.client_mails.mark("*", "news_auto", ref)
             log.info("ProAds News: wrote '%s' (%s)", str(j["title"])[:60], "draft" if mode == "draft" else "published")
+            admin_note(("News draft saved: " if mode == "draft" else "News published: ") + str(j["title"])[:90],
+                       [str(j.get("summary", "")), public_base() + "/news"])
             return post
         except Exception as e:
             log.warning("ProAds News auto-write failed: %s", e)
@@ -3085,6 +3107,14 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         try:
             etype = event.get("type", "")
             obj = (event.get("data") or {}).get("object") or {}
+            if etype in ("invoice.payment_failed", "customer.subscription.created", "customer.subscription.deleted", "charge.refunded"):
+                who = cid
+                if not who and obj.get("customer"):
+                    with state.lock:
+                        who = state.billing.by_customer(obj.get("customer") or "")
+                admin_note({"invoice.payment_failed": "Payment failed", "customer.subscription.created": "New subscription",
+                            "customer.subscription.deleted": "Subscription ended", "charge.refunded": "Refund"}[etype] + f": {who or obj.get('customer', '')}",
+                           [f"Account: {who or '-'}", f"Stripe customer: {obj.get('customer', '')}"])
             if etype == "invoice.payment_failed":
                 with state.lock:
                     cid = state.billing.by_customer(obj.get("customer") or "")
@@ -4781,6 +4811,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if ctx:
             state.emit_growth(growth.build_event("CompleteRegistration", state.accounts.get(cid), ctx, event_id))
         log.info("new account %s", cid)
+        admin_note(f"New sign-up: {clean['name']}", [f"Business: {clean['name']}", f"Email: {clean.get('email', '')}",
+                                                    f"Phone: {clean.get('phone', '')}", f"Account: {cid}"])
         return {"client_id": cid, "token": token, "event_id": event_id, "name": clean["name"]}
 
     # ---------------- sign in with Google, Apple or Facebook ----------------
@@ -6755,6 +6787,7 @@ table{{width:100%;border-collapse:collapse;font-size:14px}}td,th{{text-align:lef
             state.meta_conns.save(client_id, token, assets)
         log.info("%s connected Facebook (%d ad accounts, %d pages)", client_id,
                  len(assets["ad_accounts"]), len(assets["pages"]))
+        admin_note("Facebook connected: " + str(client_id), [f"Account: {client_id}"])
         return meta_back("connected")
 
     @flask.get("/meta/<client_id>")
@@ -6932,6 +6965,7 @@ table{{width:100%;border-collapse:collapse;font-size:14px}}td,th{{text-align:lef
         with state.lock:
             state.store.save_shop(client_id, shop, shopify_app.encrypt(json.dumps(tokens)), tokens["scope"])
         state.start_shopify_import(client_id, register_webhooks=public_url() + "/webhooks/shopify-app")
+        admin_note("Shopify connected: " + str(client_id), [f"Account: {client_id}"])
         return back("connected")
 
     @flask.post("/shopify/sync/<client_id>")
