@@ -47,7 +47,7 @@ from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
-from . import affiliates, audience_sync, checklink, proads_results, trial_mail, client_mail, audiences, digest, followups, impact, leads, results, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
+from . import ads_watch, affiliates, audience_sync, checklink, proads_results, trial_mail, client_mail, audiences, digest, followups, impact, leads, results, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
 from .identity import hash_phone, normalize_phone
 from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
@@ -2941,6 +2941,76 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 log.exception("plan reminder failed for %s", cid)
     state.plan_mails_all = plan_mails_all
 
+    def mail_once(cid: str, kind: str, ref: str, data: dict) -> bool:
+        """Send one client email unless this (kind, ref) already went out. Marked only once it really went."""
+        with state.lock:
+            if state.client_mails.sent(cid, kind, ref):
+                return False
+        if deliver_client_mail(cid, kind, data):
+            with state.lock:
+                state.client_mails.mark(cid, kind, ref)
+            log.info("sent %s email to %s", kind, cid)
+            return True
+        return False
+
+    def billing_mails(event: dict, cid: Optional[str]) -> None:
+        """Subscription emails from Stripe: plan started, payment failed, plan ended."""
+        try:
+            etype = event.get("type", "")
+            obj = (event.get("data") or {}).get("object") or {}
+            if etype == "invoice.payment_failed":
+                with state.lock:
+                    cid = state.billing.by_customer(obj.get("customer") or "")
+                if cid and obj.get("id"):
+                    amt = obj.get("amount_due")
+                    mail_once(cid, "payment_failed", obj["id"], {"amount": amt / 100 if isinstance(amt, (int, float)) and amt else None,
+                                                                "currency": (obj.get("currency") or "").upper()})
+            elif etype == "checkout.session.completed" and obj.get("mode") == "subscription" and cid:
+                with state.lock:
+                    tier = state.billing.tier(cid)
+                mail_once(cid, "plan_started", obj.get("subscription") or obj.get("id") or "", {"plan": str(tier or "pro").title()})
+            elif etype == "customer.subscription.deleted" and cid:
+                mail_once(cid, "plan_ended", obj.get("id") or "", {})
+        except Exception:
+            log.exception("billing email failed")
+
+    tt_watch_seen: dict = {}
+
+    def tiktok_watch_all() -> None:
+        """TikTok alert emails (low balance, learning off / on / done): each connected ad account checked once an hour."""
+        if not mailer.available():
+            return
+        with state.lock:
+            installed = state.client_mails.installed_at("tt_watch")
+            ids = state.tiktok_ads.all()
+        now = time.time()
+        for cid in ids:
+            try:
+                if is_admin(cid) or not state.known(cid) or now - tt_watch_seen.get(cid, 0) < 3600:
+                    continue
+                tt_watch_seen[cid] = now
+                with state.lock:
+                    row = state.tiktok_ads.get(cid)
+                if not row or not row["advertiser_id"]:
+                    continue
+                groups = tiktok_api.adgroups(tt_http(), tt_token(cid, row), row["advertiser_id"])
+                with state.lock:
+                    accepted = state.store.db.execute(
+                        "SELECT COUNT(*) FROM tiktok_delivered WHERE client_id=? AND status='accepted' AND event_id NOT LIKE '%refund%'"
+                        " AND sent_at>=?", (cid, int(now - 7 * 86400))).fetchone()[0]
+                today = digest.local_day(state.config(cid).get("timezone") or "Asia/Dubai")[0].isoformat()
+                done = set()
+                for kind, ref, data in ads_watch.due(groups, accepted, installed, today):
+                    if kind in done:                      # one email per kind per check; the other ad groups are marked too
+                        with state.lock:
+                            state.client_mails.mark(cid, kind, ref)
+                        continue
+                    if mail_once(cid, kind, ref, data):
+                        done.add(kind)
+            except Exception as e:
+                log.warning("TikTok alert check for %s failed: %s", cid, e)
+    state.tiktok_watch_all = tiktok_watch_all
+
     @flask.get("/digest/<client_id>")
     def digest_view(client_id):
         """The switch, plus a preview of today's email (?preview=1)."""
@@ -5361,6 +5431,10 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if cid and event.get("type") == "checkout.session.completed":
             with state.lock:
                 state.funnel.mark(cid, "plan", int(time.time()))
+        if state.billing_sync:
+            billing_mails(event, cid)
+        else:
+            threading.Thread(target=billing_mails, args=(event, cid), daemon=True, name="billing-mail").start()
         if cid:
             log.info("billing %s for %s", event.get("type"), cid)
             if state.billing_sync:
@@ -6899,7 +6973,7 @@ def _start_worker(state: App, every: int) -> None:
                     state.enforce_ads_trials()
             except Exception:
                 log.exception("ad test check failed")
-            for job in ("sync_all_launch_status", "tiktok_push_all", "windsor_sync_all", "tiktok_ads_sync_all", "retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees", "audience_sync_all", "digest_all", "trial_mail_all", "order_mails_all", "weekly_mails_all", "plan_mails_all"):
+            for job in ("sync_all_launch_status", "tiktok_push_all", "windsor_sync_all", "tiktok_ads_sync_all", "retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees", "audience_sync_all", "digest_all", "trial_mail_all", "order_mails_all", "weekly_mails_all", "plan_mails_all", "tiktok_watch_all"):
                 try:
                     if getattr(state, job, None):
                         getattr(state, job)()

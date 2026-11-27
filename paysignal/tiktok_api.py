@@ -596,3 +596,23 @@ def campaign_totals(http, token: str, advertiser_id: str, ids: list[str], start:
         tgt["spend"] = round(tgt["spend"], 2)
     out["purchases_known"] = "complete_payment" in metrics
     return {**out, "by": by} if per_campaign else out
+
+
+def adgroups(http, token: str, advertiser_id: str) -> list[dict]:
+    """Ad groups that are switched on: status (TikTok's secondary_status, e.g. ADGROUP_STATUS_BALANCE_EXCEED) and
+    whether learning is skipped. Used for the low-balance and learning emails."""
+    out, page = [], 1
+    while True:
+        d = _get(http, token, "adgroup/get", {"advertiser_id": advertiser_id, "page": page, "page_size": 100,
+                                              "filtering": {"primary_status": "STATUS_NOT_DELETE"}}, "reading ad groups")
+        for g in d.get("list") or []:
+            if g.get("operation_status") != "ENABLE":
+                continue
+            out.append({"id": str(g.get("adgroup_id") or ""), "name": g.get("adgroup_name") or "",
+                        "campaign": g.get("campaign_name") or "", "status": str(g.get("secondary_status") or ""),
+                        "skip_learning": bool(g.get("skip_learning_phase")), "created": g.get("create_time") or "",
+                        "promote": str(g.get("campaign_name") or "").startswith("promote_")})
+        if page >= int((d.get("page_info") or {}).get("total_page") or 1) or page >= 10:
+            break
+        page += 1
+    return out

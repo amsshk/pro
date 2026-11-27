@@ -1,4 +1,5 @@
-"""Automatic emails to clients: new paid orders, weekly ads report, campaign live / paused, plan renewal.
+"""Automatic emails to clients: new paid orders, weekly ads report, campaign live / paused, plan renewal,
+subscription (started, payment failed, ended) and TikTok alerts (low balance, learning on / off / done).
 
 Each email is built here as (subject, text, html). Sending, timing and the "already sent" check live in server.py.
 Orders and reports only ever show amounts and order numbers, never customer names, emails or phones.
@@ -8,7 +9,8 @@ from __future__ import annotations
 import html
 import time
 
-KINDS = ("orders", "weekly", "live", "paused", "renews")
+KINDS = ("orders", "weekly", "live", "paused", "renews", "plan_started", "payment_failed", "plan_ended",
+         "tt_balance", "tt_learning_on", "tt_learning_off", "tt_learning_done")
 
 
 class ClientMailStore:
@@ -26,13 +28,13 @@ class ClientMailStore:
         self.db.execute("INSERT OR IGNORE INTO client_mails VALUES (?,?,?,?)", (client_id, kind, str(ref), int(time.time())))
         self.db.commit()
 
-    def installed_at(self) -> int:
+    def installed_at(self, tag: str = "1") -> int:
         """When these emails were switched on. Orders from before that are never emailed (no flood on first deploy)."""
-        row = self.db.execute("SELECT sent_at FROM client_mails WHERE client_id='*' AND kind='installed' AND ref='1'").fetchone()
+        row = self.db.execute("SELECT sent_at FROM client_mails WHERE client_id='*' AND kind='installed' AND ref=?", (tag,)).fetchone()
         if row:
             return int(row[0])
         now = int(time.time())
-        self.mark("*", "installed", "1")
+        self.mark("*", "installed", tag)
         return now
 
 
@@ -40,8 +42,8 @@ def money(amount: float, currency: str) -> str:
     return f"{currency} {amount:,.2f}"
 
 
-def _page(name: str, lead: str, body: list[str], app_url: str, button: str = "Open ProAds", why: str = "") -> tuple[str, str]:
-    link = app_url.rstrip("/") + "/app#/home"
+def _page(name: str, lead: str, body: list[str], app_url: str, button: str = "Open ProAds", why: str = "", path: str = "home") -> tuple[str, str]:
+    link = app_url.rstrip("/") + "/app#/" + path
     esc = html.escape
     paras = "".join(f'<p style="margin:0 0 12px">{esc(b)}</p>' for b in body)
     page = (f'<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#141414">'
@@ -57,6 +59,7 @@ def render(kind: str, name: str, d: dict, app_url: str) -> tuple[str, str, str]:
     """Subject, text, HTML. d holds the numbers for that kind (see sample())."""
     cur = d.get("currency") or "AED"
     why = "You get this because your business uses ProAds."
+    button = "Open ProAds"
     if kind == "orders":
         orders = d.get("orders") or []
         n = len(orders)
@@ -108,9 +111,49 @@ def render(kind: str, name: str, d: dict, app_url: str) -> tuple[str, str, str]:
             lead = f"Your {d.get('plan', 'ProAds')} plan renews on {d.get('ends', '')}."
             body = ["Your card is charged automatically, plus the ad spend fee for the campaigns ProAds ran.",
                     "To change or cancel, open Plan & billing."]
+    elif kind == "plan_started":
+        subject = f"{name}: your ProAds {d.get('plan', 'Pro')} plan is active"
+        lead = f"Welcome to ProAds {d.get('plan', 'Pro')}."
+        body = ["Your plan is active. You can publish campaigns and they keep running.",
+                "Sales tracking and sending real purchases to Meta and TikTok keep working as before."]
+    elif kind == "payment_failed":
+        amt = f" of {money(d['amount'], d.get('currency') or 'AED')}" if d.get("amount") else ""
+        subject = f"{name}: your ProAds payment didn't go through"
+        lead = f"Your ProAds payment{amt} didn't go through."
+        body = ["Please update your card on Plan & billing. We'll try the payment again automatically.",
+                "If it keeps failing, campaigns made through ProAds will be paused."]
+        button = "Update card"
+    elif kind == "plan_ended":
+        subject = f"{name}: your ProAds plan has ended"
+        lead = "Your ProAds plan has ended."
+        body = ["Campaigns made through ProAds are paused and new ones can't be published.",
+                "Sales tracking and sending real purchases to Meta and TikTok keep working for free. Add a plan any time to run ads again."]
+        button = "Add a plan"
+    elif kind == "tt_balance":
+        subject = f"{name}: TikTok ads stopped, balance is too low"
+        lead = "Your TikTok ads stopped: not enough balance."
+        body = [f"TikTok says the ad account doesn't have enough balance{(' for ' + d['campaign']) if d.get('campaign') else ''}.",
+                "Add funds in TikTok Ads Manager (Payment / Add balance). Ads start again by themselves once the balance is topped up."]
+    elif kind == "tt_learning_on":
+        subject = f"{name}: TikTok is learning who buys"
+        lead = "TikTok started learning for your ads."
+        body = [f"{d.get('adgroup') or 'Your ad group'} is in the learning phase. TikTok tests who buys, using your real paid orders from ProAds.",
+                "For the next 7 days: don't change budget, targeting or videos. Edits restart learning.",
+                "Learning finishes at about 50 purchases in 7 days."]
+    elif kind == "tt_learning_off":
+        subject = f"{name}: TikTok learning is turned off"
+        lead = "Learning is off on one of your TikTok ad groups."
+        body = [f"{d.get('adgroup') or 'An ad group'} was created with Skip Learning Phase on, so TikTok doesn't learn who buys.",
+                "Fix: in TikTok Ads Manager turn Skip Learning Phase off, or duplicate the ad group with it off and pause the old one."]
+    elif kind == "tt_learning_done":
+        subject = f"{name}: TikTok has enough purchases to finish learning"
+        lead = "TikTok has enough purchases to finish learning."
+        body = [f"TikTok accepted {d.get('purchases', 50)} purchases from ProAds in the last 7 days, about what it needs to finish learning.",
+                "Now you can raise the budget slowly: about 20% every 2 to 3 days."]
     else:
         raise ValueError(kind)
-    text, page = _page(name, lead, body, app_url, why=why)
+    path = "billing" if kind in ("renews", "plan_started", "payment_failed", "plan_ended") else "home"
+    text, page = _page(name, lead, body, app_url, button=button, why=why, path=path)
     return subject, text, page
 
 
@@ -124,4 +167,11 @@ def sample(kind: str) -> dict:
         "live": {"campaign": "BYNAWI GCC Purchase Conversions", "platform": "TikTok"},
         "paused": {"campaign": "BYNAWI GCC Purchase Conversions", "platform": "TikTok", "reason": "billing"},
         "renews": {"plan": "Pro", "days_left": 3, "ends": "26 Nov 2026"},
+        "plan_started": {"plan": "Pro"},
+        "payment_failed": {"amount": 299.0, "currency": "AED"},
+        "plan_ended": {},
+        "tt_balance": {"campaign": "BYNAWI GCC Purchase Conversions"},
+        "tt_learning_on": {"adgroup": "GCC Broad - Verified Sales"},
+        "tt_learning_off": {"adgroup": "GCC Broad - Verified Sales"},
+        "tt_learning_done": {"purchases": 52},
     }[kind]

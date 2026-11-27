@@ -41,13 +41,23 @@ def due(access: dict, now: Optional[float] = None) -> Optional[str]:
     return None
 
 
-def render(kind: str, name: str, prices: dict, fee: str, app_url: str) -> tuple[str, str, str]:
+def render(kind: str, name: str, prices: dict, fee: str, app_url: str, ends: str = "") -> tuple[str, str, str]:
     """Subject, text, HTML."""
     billing = app_url.rstrip("/") + "/app#/billing"
     plan_line = f"Pro is {prices['pro']} a month + {fee} of the ad spend on campaigns made through ProAds. Premium is {prices['premium']} a month + {fee}."
-    if kind == "soon":
+    if kind == "extended":
+        subject = f"{name}: your free ad test was extended"
+        lead = "Good news: your free ProAds ad test was extended."
+        body = [f"You can publish and run campaigns until {ends or 'the new end date'}.",
+                "Your sales tracking and sending real purchases to Meta and TikTok keep working as before."]
+    elif kind == "left3":
+        subject = f"{name}: 3 days left in your free ad test"
+        lead = "3 days left in your free ProAds ad test."
+        body = [f"Your ad test ends {('on ' + ends) if ends else 'in 3 days'}. Add a plan to keep your campaigns running without a break.",
+                "Your sales tracking and sending real purchases to Meta and TikTok keep working for free."]
+    elif kind == "soon":
         subject = f"{name}: your free ad test ends tomorrow"
-        lead = "Your free ProAds ad test ends in less than a day."
+        lead = "Your free ProAds ad test ends in less than a day." if not ends else f"Your free ProAds ad test ends on {ends}."
         body = ["After that, new campaigns can't be published and campaigns made through ProAds are paused until a plan is added.",
                 "Your sales tracking, sending real purchases to Meta and TikTok, and the organic tools keep working for free."]
     elif kind == "ended":
