@@ -2941,6 +2941,59 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 log.exception("plan reminder failed for %s", cid)
     state.plan_mails_all = plan_mails_all
 
+    NEWS_TOPICS = (
+        "Why only real paid orders should train your TikTok and Meta ads",
+        "How refunds and unpaid orders confuse ad algorithms",
+        "Why one campaign with enough budget learns faster than many small ones",
+        "How to read ad spend against paid orders, not clicks",
+        "What a good product page needs before you spend on ads",
+        "How to stop paying to show ads to people who already bought",
+        "Cash on delivery and ad tracking: what to watch for",
+        "How to test new ad videos without breaking what works",
+        "Why creative variety matters more than audience tricks",
+        "A simple weekly routine to review your ads in 15 minutes",
+        "Free delivery, price and payment options: what to say in the first seconds of an ad",
+        "How to know when to scale a campaign and when to wait",
+    )
+
+    def news_auto() -> None:
+        """ProAds News on Tuesday and Friday after 10:00 Dubai time: the AI writes one article and publishes it
+        (PROADS_NEWS_AUTO=draft saves it unpublished for a check instead, =off stops it)."""
+        mode = os.environ.get("PROADS_NEWS_AUTO", "on").strip().lower()
+        if mode in ("off", "0", "no"):
+            return
+        now = datetime.now(ZoneInfo("Asia/Dubai"))
+        if now.weekday() not in (1, 4) or now.hour < 10:
+            return
+        ref = now.strftime("%Y-%m-%d")
+        with state.lock:
+            if state.client_mails.sent("*", "news_auto", ref):
+                return
+            titles = [p["title"] for p in state.news.list(published_only=False, limit=40)]
+            n = len(titles)
+        ai = state.ai or MetaAI()
+        if not ai.available:
+            return
+        topic = NEWS_TOPICS[n % len(NEWS_TOPICS)]
+        try:
+            reply = ai.chat("campaign_builder", [
+                {"role": "developer", "content": "You write short, useful news-style articles for ProAds (ads software by EzDevSoft, UAE) "
+                 "that help small online businesses with TikTok, Meta and Google ads and tracking. Plain English, short sentences, "
+                 "no hype. NEVER invent statistics, prices, quotes, customer names or results; if a number is needed, describe it "
+                 "in words or say it varies. Only state platform rules you are sure of. End with one practical takeaway. "
+                 "Format: '## ' headings, '- ' bullets, **bold**. 400-700 words. Do not repeat these existing titles: " + "; ".join(titles[:15]) +
+                 ". Reply only with JSON {\"title\": str (max 90 chars), \"summary\": str (max 170 chars), \"body\": str}."},
+                {"role": "user", "content": topic}], max_completion_tokens=4000)
+            t = reply.text
+            j = json.loads(t[t.find("{"):t.rfind("}") + 1])
+            with state.lock:
+                state.news.save(str(j["title"])[:110], str(j.get("summary", ""))[:200], str(j["body"]), "ProAds team", mode != "draft")
+                state.client_mails.mark("*", "news_auto", ref)
+            log.info("ProAds News: wrote '%s' (%s)", str(j["title"])[:60], "draft" if mode == "draft" else "published")
+        except Exception as e:
+            log.warning("ProAds News auto-write failed: %s", e)
+    state.news_auto = news_auto
+
     def mail_once(cid: str, kind: str, ref: str, data: dict) -> bool:
         """Send one client email unless this (kind, ref) already went out. Marked only once it really went."""
         with state.lock:
@@ -6973,7 +7026,7 @@ def _start_worker(state: App, every: int) -> None:
                     state.enforce_ads_trials()
             except Exception:
                 log.exception("ad test check failed")
-            for job in ("sync_all_launch_status", "tiktok_push_all", "windsor_sync_all", "tiktok_ads_sync_all", "retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees", "audience_sync_all", "digest_all", "trial_mail_all", "order_mails_all", "weekly_mails_all", "plan_mails_all", "tiktok_watch_all"):
+            for job in ("sync_all_launch_status", "tiktok_push_all", "windsor_sync_all", "tiktok_ads_sync_all", "retry_meta_events", "stripe_sync_all", "sync_all_spend", "settle_due_periods", "bill_settled_fees", "recheck_billed_fees", "audience_sync_all", "digest_all", "trial_mail_all", "order_mails_all", "weekly_mails_all", "plan_mails_all", "tiktok_watch_all", "news_auto"):
                 try:
                     if getattr(state, job, None):
                         getattr(state, job)()
