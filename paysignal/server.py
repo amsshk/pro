@@ -1075,6 +1075,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if len(advs) == 1:
             threading.Thread(target=lambda: tiktok_ads_sync(client_id, 90), daemon=True).start() \
                 if state.tiktok_api_http is None else tiktok_ads_sync(client_id, 90)
+        mail_bg(client_id, "connected", {"platform": "TikTok"})
         admin_note("TikTok connected: " + str(client_id), [f"Account: {client_id}"])
         return tt_back("connected")
 
@@ -2805,6 +2806,31 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 log.exception("admin email failed")
         threading.Thread(target=run, daemon=True, name="admin-note").start()
 
+    def mail_bg(cid: str, kind: str, data: dict) -> None:
+        """Send one client email in the background (never slows the page or fails it)."""
+        def run():
+            try:
+                deliver_client_mail(cid, kind, data)
+            except Exception:
+                log.exception("%s email failed for %s", kind, cid)
+        threading.Thread(target=run, daemon=True, name="client-mail").start()
+
+    def news_to_clients(post: dict) -> None:
+        """A published article goes to every client once."""
+        def run():
+            try:
+                data = {"title": post["title"], "summary": post.get("summary", ""), "url": f"{public_base()}/news/{post['slug']}"}
+                for cid in mail_client_ids():
+                    if not is_admin(cid) and state.known(cid):
+                        with state.lock:
+                            done = state.client_mails.sent(cid, "news", str(post["id"]))
+                        if not done and deliver_client_mail(cid, "news", data):
+                            with state.lock:
+                                state.client_mails.mark(cid, "news", str(post["id"]))
+            except Exception:
+                log.exception("news email failed")
+        threading.Thread(target=run, daemon=True, name="news-mail").start()
+
     def deliver_client_mail(cid: str, kind: str, data: dict) -> bool:
         if not mailer.available() or not state.known(cid):
             return False
@@ -3023,6 +3049,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             log.info("ProAds News: wrote '%s' (%s)", str(j["title"])[:60], "draft" if mode == "draft" else "published")
             admin_note(("News draft saved: " if mode == "draft" else "News published: ") + str(j["title"])[:90],
                        [str(j.get("summary", "")), public_base() + "/news"])
+            if mode != "draft":
+                news_to_clients(post)
             return post
         except Exception as e:
             log.warning("ProAds News auto-write failed: %s", e)
@@ -4669,6 +4697,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                                     pid=int(b["id"]) if b.get("id") else None)
         except ValueError as e:
             abort(400, str(e))
+        if p.get("published") and not b.get("id"):          # a new article published by hand
+            news_to_clients(p)
         return {"post": p, "url": f"{public_base()}/news/{p['slug']}"}
 
     @flask.get("/admin/<admin_id>/results")
@@ -4811,6 +4841,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         if ctx:
             state.emit_growth(growth.build_event("CompleteRegistration", state.accounts.get(cid), ctx, event_id))
         log.info("new account %s", cid)
+        mail_bg(cid, "welcome", {})
         admin_note(f"New sign-up: {clean['name']}", [f"Business: {clean['name']}", f"Email: {clean.get('email', '')}",
                                                     f"Phone: {clean.get('phone', '')}", f"Account: {cid}"])
         return {"client_id": cid, "token": token, "event_id": event_id, "name": clean["name"]}
@@ -6787,6 +6818,7 @@ table{{width:100%;border-collapse:collapse;font-size:14px}}td,th{{text-align:lef
             state.meta_conns.save(client_id, token, assets)
         log.info("%s connected Facebook (%d ad accounts, %d pages)", client_id,
                  len(assets["ad_accounts"]), len(assets["pages"]))
+        mail_bg(client_id, "connected", {"platform": "Facebook"})
         admin_note("Facebook connected: " + str(client_id), [f"Account: {client_id}"])
         return meta_back("connected")
 
@@ -6965,6 +6997,7 @@ table{{width:100%;border-collapse:collapse;font-size:14px}}td,th{{text-align:lef
         with state.lock:
             state.store.save_shop(client_id, shop, shopify_app.encrypt(json.dumps(tokens)), tokens["scope"])
         state.start_shopify_import(client_id, register_webhooks=public_url() + "/webhooks/shopify-app")
+        mail_bg(client_id, "connected", {"platform": "Shopify"})
         admin_note("Shopify connected: " + str(client_id), [f"Account: {client_id}"])
         return back("connected")
 

@@ -29,7 +29,8 @@ def test_job_sends_each_email_once(tmp_path, monkeypatch):
     st.billing.upsert("glow-clinic", ads_trial_started=int(time.time() - days * 86400 - 3600))   # ended an hour ago
     st.trial_mail_all()
     st.trial_mail_all()
-    assert sent == [("o@glow.ae", "Glow Clinic: your free ad test has ended")]
+    time.sleep(0.3)
+    assert [x for x in sent if "ad test" in x[1]] == [("o@glow.ae", "Glow Clinic: your free ad test has ended")]
     _, text, html = trial_mail.render("ended", "Glow Clinic", {"pro": "AED 299", "premium": "AED 799"}, "5%", "https://x.net")
     assert "https://x.net/app#/billing" in text and "AED 299" in text and "Add your plan" in html
 

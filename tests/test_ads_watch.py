@@ -21,5 +21,5 @@ def test_balance_learning_off_on_done():
 def test_every_kind_renders():
     for k in client_mail.KINDS:
         subject, text, page = client_mail.render(k, "Glow", client_mail.sample(k), "https://pro.example")
-        assert (subject.startswith("Glow") or k == "receipt") and "ProAds" in text and "<p" in page
+        assert (subject.startswith("Glow") or k in ("receipt", "welcome", "news")) and "ProAds" in text and "<p" in page
     assert "/app#/billing" in client_mail.render("payment_failed", "Glow", client_mail.sample("payment_failed"), "https://x")[1]

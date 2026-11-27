@@ -9,7 +9,7 @@ from __future__ import annotations
 import html
 import time
 
-KINDS = ("orders", "weekly", "live", "paused", "renews", "plan_started", "payment_failed", "plan_ended", "receipt",
+KINDS = ("orders", "weekly", "live", "paused", "renews", "plan_started", "payment_failed", "plan_ended", "receipt", "welcome", "connected", "news",
          "tt_balance", "tt_learning_on", "tt_learning_off", "tt_learning_done")
 
 
@@ -120,6 +120,24 @@ def render(kind: str, name: str, d: dict, app_url: str) -> tuple[str, str, str]:
             body.append(f"Download the PDF invoice: {d['pdf']}")
         button = "View invoice"
         why = "You get this because you paid for ProAds."
+    elif kind == "welcome":
+        subject = f"Welcome to ProAds, {name}"
+        lead = "Welcome to ProAds."
+        body = ["Next steps: connect your store (Shopify), connect your ad account (TikTok or Facebook), then build your first campaign.",
+                "ProAds sends your real paid sales to Meta and TikTok so your ads learn who buys. Reply to this email any time for help."]
+    elif kind == "connected":
+        plat = d.get("platform") or "Your account"
+        subject = f"{name}: {plat} is connected"
+        lead = f"{plat} is connected to ProAds."
+        body = {"Shopify": ["Your paid orders are being imported and new ones arrive by themselves."],
+                "TikTok": ["Your TikTok ad account is connected. Real paid sales can now go to TikTok, and you can build campaigns."],
+                "Facebook": ["Your Facebook ad account is connected. Real paid sales can now go to Meta, and you can build campaigns."]}.get(
+            plat, ["Nothing else to do: ProAds keeps it in sync."])
+    elif kind == "news":
+        subject = f"ProAds News: {d.get('title') or 'new article'}"
+        lead = d.get("title") or "New article on ProAds News"
+        body = [d.get("summary") or "A new article is up on ProAds News."]
+        button = "Read the article"
     elif kind == "plan_started":
         subject = f"{name}: your ProAds {d.get('plan', 'Pro')} plan is active"
         lead = f"Welcome to ProAds {d.get('plan', 'Pro')}."
@@ -163,7 +181,7 @@ def render(kind: str, name: str, d: dict, app_url: str) -> tuple[str, str, str]:
         raise ValueError(kind)
     path = "billing" if kind in ("renews", "plan_started", "payment_failed", "plan_ended") else "home"
     text, page = _page(name, lead, body, app_url, button=button, why=why, path=path,
-                       link=d.get("url", "") if kind == "receipt" else "")
+                       link=d.get("url", "") if kind in ("receipt", "news") else "")
     return subject, text, page
 
 
@@ -180,6 +198,8 @@ def sample(kind: str) -> dict:
         "plan_started": {"plan": "Pro"},
         "payment_failed": {"amount": 299.0, "currency": "AED"},
         "plan_ended": {},
+        "welcome": {}, "connected": {"platform": "Shopify"},
+        "news": {"title": "How to read your TikTok results", "summary": "Three numbers that matter.", "url": "https://pro.ezdevsoft.net/news"},
         "receipt": {"amount": 299.0, "currency": "AED", "number": "PROADS-0001", "what": "ProAds Pro, monthly",
                     "date": "28 Nov 2026", "url": "https://invoice.stripe.com/i/sample", "pdf": ""},
         "tt_balance": {"campaign": "BYNAWI GCC Purchase Conversions"},
