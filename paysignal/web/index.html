@@ -1484,7 +1484,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       } }, "Delete");
     }
     body.replaceChildren(
-      checklist,
+
       h("section", { class: "kpis", "aria-label": "Sign-ups" },
         h("div", { class: "kpi" }, h("span", { class: "label" }, "Accounts"), h("span", { class: "num" }, fmt.format(t.accounts)), h("span", { class: "note" }, fmt.format(t.new_this_week) + " new this week")),
         h("div", { class: "kpi hi" }, h("span", { class: "label" }, "Active (brought in data)"), h("span", { class: "num" }, fmt.format(t.activated)), h("span", { class: "note" }, t.accounts ? pct(t.activated / t.accounts) + " of sign-ups" : "No sign-ups yet")),
