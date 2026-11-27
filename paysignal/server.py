@@ -2784,10 +2784,18 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             return None
         return email, cfg.get("name") or (acct or {}).get("business") or cid
 
+    def admin_inbox() -> Optional[str]:
+        """Where ProAds' own sale emails go: PROADS_NOTIFY_EMAIL, else the sending mailbox (SMTP_USER)."""
+        a = (os.environ.get("PROADS_NOTIFY_EMAIL") or os.environ.get("SMTP_USER") or "").strip()
+        return a if "@" in a else None
+
     def deliver_client_mail(cid: str, kind: str, data: dict) -> bool:
-        if not mailer.available() or is_admin(cid) or not state.known(cid):
+        if not mailer.available() or not state.known(cid):
             return False
-        who = client_address(cid)
+        if is_admin(cid):                  # ProAds' own account: only its new-sale emails, to the ProAds inbox
+            who = (admin_inbox(), "ProAds") if kind == "orders" and admin_inbox() else None
+        else:
+            who = client_address(cid)
         if not who:
             return False
         subject, text, page = client_mail.render(kind, who[1], data, mail_base())
@@ -2831,7 +2839,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         now = time.time()
         for cid in mail_client_ids():
             try:
-                if is_admin(cid) or not state.known(cid):
+                if not state.known(cid):
                     continue
                 fresh = []
                 with state.lock:
@@ -3012,6 +3020,63 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             return True
         return False
 
+    def send_receipt(inv: dict) -> None:
+        """Our own receipt for every paid Stripe invoice, to the email on the invoice (client account or not)."""
+        email = inv.get("customer_email") or ""
+        if "@" not in email or not mailer.available():
+            return
+        with state.lock:
+            cid = state.billing.by_customer(inv.get("customer") or "") or "*receipt"
+            if state.client_mails.sent(cid, "receipt", inv["id"]):
+                return
+        lines = ((inv.get("lines") or {}).get("data") or [])
+        when = datetime.fromtimestamp(int((inv.get("status_transitions") or {}).get("paid_at") or inv.get("created") or time.time()),
+                                      ZoneInfo("Asia/Dubai")).strftime("%d %b %Y")
+        data = {"amount": inv["amount_paid"] / 100, "currency": (inv.get("currency") or "aed").upper(),
+                "number": inv.get("number") or "", "what": (lines[0].get("description") if lines else "") or "ProAds plan",
+                "date": when, "url": inv.get("hosted_invoice_url") or mail_base() + "/app#/billing", "pdf": inv.get("invoice_pdf") or ""}
+        who = (client_address(cid) or (None, ""))[1] if not cid.startswith("*") else ""
+        name = who or inv.get("customer_name") or "ProAds"
+        subject, text, page = client_mail.render("receipt", name, data, mail_base())
+        ok, why = mailer.send_checked(email, subject, text, page)
+        if ok:
+            with state.lock:
+                state.client_mails.mark(cid, "receipt", inv["id"])
+            log.info("receipt %s emailed", inv.get("number") or inv["id"])
+        else:
+            log.warning("receipt %s not sent: %s", inv["id"], why)
+
+    @flask.post("/admin/<admin_id>/resend-receipt")
+    def admin_resend_receipt(admin_id):
+        """Email the receipt for one Stripe invoice again (in_... id), e.g. for a payment made before receipts existed."""
+        require_admin(admin_id)
+        key = str((request.get_json(silent=True) or {}).get("invoice") or "").strip()
+        if not billing.available():
+            abort(400, "Stripe is not set up")
+        st = billing.Stripe(state.stripe_http)
+        if key.startswith("in_"):
+            inv = st.get(f"invoices/{key}")
+        elif "@" in key:
+            cust = (st.get("customers", {"email": key, "limit": 1}).get("data") or [None])[0]
+            inv = cust and (st.get("invoices", {"customer": cust["id"], "status": "paid", "limit": 1}).get("data") or [None])[0]
+            if not inv:
+                abort(404, "No paid invoice for that email in Stripe")
+        else:
+            abort(400, "Enter the client's email or a Stripe invoice id (in_...)")
+        inv_id = inv["id"]
+        if not inv.get("customer_email") and "@" in key:
+            inv["customer_email"] = key
+        with state.lock:
+            cid = state.billing.by_customer(inv.get("customer") or "") or "*receipt"
+            state.store.db.execute("DELETE FROM client_mails WHERE client_id=? AND kind='receipt' AND ref=?", (cid, inv_id))
+            state.store.db.commit()
+        send_receipt(inv)
+        with state.lock:
+            ok = state.client_mails.sent(cid, "receipt", inv_id)
+        if not ok:
+            abort(502, "Receipt not sent: see the email test above for the reason")
+        return {"sent_to": inv.get("customer_email"), "number": inv.get("number")}
+
     def billing_mails(event: dict, cid: Optional[str]) -> None:
         """Subscription emails from Stripe: plan started, payment failed, plan ended."""
         try:
@@ -3024,6 +3089,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                     amt = obj.get("amount_due")
                     mail_once(cid, "payment_failed", obj["id"], {"amount": amt / 100 if isinstance(amt, (int, float)) and amt else None,
                                                                 "currency": (obj.get("currency") or "").upper()})
+            elif etype == "invoice.paid" and obj.get("id") and (obj.get("amount_paid") or 0) > 0:
+                send_receipt(obj)
             elif etype == "checkout.session.completed" and obj.get("mode") == "subscription" and cid:
                 with state.lock:
                     tier = state.billing.tier(cid)
@@ -3033,6 +3100,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         except Exception:
             log.exception("billing email failed")
 
+    state.billing_mails = billing_mails
     tt_watch_seen: dict = {}
 
     def tiktok_watch_all() -> None:

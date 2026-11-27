@@ -9,7 +9,7 @@ from __future__ import annotations
 import html
 import time
 
-KINDS = ("orders", "weekly", "live", "paused", "renews", "plan_started", "payment_failed", "plan_ended",
+KINDS = ("orders", "weekly", "live", "paused", "renews", "plan_started", "payment_failed", "plan_ended", "receipt",
          "tt_balance", "tt_learning_on", "tt_learning_off", "tt_learning_done")
 
 
@@ -42,8 +42,8 @@ def money(amount: float, currency: str) -> str:
     return f"{currency} {amount:,.2f}"
 
 
-def _page(name: str, lead: str, body: list[str], app_url: str, button: str = "Open ProAds", why: str = "", path: str = "home") -> tuple[str, str]:
-    link = app_url.rstrip("/") + "/app#/" + path
+def _page(name: str, lead: str, body: list[str], app_url: str, button: str = "Open ProAds", why: str = "", path: str = "home", link: str = "") -> tuple[str, str]:
+    link = link or app_url.rstrip("/") + "/app#/" + path
     esc = html.escape
     paras = "".join(f'<p style="margin:0 0 12px">{esc(b)}</p>' for b in body)
     page = (f'<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#141414">'
@@ -111,6 +111,15 @@ def render(kind: str, name: str, d: dict, app_url: str) -> tuple[str, str, str]:
             lead = f"Your {d.get('plan', 'ProAds')} plan renews on {d.get('ends', '')}."
             body = ["Your card is charged automatically, plus the ad spend fee for the campaigns ProAds ran.",
                     "To change or cancel, open Plan & billing."]
+    elif kind == "receipt":
+        num = f" {d['number']}" if d.get("number") else ""
+        subject = f"Your ProAds receipt{num}: {money(d.get('amount') or 0, cur)}"
+        lead = f"Thank you, we received your payment of {money(d.get('amount') or 0, cur)}."
+        body = [f"Invoice{num or ''}: {d.get('what') or 'ProAds plan'}, paid on {d.get('date') or 'today'}."]
+        if d.get("pdf"):
+            body.append(f"Download the PDF invoice: {d['pdf']}")
+        button = "View invoice"
+        why = "You get this because you paid for ProAds."
     elif kind == "plan_started":
         subject = f"{name}: your ProAds {d.get('plan', 'Pro')} plan is active"
         lead = f"Welcome to ProAds {d.get('plan', 'Pro')}."
@@ -153,7 +162,8 @@ def render(kind: str, name: str, d: dict, app_url: str) -> tuple[str, str, str]:
     else:
         raise ValueError(kind)
     path = "billing" if kind in ("renews", "plan_started", "payment_failed", "plan_ended") else "home"
-    text, page = _page(name, lead, body, app_url, button=button, why=why, path=path)
+    text, page = _page(name, lead, body, app_url, button=button, why=why, path=path,
+                       link=d.get("url", "") if kind == "receipt" else "")
     return subject, text, page
 
 
@@ -170,6 +180,8 @@ def sample(kind: str) -> dict:
         "plan_started": {"plan": "Pro"},
         "payment_failed": {"amount": 299.0, "currency": "AED"},
         "plan_ended": {},
+        "receipt": {"amount": 299.0, "currency": "AED", "number": "PROADS-0001", "what": "ProAds Pro, monthly",
+                    "date": "28 Nov 2026", "url": "https://invoice.stripe.com/i/sample", "pdf": ""},
         "tt_balance": {"campaign": "BYNAWI GCC Purchase Conversions"},
         "tt_learning_on": {"adgroup": "GCC Broad - Verified Sales"},
         "tt_learning_off": {"adgroup": "GCC Broad - Verified Sales"},

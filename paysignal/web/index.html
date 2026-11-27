@@ -1502,7 +1502,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
           const to = h("input", { type: "email", placeholder: "your email", "aria-label": "Send a test email to", style: "max-width:260px;min-height:36px" });
           const out = h("span", { class: "small", role: "status" });
           const kindSel = h("select", { "aria-label": "Which email", style: "min-height:36px" },
-            [["", "Test email"], ["soon", "Reminder: test ends tomorrow"], ["ended", "Reminder: test ended"], ["followup", "Reminder: follow-up"], ["orders", "New orders"], ["weekly", "Weekly report"], ["live", "Campaign live"], ["paused", "Campaign paused"], ["renews", "Plan renews"], ["plan_started", "Plan active"], ["payment_failed", "Payment failed"], ["plan_ended", "Plan ended"], ["tt_balance", "TikTok low balance"], ["tt_learning_on", "TikTok learning on"], ["tt_learning_off", "TikTok learning off"], ["tt_learning_done", "TikTok learning done"]].map(([v, t]) => h("option", { value: v }, t)));
+            [["", "Test email"], ["soon", "Reminder: test ends tomorrow"], ["ended", "Reminder: test ended"], ["followup", "Reminder: follow-up"], ["orders", "New orders"], ["weekly", "Weekly report"], ["live", "Campaign live"], ["paused", "Campaign paused"], ["renews", "Plan renews"], ["plan_started", "Plan active"], ["payment_failed", "Payment failed"], ["plan_ended", "Plan ended"], ["receipt", "Receipt"], ["tt_balance", "TikTok low balance"], ["tt_learning_on", "TikTok learning on"], ["tt_learning_off", "TikTok learning off"], ["tt_learning_done", "TikTok learning done"]].map(([v, t]) => h("option", { value: v }, t)));
           const b = h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: async () => {
             b.disabled = true; out.textContent = "Sending…";
             try {
@@ -1512,6 +1512,18 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
             } catch (e) { out.textContent = e.message; }
             b.disabled = false; } }, "Send test email");
           return h("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" }, to, kindSel, b, out);
+        })(),
+        (() => {
+          const who = h("input", { type: "text", placeholder: "client email or in_… invoice id", "aria-label": "Send the receipt for", style: "max-width:260px;min-height:36px" });
+          const out = h("span", { class: "small", role: "status" });
+          const b = h("button", { class: "btn btn-ghost", type: "button", style: "min-height:36px;padding:0 12px", onclick: async () => {
+            b.disabled = true; out.textContent = "Sending…";
+            try {
+              const r = await api("/admin/" + cid() + "/resend-receipt", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ invoice: who.value.trim() }) });
+              out.textContent = "Receipt " + (r.number || "") + " sent ✓ to " + r.sent_to;
+            } catch (e) { out.textContent = e.message; }
+            b.disabled = false; } }, "Send receipt");
+          return h("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px" }, who, b, out);
         })(),
         d.accounts.length ? h("div", { class: "scroll" }, h("table", { style: "min-width:1040px" },
           h("thead", {}, h("tr", {}, ["Business", "Signed up", "Status", "Plan", "Connected", "Orders", "Campaigns", "Last sale", ""].map((x) => h("th", { scope: "col" }, x)))),

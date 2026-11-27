@@ -1,0 +1,34 @@
+from datetime import datetime, timezone
+
+from paysignal import mailer
+from paysignal.models import Payment
+from paysignal.server import create_app
+
+
+def test_proads_own_sale_emails_the_proads_inbox(tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setenv("SMTP_HOST", "smtp.x"); monkeypatch.setenv("SMTP_FROM", "ProAds <a@x.net>")
+    monkeypatch.setenv("SMTP_USER", "admin@x.net")
+    monkeypatch.setattr(mailer, "send_checked", lambda to, s, t, html=None: (sent.append((to, s)) or True, ""))
+    app = create_app({"pro": {"api_key": "admin-key-0123456789abc"}}, str(tmp_path / "t.db"), start_worker=False)
+    st = app.extensions["paysignal"]
+    st.client_mails.installed_at()
+    st.ingest("pro", [Payment("pro", "stripe", "ch_1WYUD6AA4", "purchase", 299.0, "AED", datetime.now(timezone.utc), fbclid="fb.1")])
+    st.order_mails_all(); st.order_mails_all()
+    assert len(sent) == 1 and sent[0][0] == "admin@x.net"
+
+
+
+def test_paid_invoice_sends_receipt_once(tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setenv("SMTP_HOST", "smtp.x"); monkeypatch.setenv("SMTP_FROM", "ProAds <a@x.net>")
+    monkeypatch.setattr(mailer, "send_checked", lambda to, s, t, html=None: (sent.append((to, s, t)) or True, ""))
+    app = create_app({"pro": {"api_key": "admin-key-0123456789abc"}}, str(tmp_path / "t.db"), start_worker=False)
+    st = app.extensions["paysignal"]
+    inv = {"id": "in_1", "customer": "cus_x", "customer_email": "c@shop.ae", "amount_paid": 29900, "currency": "aed",
+           "number": "PA-0001", "hosted_invoice_url": "https://invoice.stripe.com/i/1", "created": 1764300000,
+           "lines": {"data": [{"description": "ProAds Pro"}]}}
+    st.billing_mails({"type": "invoice.paid", "data": {"object": inv}}, None)
+    st.billing_mails({"type": "invoice.paid", "data": {"object": inv}}, None)
+    assert len(sent) == 1 and sent[0][0] == "c@shop.ae" and "AED 299" in sent[0][1].replace("299.00", "299")
+    assert "https://invoice.stripe.com/i/1" in sent[0][2]
