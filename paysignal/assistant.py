@@ -351,7 +351,7 @@ def build_campaign(ai: MetaAI, context: dict, daily_budget: float, goal: str = "
                    extra_instructions: str = "", conversion: str = "purchase", product: str = "",
                    landing_url: str = "", budget_currency: str = "", platform: str = "meta",
                    countries: Optional[list] = None, research: bool = True,
-                   search: Optional[Callable[[str], str]] = None, placement: Optional[dict] = None) -> dict:
+                   search: Optional[Callable[[str], str]] = None, placement: Optional[dict] = None, revise: Optional[dict] = None) -> dict:
     conversion = "signup" if conversion == "signup" else "purchase"
     brief = {"daily_budget": daily_budget, "currency": budget_currency or context.get("currency", "AED"),
              "conversion": conversion,
@@ -365,6 +365,12 @@ def build_campaign(ai: MetaAI, context: dict, daily_budget: float, goal: str = "
         c = placement["campaign"]
         brief["placement"] = {"action": "create_adgroup_in_existing_campaign", "campaign": c["name"],
                               "existing_ad_groups": [g.get("name") for g in c.get("ad_groups") or []][:6]}
+    if revise:                                              # change a plan the person has seen: keep everything else as it is
+        brief["revise"] = {"current_plan": revise["plan"], "change_requested": str(revise["change"])[:1500],
+                           "how": "Apply ONLY the change requested. Keep every other ad group, ad, budget, name and setting exactly as in "
+                                  "current_plan, and return the full plan in the same JSON shape. If the change can't be done "
+                                  "within the rules, do the closest allowed version."}
+        research = False
     market, research_problems = (research_markets(ai, countries, product, search) if research else ({}, []))
     if market:
         context = {**context, "market_research": market}

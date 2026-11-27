@@ -181,3 +181,12 @@ def test_plan_over_the_budget_box_is_brought_back_not_blocked(context):
     out = build_campaign(MetaAI(api_key="k", session=s), context, daily_budget=150)
     assert out["problems"] == [] and out["plan"]["daily_budget"] == 150
     assert any("budget box" in n for n in out["notes"])
+
+
+def test_revision_sends_the_current_plan_and_the_change(context):
+    s = Session(lambda m, b: ok(json.dumps(good_plan(250))))
+    out = build_campaign(MetaAI(api_key="k", session=s), context, daily_budget=250, research=False,
+                         revise={"plan": good_plan(250), "change": "make the hooks shorter"})
+    sent = s.calls[-1]["body"]["messages"][-1]["content"]
+    assert "change_requested" in sent and "make the hooks shorter" in sent and "current_plan" in sent
+    assert out["problems"] == []

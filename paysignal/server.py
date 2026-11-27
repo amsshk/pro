@@ -3536,6 +3536,13 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 if res and res.get("cost_per_order"):
                     ctx["cost_per_paid_order_from_proads_campaigns"] = res["cost_per_order"]
                     ctx["budget_needed_for_learning"] = res.get("learning_budget")
+            revise = None
+            if str(body.get("revision") or "").strip() and body.get("revise_draft_id"):
+                with state.lock:
+                    prev = state.drafts.get(client_id, str(body["revise_draft_id"]))
+                if not prev or not isinstance(prev.get("plan"), dict):
+                    abort(404, "That plan isn't available to change any more. Build it again.")
+                revise = {"plan": prev["plan"], "change": str(body["revision"]).strip()}
             placement = None
             if platform == "tiktok" and not own:
                 with state.lock:
@@ -3543,7 +3550,7 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 placement = builder_rules.decide(body.get("countries") or ["AE"], budget, mine, force_new=bool(body.get("new_campaign")))
             out = build_campaign(ai, ctx, budget, body.get("goal", ""), body.get("notes", ""),
                                  conversion=conversion, product=product, landing_url=landing,
-                                 budget_currency=budget_currency, platform=platform, placement=placement)
+                                 budget_currency=budget_currency, platform=platform, placement=placement, revise=revise)
         except PermissionError as e:
             abort(503, str(e))
         except (RuntimeError, CampaignError) as e:

@@ -2486,6 +2486,28 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     loadHistory();
   }
 
+  function reviseBox(r, p) {
+    if (!r.draft_id) return null;
+    const ta = h("textarea", { id: "revise-" + r.draft_id, rows: 2, dir: "auto", placeholder: "Want something changed? e.g. “use 2 ad groups”, “make the hooks shorter”, “target women 25+”" });
+    const out = h("span", { class: "small", role: "status" });
+    const b = h("button", { class: "btn btn-ghost", type: "button" }, "Update the plan");
+    b.addEventListener("click", async () => {
+      if (!ta.value.trim()) { out.textContent = "Type what to change first."; return; }
+      b.disabled = true; out.textContent = "Updating. This can take up to a minute…";
+      try {
+        const n = await api("/campaign/" + cid(), { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ daily_budget: Number(p.daily_budget || 0), platform: r.platform || p.platform || "meta",
+            conversion: p.objective === "OUTCOME_LEADS" ? "signup" : "purchase", revise_draft_id: r.draft_id, revision: ta.value.trim() }) });
+        const box = document.querySelector(".plan");
+        const fresh = renderPlan(n);
+        if (box && box.parentNode) box.replaceWith(fresh); else out.textContent = "Updated.";
+        if (typeof loadHistory === "function") loadHistory();
+      } catch (e) { if (e.message !== "signed out") out.textContent = e.message; b.disabled = false; }
+    });
+    return h("div", { class: "adset", style: "gap:8px" }, h("b", { style: "font-size:14px" }, "Change something before publishing"),
+      ta, h("div", { style: "display:flex;gap:10px;align-items:center;flex-wrap:wrap" }, b, out));
+  }
+
   function renderPlan(r) {
     const p = r.plan || {};
     const sets = Array.isArray(p.ad_sets) ? p.ad_sets : [];
@@ -2510,7 +2532,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
           ? h("span", { style: "color: var(--amber-txt); font-size:13px; font-weight:600" }, "Check before using: " + r.problems.join("; "))
           : h("span", { style: "color: var(--violet-txt); font-size:13px; font-weight:600" }, "Checks passed: within budget, splits add up")),
       (r.notes || []).map((n) => h("span", { style: "color: var(--amber-txt); font-size:13px" }, n)),
-      organicSection(p.organic_plan, r.landing_url),
+      organicSection(p.organic_plan, r.landing_url), reviseBox(r, p),
       r.problems && r.problems.length ? null : ((p.platform === "tiktok" || r.platform === "tiktok") ? tiktokPublishSection(r, sets) : publishSection(r, sets)));
   }
 
