@@ -2956,23 +2956,25 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         "How to know when to scale a campaign and when to wait",
     )
 
-    def news_auto() -> None:
+    def news_auto(test: bool = False):
         """ProAds News on Tuesday and Friday after 10:00 Dubai time: the AI writes one article and publishes it
         (PROADS_NEWS_AUTO=draft saves it unpublished for a check instead, =off stops it)."""
-        mode = os.environ.get("PROADS_NEWS_AUTO", "on").strip().lower()
+        mode = "draft" if test else os.environ.get("PROADS_NEWS_AUTO", "on").strip().lower()
         if mode in ("off", "0", "no"):
             return
         now = datetime.now(ZoneInfo("Asia/Dubai"))
-        if now.weekday() not in (1, 4) or now.hour < 10:
+        if not test and (now.weekday() not in (1, 4) or now.hour < 10):
             return
         ref = now.strftime("%Y-%m-%d")
         with state.lock:
-            if state.client_mails.sent("*", "news_auto", ref):
+            if not test and state.client_mails.sent("*", "news_auto", ref):
                 return
             titles = [p["title"] for p in state.news.list(published_only=False, limit=40)]
             n = len(titles)
         ai = state.ai or MetaAI()
         if not ai.available:
+            if test:
+                raise RuntimeError("No AI is set up on the server.")
             return
         topic = NEWS_TOPICS[n % len(NEWS_TOPICS)]
         try:
@@ -2987,11 +2989,15 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             t = reply.text
             j = json.loads(t[t.find("{"):t.rfind("}") + 1])
             with state.lock:
-                state.news.save(str(j["title"])[:110], str(j.get("summary", ""))[:200], str(j["body"]), "ProAds team", mode != "draft")
-                state.client_mails.mark("*", "news_auto", ref)
+                post = state.news.save(str(j["title"])[:110], str(j.get("summary", ""))[:200], str(j["body"]), "ProAds team", mode != "draft")
+                if not test:
+                    state.client_mails.mark("*", "news_auto", ref)
             log.info("ProAds News: wrote '%s' (%s)", str(j["title"])[:60], "draft" if mode == "draft" else "published")
+            return post
         except Exception as e:
             log.warning("ProAds News auto-write failed: %s", e)
+            if test:
+                raise
     state.news_auto = news_auto
 
     def mail_once(cid: str, kind: str, ref: str, data: dict) -> bool:
@@ -4559,6 +4565,15 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         with state.lock:
             state.news.delete(pid)
         return {"deleted": True}
+
+    @flask.post("/admin/<admin_id>/news/auto-test")
+    def admin_news_auto_test(admin_id):
+        """Runs the automatic Tuesday/Friday writer right now; the article is saved as a draft to look at."""
+        require_admin(admin_id)
+        try:
+            return {"post": state.news_auto(test=True)}
+        except Exception as e:
+            abort(502, f"The automatic article failed: {str(e)[:200]}")
 
     @flask.post("/admin/<admin_id>/news/draft")
     def admin_news_draft(admin_id):

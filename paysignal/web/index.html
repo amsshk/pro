@@ -1413,7 +1413,13 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         draftBtn.disabled = false;
       } }, topic, draftBtn),
       draftOut,
-      h("button", { class: "btn btn-ghost", type: "button", style: "align-self:flex-start", onclick: () => edit(null) }, "Write one myself"),
+      h("div", { style: "display:flex;gap:8px;flex-wrap:wrap" },
+        h("button", { class: "btn btn-ghost", type: "button", onclick: () => edit(null) }, "Write one myself"),
+        h("button", { class: "btn btn-ghost", type: "button", onclick: async (e) => {
+          const b = e.currentTarget; b.disabled = true; draftOut.replaceChildren(h("p", { class: "sub", style: "margin:0" }, "Running the automatic writer… up to a minute."));
+          try { const r = await api(base + "/auto-test", { method: "POST" }); draftOut.replaceChildren(); await load(); edit(r.post); }
+          catch (er) { if (er.message !== "signed out") draftOut.replaceChildren(errorCard(er.message)); }
+          b.disabled = false; } }, "Test the automatic article")),
       editor, listBox);
     load();
     return card;
