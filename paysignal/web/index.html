@@ -4505,7 +4505,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
         h("span", { class: "sr" }, x.done ? "done" : "to do")))));
     if (d.mode !== "proads" && !d.has_data) {
       const [adsEmpty, leadsEmpty] = await Promise.all([adsSection(homePeriod), leadsCard()]);
-      body.replaceChildren(...[adsBanner(d.ads_access), alertsBox, hero, howItWorksCard(), guide, adsEmpty, leadsEmpty].filter(Boolean), h("section", { class: "card empty" }, h("h2", {}, "Your sales will show here"),
+      body.replaceChildren(...[adsBanner(d.ads_access), hero, adsEmpty].filter(Boolean), h("section", { class: "card empty" }, h("h2", {}, "Your sales will show here"),
         h("p", { class: "sub" }, "Bring in your sales and this page fills with sales, real profit and orders, day by day."),
         h("a", { class: "btn btn-primary", href: "#/upload" }, "Bring in your sales")));
       return;
@@ -4572,23 +4572,19 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       draw();
       return;
     }
-    const [adsBox, fcBox, lk, leadsBox] = await Promise.all([adsSection(homePeriod), forecastSection(), api("/leaks/" + cid()).catch(() => null), leadsCard()]);
+    const adsBox = await adsSection(homePeriod), fcBox = null, lk = null, leadsBox = null;
     const impactBox = null;                                   // shown on Tracking, not repeated here
     const leakNote = lk && lk.leaks && lk.leaks.length ? h("a", { href: "#/audit", class: "result err", style: "text-decoration:none;color:inherit" },
       h("span", {}, h("b", {}, "Money leaks: "), (lk.measured_per_month ? "about " + fmt.format(Math.round(lk.measured_per_month)) + " " + lk.currency + " a month measured" : "")
         + (lk.at_stake_per_month ? (lk.measured_per_month ? ", " : "") + "up to " + fmt.format(Math.round(lk.at_stake_per_month)) + " " + lk.currency + " more at stake" : "")
         + ". Biggest: " + lk.leaks[0].title + "."), h("span", { class: "ok" }, "See all →")) : null;
     body.replaceChildren(
-      ...[adsBanner(d.ads_access), alertsBox, leakNote, hero, d.mode !== "proads" ? howItWorksCard() : null, whatsNewCard()].filter(Boolean),
-      h("h2", { style: "font-size:20px;margin:8px 0 -8px" }, "Sales"), strip, profitNote(d), ...[impactBox].filter(Boolean), adsBox,
+      ...[adsBanner(d.ads_access), hero].filter(Boolean),
+      h("h2", { style: "font-size:20px;margin:8px 0 -8px" }, "Sales"), strip, adsBox,
       h("section", { class: "card", "aria-label": "Chart" },
         h("div", { class: "between" }, h("h2", {}, label + " over time"),
           h("div", { style: "display:flex;gap:14px" }, h("span", { class: "key" }, h("i"), "This period"), h("span", { class: "key" }, h("i", { class: "prev" }), "Previous period"))),
-        chartHost, extra),
-      ...[fcBox].filter(Boolean),
-      h("div", { class: "row", style: "align-items:flex-start" },
-        h("div", { style: "flex:3 1 420px;display:flex;flex-direction:column;gap:24px;min-width:0" }, ...[sources, leadsBox, methodsCard, products].filter(Boolean)),
-        h("div", { style: "flex:2 1 300px;display:flex;flex-direction:column;gap:24px;min-width:0" }, guide, camps)));
+        chartHost, extra));
     draw();
     let lastW = chartHost.clientWidth, timer = null;
     const onResize = () => {
@@ -4665,7 +4661,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       h("p", { style: "margin:0;font-size:16px;font-weight:600" }, verdict),
       !r.campaigns ? h("a", { class: "btn btn-primary", href: "#/assistant", style: "align-self:flex-start" }, "Build a campaign") : null,
       bg.length ? h("div", { class: "bgwork" }, h("b", { style: "font-size:14px" }, "Data sent to ad platforms"),
-        h("div", { class: "bggrid" }, bg.map(([t, v, why]) => h("div", {}, h("span", { style: "font-weight:600" }, t), h("b", { style: "font-size:18px" }, v), h("span", { class: "sub", style: "font-size:12px" }, why)))), ...learn) : null,
+        h("div", { class: "bggrid" }, bg.map(([t, v, why]) => h("div", {}, h("span", { style: "font-weight:600" }, t), h("b", { style: "font-size:18px" }, v), h("span", { class: "sub", style: "font-size:12px" }, why))))) : null,
       h("span", { class: "sub", style: "font-size:12px" }, "Paid orders from tracked ad clicks only, refunds deducted."));
   }
   async function viewHome() { return viewDetails(null, true); }
