@@ -28,7 +28,19 @@ def test_paid_invoice_sends_receipt_once(tmp_path, monkeypatch):
     inv = {"id": "in_1", "customer": "cus_x", "customer_email": "c@shop.ae", "amount_paid": 29900, "currency": "aed",
            "number": "PA-0001", "hosted_invoice_url": "https://invoice.stripe.com/i/1", "created": 1764300000,
            "lines": {"data": [{"description": "ProAds Pro"}]}}
+    monkeypatch.delenv("SMTP_USER", raising=False)
     st.billing_mails({"type": "invoice.paid", "data": {"object": inv}}, None)
     st.billing_mails({"type": "invoice.paid", "data": {"object": inv}}, None)
-    assert len(sent) == 1 and sent[0][0] == "c@shop.ae" and "AED 299" in sent[0][1].replace("299.00", "299")
+    assert [x[0] for x in sent] == ["c@shop.ae"] and sent[0][0] == "c@shop.ae" and "AED 299" in sent[0][1].replace("299.00", "299")
     assert "https://invoice.stripe.com/i/1" in sent[0][2]
+
+
+def test_receipt_copy_goes_to_admin(tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setenv("SMTP_HOST", "smtp.x"); monkeypatch.setenv("SMTP_FROM", "ProAds <a@x.net>")
+    monkeypatch.setenv("SMTP_USER", "admin@x.net")
+    monkeypatch.setattr(mailer, "send_checked", lambda to, s, t, html=None: (sent.append(to) or True, ""))
+    app = create_app({"pro": {"api_key": "admin-key-0123456789abc"}}, str(tmp_path / "t.db"), start_worker=False)
+    inv = {"id": "in_2", "customer": "cus_y", "customer_email": "c@shop.ae", "amount_paid": 29900, "currency": "aed"}
+    app.extensions["paysignal"].billing_mails({"type": "invoice.paid", "data": {"object": inv}}, None)
+    assert sent == ["c@shop.ae", "admin@x.net"]

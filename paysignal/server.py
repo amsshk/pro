@@ -3039,6 +3039,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         name = who or inv.get("customer_name") or "ProAds"
         subject, text, page = client_mail.render("receipt", name, data, mail_base())
         ok, why = mailer.send_checked(email, subject, text, page)
+        copy = admin_inbox()
+        if ok and copy and copy.lower() != email.lower():      # a copy for ProAds
+            mailer.send_checked(copy, f"[Copy] {subject} · {email}", text, page)
         if ok:
             with state.lock:
                 state.client_mails.mark(cid, "receipt", inv["id"])
