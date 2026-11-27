@@ -402,8 +402,13 @@ def identity(http, token: str, advertiser_id: str, display_name: str) -> str:
     return str(d["identity_id"])
 
 
+def set_adgroup_status(http, token: str, advertiser_id: str, adgroup_ids: list, enable: bool) -> None:
+    _post(http, token, "adgroup/status/update", {"advertiser_id": advertiser_id, "adgroup_ids": adgroup_ids,
+                                                 "operation_status": "ENABLE" if enable else "DISABLE"}, "changing the ad groups")
+
+
 def publish(http, token: str, advertiser_id: str, plan: dict, videos: dict, landing_url: str, pixel_id: str,
-            event: str, display_name: str) -> dict:
+            event: str, display_name: str, existing_campaign_id: str = "") -> dict:
     """Campaign (OFF) -> one ad group per plan ad set -> one video ad per plan ad. On any failure, the half-made
     campaign is deleted so nothing is left behind. videos: "<set>-<ad>" -> {"data": bytes} or {"url": str}."""
     from datetime import datetime, timezone
@@ -414,10 +419,13 @@ def publish(http, token: str, advertiser_id: str, plan: dict, videos: dict, land
     total = float(plan.get("daily_budget") or 0)
     created = {"campaign_id": None, "adgroups": [], "ads": []}
     try:
-        d = _post(http, token, "campaign/create", {"advertiser_id": advertiser_id, "campaign_name": str(plan.get("name") or "ProAds")[:500],
-                                                   "objective_type": "WEB_CONVERSIONS", "budget_mode": "BUDGET_MODE_INFINITE",
-                                                   "operation_status": "DISABLE"}, "creating the campaign")
-        created["campaign_id"] = str(d.get("campaign_id"))
+        if existing_campaign_id:       # consolidation: new ad groups go inside a campaign that already exists
+            created["campaign_id"] = str(existing_campaign_id)
+        else:
+            d = _post(http, token, "campaign/create", {"advertiser_id": advertiser_id, "campaign_name": str(plan.get("name") or "ProAds")[:500],
+                                                       "objective_type": "WEB_CONVERSIONS", "budget_mode": "BUDGET_MODE_INFINITE",
+                                                       "operation_status": "DISABLE"}, "creating the campaign")
+            created["campaign_id"] = str(d.get("campaign_id"))
         ident = identity(http, token, advertiser_id, display_name)
         age_min = int((plan.get("targeting") or {}).get("age_min") or 18)
         ages = [a for a in AGE_GROUPS if int(a.split("_")[1]) >= age_min or a == "AGE_55_100"] if age_min > 18 else None
@@ -432,7 +440,8 @@ def publish(http, token: str, advertiser_id: str, plan: dict, videos: dict, land
                     "bid_type": "BID_TYPE_NO_BID", "budget_mode": "BUDGET_MODE_DAY", "budget": round(total * share, 2),
                     "schedule_type": "SCHEDULE_FROM_NOW",
                     "schedule_start_time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-                    "pacing": "PACING_MODE_SMOOTH", "operation_status": "ENABLE",
+                    "pacing": "PACING_MODE_SMOOTH",
+                    "operation_status": "DISABLE" if existing_campaign_id else "ENABLE",   # never spends until "Go live"
                     "skip_learning_phase": False}       # always learn: skipping it leaves TikTok with no buyer signal
             if ages:
                 body["age_groups"] = ages
@@ -464,15 +473,22 @@ def publish(http, token: str, advertiser_id: str, plan: dict, videos: dict, land
                       f"creating the ads in ad group {i + 1}")
             created["ads"] += [str(x) for x in a.get("ad_ids") or []]
     except Exception:
-        if created["campaign_id"]:
-            try:                                          # leave nothing half-made in the account
+        try:                                              # leave nothing half-made in the account
+            if existing_campaign_id:
+                if created["adgroups"]:
+                    _post(http, token, "adgroup/status/update", {"advertiser_id": advertiser_id,
+                                                                 "adgroup_ids": [g["id"] for g in created["adgroups"]],
+                                                                 "operation_status": "DELETE"}, "cleaning up")
+            elif created["campaign_id"]:
                 _post(http, token, "campaign/status/update", {"advertiser_id": advertiser_id, "campaign_ids": [created["campaign_id"]],
                                                               "operation_status": "DELETE"}, "cleaning up")
-            except Exception:
-                pass
+        except Exception:
+            pass
         raise
     return {"platform": "tiktok", "campaign_id": created["campaign_id"], "advertiser_id": advertiser_id, "status": "PAUSED",
             "name": plan.get("name"), "daily_budget": total, "ad_groups": created["adgroups"], "ads": created["ads"],
+            "countries": countries, "added_to_existing": bool(existing_campaign_id),
+            "adgroup_ids": [g["id"] for g in created["adgroups"]] if existing_campaign_id else [],
             "event": event, "manager_url": f"https://ads.tiktok.com/i18n/perf/campaign?aadvid={advertiser_id}"}
 
 
@@ -493,6 +509,22 @@ class TikTokLaunchStore:
     def get(self, client_id: str, campaign_id: str) -> Optional[dict]:
         r = self.db.execute("SELECT data, status FROM tiktok_launches WHERE client_id=? AND campaign_id=?", (client_id, campaign_id)).fetchone()
         return {**json.loads(r[0]), "status": r[1]} if r else None
+
+    def list(self, client_id: str) -> list[dict]:
+        rows = self.db.execute("SELECT data, status, created_at FROM tiktok_launches WHERE client_id=? ORDER BY created_at DESC", (client_id,))
+        return [{**json.loads(d), "status": st, "created_at": at} for d, st, at in rows]
+
+    def extend(self, client_id: str, campaign_id: str, added: dict) -> None:
+        """A new ad group was added inside an existing campaign: keep its record (name, budget) up to date."""
+        cur = self.get(client_id, campaign_id)
+        if not cur:
+            return
+        cur["ad_groups"] = (cur.get("ad_groups") or []) + (added.get("ad_groups") or [])
+        cur["ads"] = (cur.get("ads") or []) + (added.get("ads") or [])
+        cur["daily_budget"] = float(cur.get("daily_budget") or 0) + float(added.get("daily_budget") or 0)
+        self.db.execute("UPDATE tiktok_launches SET data=? WHERE client_id=? AND campaign_id=?",
+                        (json.dumps({k: v for k, v in cur.items() if k not in ("status", "created_at")}), client_id, campaign_id))
+        self.db.commit()
 
     def set_status(self, client_id: str, campaign_id: str, status: str) -> None:
         self.db.execute("UPDATE tiktok_launches SET status=? WHERE client_id=? AND campaign_id=?", (status, client_id, campaign_id))

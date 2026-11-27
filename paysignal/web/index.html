@@ -2928,7 +2928,13 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       }).catch(() => {});
     autoFill(true);
     const box = h("div", { style: "display:flex;flex-direction:column;gap:10px" });
-    const btn = h("button", { class: "btn btn-primary", type: "button" }, "Create in TikTok (switched off)");
+    const joinExisting = !!(r.placement && r.placement.action === "create_adgroup_in_existing_campaign" && r.placement.campaign_id);
+    const separate = h("input", { type: "checkbox", id: "tt-sep" });
+    const placeNote = r.placement ? h("div", { class: "result", style: "flex-direction:column;align-items:stretch;gap:6px" },
+      h("span", { style: "font-size:14px" }, h("b", {}, joinExisting ? "Goes into your existing campaign" : "New campaign"), ": ", r.placement.reason),
+      joinExisting ? h("label", { class: "small", for: "tt-sep", style: "display:flex;gap:8px;align-items:center" }, separate, "Make a separate campaign instead") : null) : null;
+    const btn = h("button", { class: "btn btn-primary", type: "button" }, joinExisting ? "Add to the campaign (switched off)" : "Create in TikTok (switched off)");
+    if (joinExisting) separate.addEventListener("change", () => { btn.textContent = separate.checked ? "Create in TikTok (switched off)" : "Add to the campaign (switched off)"; });
     btn.addEventListener("click", async () => {
       const missing = cards.length - Object.keys(media).length;
       if (missing > 0) { box.replaceChildren(errorCard("Choose a video for every ad (" + missing + " missing): click \u201cChoose video\u201d under each ad (then \u201cFrom my TikTok ad account\u201d), or \u201cUpload videos\u201d.")); return; }
@@ -2937,7 +2943,8 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       btn.disabled = true; box.replaceChildren(loading("Uploading the videos and creating the campaign in TikTok. This can take a few minutes…"));
       try {
         const launch = await api("/campaign/" + cid() + "/publish-tiktok", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ plan: r.plan, media, landing_url: landing.value.trim(), pixel_id: pixelValue(), event: eventSel.value, draft_id: r.draft_id }) });
+          body: JSON.stringify({ plan: r.plan, media, landing_url: landing.value.trim(), pixel_id: pixelValue(), event: eventSel.value, draft_id: r.draft_id,
+            existing_campaign_id: joinExisting && !separate.checked ? r.placement.campaign_id : "" }) });
         if (typeof loadHistory === "function") loadHistory();
         btn.remove(); box.replaceChildren(tiktokLaunchCard(launch));
       } catch (e) {
@@ -2952,7 +2959,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
       h("label", { class: "f", for: "tt-url" }, "Page the ads open (ProAds adds its TikTok tracking tags)", landing),
       h("div", { class: "grid2" }, h("label", { class: "f" }, "Pixel", pixelSel, pixelIn, pixelErr), h("label", { class: "f" }, "Optimise for", eventSel)), pixelNote,
       h("p", { class: "sub", style: "margin:0;font-size:13px" }, "Every TikTok ad is a vertical video (9:16, 9–30 seconds works best). Choose one per ad; the line under each says what the AI suggests filming."),
-      upBar, h("div", { style: "display:flex;gap:14px;flex-wrap:wrap" }, cards), btn, box);
+      placeNote, upBar, h("div", { style: "display:flex;gap:14px;flex-wrap:wrap" }, cards), btn, box);
   }
 
   function tiktokLaunchCard(launch) {
@@ -2962,7 +2969,7 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     async function setTo(action) {
       try {
         const r = await api("/campaign/" + cid() + "/tiktok-launch/" + encodeURIComponent(launch.campaign_id), { method: "POST",
-          headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, confirm: action === "live" }) });
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, confirm: action === "live", adgroup_ids: launch.adgroup_ids || [] }) });
         card.replaceWith(tiktokLaunchCard(r));
       } catch (e) { if (e.message !== "signed out") toast(e.message); }
     }
@@ -2975,7 +2982,8 @@ const campState = (st) => CAMP_STATE[st] || "Paused";
     const pause = h("button", { class: "btn btn-ghost", type: "button", onclick: (e) => { e.target.disabled = true; setTo("pause"); } }, "Pause");
     box.append(...(live ? [pause, open] : [goLive, open]));
     const card = h("div", { class: "result", style: "flex-direction:column;align-items:stretch;gap:12px" },
-      h("span", { class: "ok" }, live ? "Live on TikTok: spending up to " + money : "Created in TikTok, switched off. Nothing is spending yet."),
+      h("span", { class: "ok" }, live ? "Live on TikTok: spending up to " + money
+        : launch.added_to_existing ? "New ad group added to your campaign, switched off. Nothing new is spending yet." : "Created in TikTok, switched off. Nothing is spending yet."),
       h("span", { class: "sub", style: "font-size:13px" }, (launch.ads || []).length + " ads · campaign " + launch.campaign_id + (live ? " · give it 5–7 days before judging" : " · check it in TikTok Ads Manager, then go live")),
       box);
     return card;

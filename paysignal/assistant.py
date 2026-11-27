@@ -107,6 +107,11 @@ SYSTEM_TIKTOK = (
     "when the notes say nothing: ONE ad group for new buyers (all the budget, broad targeting; a second ad group only for "
     "retargeting, with a bigger budget, and its name must start with 'RT') and 3-5 clearly different ads, plus the "
     "business's best organic posts as Spark Ads when they exist (source_post_id).\n"
+    "- CONSOLIDATE: default to the structure the business already has, not new campaigns. If the brief has a 'placement' with "
+    "action create_adgroup_in_existing_campaign, build ONLY the new ad group (one, unless the notes ask for more) and its ads for that campaign: "
+    "use the campaign's name as 'name', give the ad group a name different from the ones it already has, and use only the "
+    "budget in the brief for it. A new audience, bid or budget test is a new ad group; only a different creative angle is "
+    "new ads. Never split a small budget across more ad groups or campaigns, and budget changes stay within 30% each time, never frequent, and campaigns use ad-group budgets (not CBO), so each ad group keeps its own budget.\n"
     "- Write about what THIS business actually sells (its real product names and category) from the product description "
     "and data. Never describe it as something else. Never invent prices, results, reviews, discounts or numbers.\n"
     "- Ads are short vertical videos. Per ad: hook = ad name, what is said or shown in the first 2 seconds (max 40 "
@@ -346,7 +351,7 @@ def build_campaign(ai: MetaAI, context: dict, daily_budget: float, goal: str = "
                    extra_instructions: str = "", conversion: str = "purchase", product: str = "",
                    landing_url: str = "", budget_currency: str = "", platform: str = "meta",
                    countries: Optional[list] = None, research: bool = True,
-                   search: Optional[Callable[[str], str]] = None) -> dict:
+                   search: Optional[Callable[[str], str]] = None, placement: Optional[dict] = None) -> dict:
     conversion = "signup" if conversion == "signup" else "purchase"
     brief = {"daily_budget": daily_budget, "currency": budget_currency or context.get("currency", "AED"),
              "conversion": conversion,
@@ -356,6 +361,10 @@ def build_campaign(ai: MetaAI, context: dict, daily_budget: float, goal: str = "
     tiktok = platform == "tiktok"
     countries = [c.upper() for c in (countries or []) if isinstance(c, str) and len(c) == 2] or ["AE"]
     brief["countries"] = countries
+    if placement and placement.get("action") == "create_adgroup_in_existing_campaign" and tiktok:
+        c = placement["campaign"]
+        brief["placement"] = {"action": "create_adgroup_in_existing_campaign", "campaign": c["name"],
+                              "existing_ad_groups": [g.get("name") for g in c.get("ad_groups") or []][:6]}
     market, research_problems = (research_markets(ai, countries, product, search) if research else ({}, []))
     if market:
         context = {**context, "market_research": market}

@@ -47,7 +47,7 @@ from .connectors import parse_csv, parse_shopify_webhook, parse_stripe_event
 from .connectors.shopify import verify_hmac
 from .connectors.stripe import verify_signature
 from .engine import Engine
-from . import ads_watch, affiliates, audience_sync, checklink, proads_results, trial_mail, client_mail, audiences, digest, followups, impact, leads, results, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
+from . import ads_watch, affiliates, builder_rules, audience_sync, checklink, proads_results, trial_mail, client_mail, audiences, digest, followups, impact, leads, results, export, growth, mailer, news, shopify_app, tiktok, tiktok_api, whatsapp, windsor
 from .identity import hash_phone, normalize_phone
 from .accounts import AccountStore, Limiter, check_password, hash_password, validate_signup
 from .ai import MetaAI
@@ -3536,14 +3536,23 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 if res and res.get("cost_per_order"):
                     ctx["cost_per_paid_order_from_proads_campaigns"] = res["cost_per_order"]
                     ctx["budget_needed_for_learning"] = res.get("learning_budget")
+            placement = None
+            if platform == "tiktok" and not own:
+                with state.lock:
+                    mine = state.tiktok_launches.list(client_id)
+                placement = builder_rules.decide(body.get("countries") or ["AE"], budget, mine, force_new=bool(body.get("new_campaign")))
             out = build_campaign(ai, ctx, budget, body.get("goal", ""), body.get("notes", ""),
                                  conversion=conversion, product=product, landing_url=landing,
-                                 budget_currency=budget_currency, platform=platform)
+                                 budget_currency=budget_currency, platform=platform, placement=placement)
         except PermissionError as e:
             abort(503, str(e))
         except (RuntimeError, CampaignError) as e:
             abort(502, str(e))
         out["platform"] = platform
+        if placement:
+            c = placement["campaign"]
+            out["placement"] = {"action": placement["action"], "reason": placement["reason"], "cap": placement["cap"],
+                                "campaign_id": c["campaign_id"] if c else None, "campaign_name": c["name"] if c else None}
         out["can_publish"] = bool(tiktok_ads_ready(client_id)) if platform == "tiktok" else state.ads_settings(client_id, own) is not None
         with state.lock:
             out["draft_id"] = state.drafts.add(client_id, {k: v for k, v in out.items() if k != "can_publish"})
@@ -3602,15 +3611,28 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 videos[k] = {"data": v["video_bytes"]}
             elif isinstance(v, dict) and v.get("video_url"):
                 videos[k] = {"url": v["video_url"]}
+        existing_id = str(body.get("existing_campaign_id") or "")
+        if existing_id:
+            with state.lock:
+                base = state.tiktok_launches.get(client_id, existing_id)
+            if not base or base.get("status") not in builder_rules.LIVE:
+                abort(400, "That campaign isn't available any more. Create a separate campaign instead.")
         try:
             launch = tiktok_api.publish(tt_http(), tt_token(client_id, row), row["advertiser_id"], plan, videos, landing, pixel_id,
                                         str(body.get("event") or plan.get("optimization") or "purchase"),
-                                        state.config(client_id).get("name", ""))
+                                        state.config(client_id).get("name", ""), existing_campaign_id=existing_id)
         except tiktok_api.TikTokAPIError as e:
             abort(502, str(e))
         launch["currency"] = row["currency"] or ads_currency(client_id)
         with state.lock:
-            state.tiktok_launches.add(client_id, launch)
+            if existing_id:                               # a new ad group in a campaign that exists: keep that campaign's record
+                state.tiktok_launches.extend(client_id, existing_id, launch)
+                launch = {**base, **{k: launch[k] for k in ("ad_groups", "ads", "adgroup_ids", "added_to_existing")},
+                          "status": "PAUSED",           # the new ad groups wait for Go live
+                          
+                          "added_budget": launch["daily_budget"], "daily_budget": launch["daily_budget"]}
+            else:
+                state.tiktok_launches.add(client_id, launch)
             if body.get("draft_id"):
                 state.drafts.link(client_id, str(body["draft_id"]), launch["campaign_id"])
         log.info("%s created TikTok campaign %s (off)", client_id, launch["campaign_id"])
@@ -3633,18 +3655,25 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             abort(404, "unknown TikTok campaign")
         if action == "live" and not is_admin(client_id):
             gate_ads(client_id)
+        mine = {str(g.get("id")) for g in launch.get("ad_groups") or []}          # only this campaign's own ad groups
+        adgroup_ids = [str(x) for x in (body.get("adgroup_ids") or []) if str(x) in mine][:20]
         try:
-            tiktok_api.set_campaign_status(tt_http(), tt_token(client_id, row), row["advertiser_id"], campaign_id, action == "live")
+            if adgroup_ids:                               # new ad groups added inside an existing campaign
+                tiktok_api.set_adgroup_status(tt_http(), tt_token(client_id, row), row["advertiser_id"], adgroup_ids, action == "live")
+            if action == "live" or not adgroup_ids:
+                tiktok_api.set_campaign_status(tt_http(), tt_token(client_id, row), row["advertiser_id"], campaign_id, action == "live")
         except tiktok_api.TikTokAPIError as e:
             abort(502, str(e))
         status = "ACTIVE" if action == "live" else "PAUSED"
+        if adgroup_ids and action == "pause":
+            return {**launch, "status": "PAUSED", "adgroup_ids": adgroup_ids}
         with state.lock:
             state.tiktok_launches.set_status(client_id, campaign_id, status)
             if status == "ACTIVE" and not is_admin(client_id):
                 state.billing.start_ads_trial(client_id)
         log.info("%s set TikTok campaign %s to %s", client_id, campaign_id, status)
         notify_campaign(client_id, launch.get("name") or campaign_id, "TikTok", status)
-        return {**launch, "status": status}
+        return {**launch, "status": status, "adgroup_ids": []}
 
     @flask.get("/campaign/<client_id>/history")
     def campaign_history(client_id):
