@@ -2486,9 +2486,15 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         """Home: only what ProAds did for this business since it signed up (campaigns, spend, paid orders from
         ProAds-tracked ads, real sales delivered to Meta and TikTok, buyers known)."""
         state.require_key(client_id)
+        fresh = bool(request.args.get("fresh"))
+        try:
+            sync_tiktok_status(client_id, force=fresh)           # what TikTok really shows (at most every 2 min); drops the cache if it changed
+        except Exception:
+            log.exception("TikTok status check failed for %s", client_id)
         hit = state.ads_cache.get(("results", client_id))
-        if hit and time.time() - hit[0] < 1800 and not request.args.get("fresh"):
+        if hit and time.time() - hit[0] < 1800 and not fresh:
             return hit[1]
+        sync_launch_status(client_id, force=fresh)
         acct = state.accounts.get(client_id) or {}
         since = proads_results.parse_created(acct.get("created_at"))
         today = datetime.now(timezone.utc).date()
@@ -4559,9 +4565,43 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         return changed
     state.sync_launch_status = sync_launch_status
 
+    tt_checked: dict = {}
+
+    def sync_tiktok_status(client_id: str, force: bool = False) -> dict:
+        """The same for TikTok: a campaign paused or deleted in TikTok Ads Manager stops being called active here.
+        Checked at most every 2 minutes per client."""
+        if not force and time.time() - tt_checked.get(client_id, 0) < 120:
+            return {}
+        tt_checked[client_id] = time.time()
+        with state.lock:
+            rows = state.store.db.execute("SELECT campaign_id, status FROM tiktok_launches WHERE client_id=? AND status<>'REMOVED'",
+                                          (client_id,)).fetchall()
+            link = state.tiktok_ads.get(client_id)
+        if not rows or not link or not link["advertiser_id"]:
+            return {}
+        try:
+            real = tiktok_api.campaign_states(tt_http(), tt_token(client_id, link), link["advertiser_id"], [r[0] for r in rows])
+        except Exception as e:                           # TikTok unreachable: keep the last known state
+            log.warning("TikTok campaign status check for %s failed: %s", client_id, e)
+            return {}
+        changed = {}
+        with state.lock:
+            for cid_, old in rows:
+                now = real.get(cid_)
+                if not now or now == old or (old == "PAUSED_BILLING" and now == "PAUSED"):
+                    continue
+                state.tiktok_launches.set_status(client_id, cid_, now)
+                changed[cid_] = now
+        if changed:
+            log.info("TikTok campaign status for %s updated: %s", client_id, changed)
+            state.ads_cache.pop(("results", client_id), None)
+        return changed
+    state.sync_tiktok_status = sync_tiktok_status
+
     def sync_all_launch_status() -> None:
         for cid in state.launches.clients():
             try:
+                sync_tiktok_status(cid, force=True)
                 sync_launch_status(cid, force=True)
             except Exception:
                 log.exception("campaign status check failed for %s", cid)

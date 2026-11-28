@@ -677,3 +677,27 @@ def campaigns(http, token: str, advertiser_id: str) -> list[dict]:
             break
         page += 1
     return out
+
+
+def campaign_states(http, token: str, advertiser_id: str, ids: list[str]) -> dict:
+    """What TikTok really shows for these campaigns: {campaign_id: "ACTIVE" | "PAUSED" | "REMOVED"}.
+    A campaign TikTok doesn't return at all (deleted) is REMOVED, but only when TikTok did answer for others."""
+    out, seen = {}, False
+    for i in range(0, len(ids), 50):
+        chunk = [str(x) for x in ids[i:i + 50]]
+        d = _get(http, token, "campaign/get", {"advertiser_id": advertiser_id, "page_size": 100,
+                                               "filtering": {"campaign_ids": chunk, "primary_status": "STATUS_ALL"}}, "reading campaigns")
+        found = set()
+        for c in d.get("list") or []:
+            cid = str(c.get("campaign_id") or "")
+            if not cid:
+                continue
+            found.add(cid); seen = True
+            op, sec = str(c.get("operation_status") or "").upper(), str(c.get("secondary_status") or "").upper()
+            out[cid] = "REMOVED" if op == "DELETE" or sec.endswith("_DELETE") else "ACTIVE" if op == "ENABLE" else "PAUSED"
+        for cid in chunk:
+            if cid not in found:
+                out.setdefault(cid, None)
+    if not seen:                                         # TikTok returned nothing at all: don't guess
+        return {}
+    return {k: (v or "REMOVED") for k, v in out.items()}

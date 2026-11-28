@@ -49,6 +49,12 @@ class FakeTikTok:
                 {"dimensions": {"ad_id": "1873948404761793", "stat_time_day": d + " 00:00:00"},
                  "metrics": {"spend": "88.50", "impressions": "12000", "clicks": "140", "campaign_name": "Sales",
                              "campaign_id": "1873948398763138", "adgroup_name": "UAE", "adgroup_id": "1", "ad_name": "Oud"}}]}})
+        if "campaign/get" in url:
+            import json as _j
+            ids = _j.loads(params["filtering"])["campaign_ids"]
+            live = getattr(self, "live", {})
+            return R({"code": 0, "data": {"list": [{"campaign_id": i, "operation_status": live[i][0], "secondary_status": live[i][1]}
+                                                  for i in ids if i in live]}})
         return R({"code": 40002, "message": "unknown"})
 
 
@@ -271,3 +277,21 @@ def test_publish_needs_a_linked_tiktok_account_and_creates_nothing_without_one(a
     r = c.post("/campaign/shop/publish-tiktok", json=body, headers=H)
     assert r.status_code == 502 and "Link the shop's TikTok account" in r.json["error"]
     assert not [p for _, p, _, _ in st.tiktok_api_http.calls if p in ("campaign/create", "adgroup/create", "identity/create")]
+
+
+def test_home_counts_only_campaigns_really_on_in_tiktok(app):
+    c = app.test_client()
+    connect(c)
+    c.post("/tiktok/shop/advertiser", json={"advertiser_id": "7651683849232695297"}, headers=H)
+    st = app.extensions["paysignal"]
+    for cid in ("c1", "c2", "c3"):
+        st.tiktok_launches.add("shop", {"campaign_id": cid, "name": "Camp " + cid, "status": "ACTIVE", "adgroup_ids": [], "ad_ids": []})
+    st.tiktok_api_http.live = {"c1": ("ENABLE", "CAMPAIGN_STATUS_ENABLE"),          # still on
+                               "c2": ("DISABLE", "CAMPAIGN_STATUS_DISABLE")}        # paused in TikTok; c3 deleted (not returned)
+    changed = st.sync_tiktok_status("shop", force=True)
+    assert changed == {"c2": "PAUSED", "c3": "REMOVED"}
+    rows = dict(st.store.db.execute("SELECT campaign_id, status FROM tiktok_launches WHERE client_id='shop'").fetchall())
+    assert rows == {"c1": "ACTIVE", "c2": "PAUSED", "c3": "REMOVED"}
+    st.tiktok_api_http.live = {}                                                    # TikTok answers nothing: keep what we know
+    assert st.sync_tiktok_status("shop", force=True) == {}
+    assert dict(st.store.db.execute("SELECT campaign_id, status FROM tiktok_launches WHERE client_id='shop'").fetchall())["c1"] == "ACTIVE"
