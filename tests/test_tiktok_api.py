@@ -116,7 +116,7 @@ class Publishing(FakeTikTok):
             return R({"code": 40002, "message": f"bad {path}"})
         reply = {"campaign/create": {"campaign_id": "C1"}, "adgroup/create": {"adgroup_id": "G1"},
                  "file/video/ad/upload": [{"video_id": "V1"}], "file/image/ad/upload": {"image_id": "I1"},
-                 "identity/create": {"identity_id": "ID1"}, "ad/create": {"ad_ids": ["A1", "A2"]}}.get(path, {})
+                 "ad/create": {"ad_ids": ["A1", "A2"]}}.get(path, {})
         return R({"code": 0, "data": reply})
 
     def get(self, url, params=None, headers=None, timeout=None):
@@ -125,6 +125,9 @@ class Publishing(FakeTikTok):
         if "file/video/ad/info" in url:
             return R({"code": 0, "data": {"list": [{"video_id": "V1", "video_cover_url": "https://p16.tiktokcdn.com/cover.jpg"}]}})
         if "identity/get" in url:
+            if params.get("identity_type") == "BC_AUTH_TT" and not getattr(self, "no_identity", False):
+                return R({"code": 0, "data": {"identity_list": [{"identity_id": "ID1", "identity_type": "BC_AUTH_TT",
+                                                                 "identity_authorized_bc_id": "BC9", "display_name": "bynawi.ae"}]}})
             return R({"code": 0, "data": {"identity_list": []}})
         return super().get(url, params=params, headers=headers, timeout=timeout)
 
@@ -165,7 +168,7 @@ def test_publish_creates_campaign_off_with_tracking_link_and_rolls_back_on_failu
     assert g["skip_learning_phase"] is False                            # TikTok must learn who buys
     assert [x["call_to_action"] for x in calls["ad/create"]["creatives"]] == ["SHOP_NOW", "SHOP_NOW"]    # BUY_NOW isn't a TikTok button
     cr = calls["ad/create"]["creatives"][0]
-    assert "utm_source=tiktok" in cr["landing_page_url"] and cr["video_id"] == "V1" and cr["image_ids"] == ["I1"] and cr["identity_id"] == "ID1"
+    assert "utm_source=tiktok" in cr["landing_page_url"] and cr["video_id"] == "V1" and cr["image_ids"] == ["I1"] and cr["identity_id"] == "ID1" and cr["identity_type"] == "BC_AUTH_TT" and cr["identity_authorized_bc_id"] == "BC9"
     live = c.post("/campaign/shop/tiktok-launch/C1", json={"action": "live"}, headers=H)
     assert live.status_code == 400                                     # needs confirm
     assert c.post("/campaign/shop/tiktok-launch/C1", json={"action": "live", "confirm": True}, headers=H).json["status"] == "ACTIVE"
@@ -258,3 +261,13 @@ def test_posts_refused_explains_how_to_fix(app):
     c.post("/tiktok/shop/advertiser", json={"advertiser_id": "7651683849232695297"}, headers=H)
     r = c.post("/media/shop/tiktok-posts", headers=H).json
     assert r["found"] == 0 and "permission denied" in r["why"] and "Business Center" in r["why"]
+
+
+def test_publish_needs_a_linked_tiktok_account_and_creates_nothing_without_one(app):
+    c, st, ids = setup_publish(app)
+    st.tiktok_api_http.no_identity = True
+    body = {"plan": PLAN, "media": {"0-0": f"media:{ids[0]}", "0-1": f"media:{ids[1]}"}, "landing_url": "bynawi.com",
+            "pixel_id": "777", "event": "add_to_cart"}
+    r = c.post("/campaign/shop/publish-tiktok", json=body, headers=H)
+    assert r.status_code == 502 and "Link the shop's TikTok account" in r.json["error"]
+    assert not [p for _, p, _, _ in st.tiktok_api_http.calls if p in ("campaign/create", "adgroup/create", "identity/create")]

@@ -386,20 +386,27 @@ def video_cover(http, token: str, advertiser_id: str, video_id: str) -> str:
     return img
 
 
-def identity(http, token: str, advertiser_id: str, display_name: str) -> str:
-    """The name shown on the ads: reuse the business's custom identity, or create one with its name."""
-    try:
-        d = _get(http, token, "identity/get", {"advertiser_id": advertiser_id, "identity_type": "CUSTOMIZED_USER"}, "reading identities")
+IDENTITY_ORDER = ("BC_AUTH_TT", "TT_USER", "AUTH_CODE")
+
+
+def identity(http, token: str, advertiser_id: str, display_name: str = "") -> dict:
+    """The TikTok account the ads are shown from. TikTok no longer accepts custom identities: it must be a TikTok account
+    linked to the ad account (authorized in Business Center, or logged in). Returns {type, id, bc_id}."""
+    problems = []
+    for t in IDENTITY_ORDER:
+        try:
+            d = _get(http, token, "identity/get", {"advertiser_id": advertiser_id, "identity_type": t}, "reading the TikTok accounts")
+        except TikTokAPIError as e:
+            problems.append(str(e))
+            continue
         for it in d.get("identity_list") or d.get("list") or []:
             if it.get("identity_id"):
-                return str(it["identity_id"])
-    except TikTokAPIError:
-        pass
-    d = _post(http, token, "identity/create", {"advertiser_id": advertiser_id, "display_name": (display_name or "Shop")[:40]},
-              "creating the ad identity")
-    if not d.get("identity_id"):
-        raise TikTokAPIError("TikTok didn't create an ad identity. Create one in TikTok Ads Manager (any ad's 'Identity'), then try again.")
-    return str(d["identity_id"])
+                return {"type": it.get("identity_type") or t, "id": str(it["identity_id"]),
+                        "bc_id": str(it.get("identity_authorized_bc_id") or "")}
+    raise TikTokAPIError("TikTok no longer lets ads run without a TikTok account. Link the shop's TikTok account to this ad account: "
+                         "in TikTok Business Center, open Assets, choose the TikTok account, and give the ad account access "
+                         "(or in Ads Manager: Tools, Identities, link a TikTok account). Then press publish again."
+                         + (f" ({problems[0]})" if problems else ""))
 
 
 def set_adgroup_status(http, token: str, advertiser_id: str, adgroup_ids: list, enable: bool) -> None:
@@ -418,6 +425,8 @@ def publish(http, token: str, advertiser_id: str, plan: dict, videos: dict, land
     sets = plan.get("ad_sets") or []
     total = float(plan.get("daily_budget") or 0)
     created = {"campaign_id": None, "adgroups": [], "ads": []}
+    needs_identity = any(not (videos.get(f"{i}-{j}") or {}).get("spark") for i, s_ in enumerate(sets) for j, _ in enumerate(s_.get("ads") or []))
+    ident = identity(http, token, advertiser_id, display_name) if needs_identity else None      # checked first: nothing is created if it fails
     try:
         if existing_campaign_id:       # consolidation: new ad groups go inside a campaign that already exists
             created["campaign_id"] = str(existing_campaign_id)
@@ -426,7 +435,6 @@ def publish(http, token: str, advertiser_id: str, plan: dict, videos: dict, land
                                                        "objective_type": "WEB_CONVERSIONS", "budget_mode": "BUDGET_MODE_INFINITE",
                                                        "operation_status": "DISABLE"}, "creating the campaign")
             created["campaign_id"] = str(d.get("campaign_id"))
-        ident = identity(http, token, advertiser_id, display_name)
         age_min = int((plan.get("targeting") or {}).get("age_min") or 18)
         ages = [a for a in AGE_GROUPS if int(a.split("_")[1]) >= age_min or a == "AGE_55_100"] if age_min > 18 else None
         for i, s in enumerate(sets):
@@ -465,10 +473,13 @@ def publish(http, token: str, advertiser_id: str, plan: dict, videos: dict, land
                     continue
                 vid = v.get("video_id") or upload_video(http, token, advertiser_id, ad.get("headline") or "ad", v.get("data"), v.get("url"))
                 cover = video_cover(http, token, advertiser_id, vid)
-                creatives.append({"ad_name": str(ad.get("headline") or f"Ad {j + 1}")[:500], "identity_type": "CUSTOMIZED_USER",
-                                  "identity_id": ident, "ad_format": "SINGLE_VIDEO", "video_id": vid, "image_ids": [cover],
-                                  "ad_text": str(ad.get("primary_text") or "")[:100], "call_to_action": button,
-                                  "landing_page_url": landing_url})
+                c = {"ad_name": str(ad.get("headline") or f"Ad {j + 1}")[:500], "identity_type": ident["type"],
+                     "identity_id": ident["id"], "ad_format": "SINGLE_VIDEO", "video_id": vid, "image_ids": [cover],
+                     "ad_text": str(ad.get("primary_text") or "")[:100], "call_to_action": button,
+                     "landing_page_url": landing_url}
+                if ident["bc_id"]:
+                    c["identity_authorized_bc_id"] = ident["bc_id"]
+                creatives.append(c)
             a = _post(http, token, "ad/create", {"advertiser_id": advertiser_id, "adgroup_id": gid, "creatives": creatives},
                       f"creating the ads in ad group {i + 1}")
             created["ads"] += [str(x) for x in a.get("ad_ids") or []]
