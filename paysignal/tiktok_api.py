@@ -487,7 +487,8 @@ def publish(http, token: str, advertiser_id: str, plan: dict, videos: dict, land
         raise
     return {"platform": "tiktok", "campaign_id": created["campaign_id"], "advertiser_id": advertiser_id, "status": "PAUSED",
             "name": plan.get("name"), "daily_budget": total, "ad_groups": created["adgroups"], "ads": created["ads"],
-            "countries": countries, "added_to_existing": bool(existing_campaign_id),
+            "countries": countries, "product_focus": plan.get("product_focus") or "", "offer": plan.get("offer") or "none",
+            "added_to_existing": bool(existing_campaign_id),
             "adgroup_ids": [g["id"] for g in created["adgroups"]] if existing_campaign_id else [],
             "event": event, "manager_url": f"https://ads.tiktok.com/i18n/perf/campaign?aadvid={advertiser_id}"}
 

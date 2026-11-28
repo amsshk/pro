@@ -107,11 +107,11 @@ SYSTEM_TIKTOK = (
     "when the notes say nothing: ONE ad group for new buyers (all the budget, broad targeting; a second ad group only for "
     "retargeting, with a bigger budget, and its name must start with 'RT') and 3-5 clearly different ads, plus the "
     "business's best organic posts as Spark Ads when they exist (source_post_id).\n"
-    "- CONSOLIDATE: default to the structure the business already has, not new campaigns. If the brief has a 'placement' with "
-    "action create_adgroup_in_existing_campaign, build ONLY the new ad group (one, unless the notes ask for more) and its ads for that campaign: "
-    "use the campaign's name as 'name', give the ad group a name different from the ones it already has, and use only the "
-    "budget in the brief for it. A new audience, bid or budget test is a new ad group; only a different creative angle is "
-    "new ads. Never split a small budget across more ad groups or campaigns, and budget changes stay within 30% each time, never frequent, and campaigns use ad-group budgets (not CBO), so each ad group keeps its own budget.\n"
+    "- product_focus: the ONE product or collection these ads sell, in 1-4 words (e.g. 'N°6 Extrait', 'Gift sets', 'All perfumes' "
+    "when the ads show the whole range). offer: the offer in 1-4 words (e.g. 'Free delivery', '20% off') or 'none'. Keep them "
+    "the same wording every time for the same product or offer. A new audience, bid or budget test is a new ad group; only a "
+    "different creative angle is new ads. Never split a small budget across more ad groups, and budget changes stay within "
+    "30% each time, never frequent. Campaigns use ad-group budgets (not CBO).\n"
     "- Write about what THIS business actually sells (its real product names and category) from the product description "
     "and data. Never describe it as something else. Never invent prices, results, reviews, discounts or numbers.\n"
     "- Ads are short vertical videos. Per ad: hook = ad name, what is said or shown in the first 2 seconds (max 40 "
@@ -138,7 +138,7 @@ SYSTEM_TIKTOK = (
     "Reply with only a JSON object in this shape:\n"
     '{"name": str, "platform": "TikTok", "objective": "WEB_CONVERSIONS", "conversion_location": "Website", '
     '"optimization": "purchase" or "checkout" or "add_to_cart", "bid_strategy": str, "daily_budget": number, '
-    '"currency": str, "rationale": "", "targeting": {"countries": [two-letter codes], "age_min": number}, '
+    '"currency": str, "rationale": "", "product_focus": str, "offer": str, "targeting": {"countries": [two-letter codes], "age_min": number}, '
     '"ad_sets": [{"name": str, "audience": "broad" or "interest" or "retargeting", "interests": [str], '
     '"budget_share": number, "placements": "TikTok", '
     '"ads": [{"source_post_id": str or null, "format": "video", "hook": str, "video_brief": str, '
@@ -267,8 +267,10 @@ def tidy_tiktok(plan: dict) -> dict:
     notes = plan.get("notes") if isinstance(plan.get("notes"), list) else []
     plan["notes"] = [str(n).strip()[:120] for n in notes
                      if str(n).strip() and not any(w in str(n).lower() for w in NOTE_BANNED)][:3]
+    plan["product_focus"] = str(plan.get("product_focus") or "").strip()[:60]
+    plan["offer"] = str(plan.get("offer") or "none").strip()[:60] or "none"
     keep = ("name", "platform", "objective", "conversion_location", "optimization", "bid_strategy", "daily_budget",
-            "currency", "targeting", "ad_sets", "notes")
+            "currency", "targeting", "ad_sets", "notes", "product_focus", "offer")
     for k in [k for k in plan if k not in keep]:
         del plan[k]
     plan["rationale"] = ""                      # empty, not missing, so screens that read these keys keep working
@@ -351,7 +353,7 @@ def build_campaign(ai: MetaAI, context: dict, daily_budget: float, goal: str = "
                    extra_instructions: str = "", conversion: str = "purchase", product: str = "",
                    landing_url: str = "", budget_currency: str = "", platform: str = "meta",
                    countries: Optional[list] = None, research: bool = True,
-                   search: Optional[Callable[[str], str]] = None, placement: Optional[dict] = None, revise: Optional[dict] = None) -> dict:
+                   search: Optional[Callable[[str], str]] = None, revise: Optional[dict] = None) -> dict:
     conversion = "signup" if conversion == "signup" else "purchase"
     brief = {"daily_budget": daily_budget, "currency": budget_currency or context.get("currency", "AED"),
              "conversion": conversion,
@@ -361,10 +363,6 @@ def build_campaign(ai: MetaAI, context: dict, daily_budget: float, goal: str = "
     tiktok = platform == "tiktok"
     countries = [c.upper() for c in (countries or []) if isinstance(c, str) and len(c) == 2] or ["AE"]
     brief["countries"] = countries
-    if placement and placement.get("action") == "create_adgroup_in_existing_campaign" and tiktok:
-        c = placement["campaign"]
-        brief["placement"] = {"action": "create_adgroup_in_existing_campaign", "campaign": c["name"],
-                              "existing_ad_groups": [g.get("name") for g in c.get("ad_groups") or []][:6]}
     if revise:                                              # change a plan the person has seen: keep everything else as it is
         brief["revise"] = {"current_plan": revise["plan"], "change_requested": str(revise["change"])[:1500],
                            "how": "Apply ONLY the change requested. Keep every other ad group, ad, budget, name and setting exactly as in "

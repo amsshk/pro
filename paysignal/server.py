@@ -3543,19 +3543,30 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 if not prev or not isinstance(prev.get("plan"), dict):
                     abort(404, "That plan isn't available to change any more. Build it again.")
                 revise = {"plan": prev["plan"], "change": str(body["revision"]).strip()}
-            placement = None
-            if platform == "tiktok" and not own:
-                with state.lock:
-                    mine = state.tiktok_launches.list(client_id)
-                placement = builder_rules.decide(body.get("countries") or ["AE"], budget, mine, force_new=bool(body.get("new_campaign")))
             out = build_campaign(ai, ctx, budget, body.get("goal", ""), body.get("notes", ""),
                                  conversion=conversion, product=product, landing_url=landing,
-                                 budget_currency=budget_currency, platform=platform, placement=placement, revise=revise)
+                                 budget_currency=budget_currency, platform=platform, revise=revise)
         except PermissionError as e:
             abort(503, str(e))
         except (RuntimeError, CampaignError) as e:
             abort(502, str(e))
         out["platform"] = platform
+        placement = None
+        if platform == "tiktok" and not own and isinstance(out.get("plan"), dict):
+            with state.lock:
+                mine = state.tiktok_launches.list(client_id)
+            plan_ = out["plan"]
+            placement = builder_rules.decide((plan_.get("targeting") or {}).get("countries") or ["AE"], budget, mine,
+                                             plan_.get("product_focus") or "", plan_.get("offer") or "none",
+                                             force_new=bool(body.get("new_campaign")))
+            if placement["action"] == "create_adgroup_in_existing_campaign":       # it goes inside that campaign: same name, new ad group names
+                c = placement["campaign"]
+                plan_["name"] = c["name"]
+                used = {builder_rules.norm(g.get("name")) for g in c.get("ad_groups") or []}
+                for st_ in plan_.get("ad_sets") or []:
+                    base_name, n = str(st_.get("name") or "Ad group"), 2
+                    while builder_rules.norm(st_.get("name")) in used:
+                        st_["name"] = f"{base_name} {n}"[:100]; n += 1
         if placement:
             c = placement["campaign"]
             out["placement"] = {"action": placement["action"], "reason": placement["reason"], "cap": placement["cap"],
