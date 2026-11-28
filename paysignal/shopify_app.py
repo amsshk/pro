@@ -269,7 +269,8 @@ def order_to_payments(o: dict, client_id: str, costs: dict | None = None) -> lis
         discount=_money(o.get("totalDiscountsSet")), promo_code=codes[0] if codes else None, items=items,
         utm_source=utm.get("source"), utm_medium=utm.get("medium"), utm_campaign=utm.get("campaign"),
         utm_content=utm.get("content"), fbclid=(qs.get("fbclid") or [None])[0],
-        ttclid=(qs.get("ttclid") or [None])[0], payment_method=payment_method_name(o.get("paymentGatewayNames")),
+        ttclid=(qs.get("ttclid") or [None])[0], gclid=(qs.get("gclid") or qs.get("wbraid") or qs.get("gbraid") or [None])[0],
+        payment_method=payment_method_name(o.get("paymentGatewayNames")),
     )]
     for rf in o.get("refunds") or []:
         amount = _money(rf.get("totalRefundedSet"))

@@ -34,6 +34,7 @@ class Payment:
     customer_id: Optional[str] = None
     fbclid: Optional[str] = None      # Meta click id, if captured
     ttclid: Optional[str] = None      # TikTok click id, if captured
+    gclid: Optional[str] = None       # Google Ads click id, if captured (so a Google sale is never credited to another ad)
     discount: float = 0.0
     refund_of: Optional[str] = None   # external_id of the original purchase
     items: list[LineItem] = field(default_factory=list)

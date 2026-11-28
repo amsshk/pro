@@ -127,6 +127,33 @@ class PaymentStore:
         self.db.commit()
         return True
 
+    AD_FIELDS = ("utm_source", "utm_medium", "utm_campaign", "utm_content", "fbclid", "ttclid", "gclid", "ttp", "fbp", "fbc",
+                 "promo_code", "event_source_url", "customer_id", "first_name", "last_name", "city", "zip", "country",
+                 "email", "phone", "client_user_agent", "client_ip_address")
+
+    def fill_from_twin(self, client_id: str, source: str, external_id: str, twin: Payment) -> bool:
+        """The same sale seen twice (Shopify order + the Stripe charge that paid it): the kept copy takes whatever the
+        other one knew and it doesn't (which ad the buyer came from, contact, items), so merging never loses ad data."""
+        row = self.db.execute("SELECT data FROM payments WHERE client_id=? AND source=? AND external_id=?",
+                              (client_id, source, external_id)).fetchone()
+        if not row:
+            return False
+        d, changed = json.loads(row[0]), False
+        t = asdict(twin)
+        for k in self.AD_FIELDS:
+            if t.get(k) and not d.get(k):
+                d[k], changed = t[k], True
+        if t.get("items") and not d.get("items"):
+            d["items"], changed = t["items"], True
+        if t.get("discount") and not d.get("discount"):
+            d["discount"], changed = t["discount"], True
+        if changed:
+            self.db.execute("UPDATE payments SET data=?, customer_key=? WHERE client_id=? AND source=? AND external_id=?",
+                            (json.dumps(d), customer_key(d.get("email"), d.get("phone"), d.get("customer_id")),
+                             client_id, source, external_id))
+            self.db.commit()
+        return changed
+
     def add_many(self, payments: list[Payment]) -> int:
         return sum(self.add(p) for p in payments)
 

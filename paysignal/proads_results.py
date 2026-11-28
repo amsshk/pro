@@ -16,6 +16,8 @@ AD_SOURCES = ("tiktok", "facebook", "instagram", "meta", "fb", "ig")
 def from_ads(p) -> Optional[str]:
     """'tiktok' / 'meta' when the order came through a tracked ad click (ProAds tracking link or the platform's click id)."""
     src, med = (p.utm_source or "").lower(), (p.utm_medium or "").lower()
+    if getattr(p, "gclid", None) and not (p.ttclid or p.fbclid):
+        return None                                      # the buyer's last click was a Google ad
     if p.ttclid or (src == "tiktok" and med in ("paid", "cpc", "ads", "proads")):
         return "tiktok"
     if p.fbclid or (src in AD_SOURCES[1:] and med in ("paid", "cpc", "ads", "proads")):

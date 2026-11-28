@@ -262,6 +262,10 @@ class App:
         return client_id in self.clients or self.accounts.get(client_id) is not None
 
     def config(self, client_id: str) -> dict:
+        with self.lock:                      # reads the shared database; background jobs write to it at the same time
+            return self._config(client_id)
+
+    def _config(self, client_id: str) -> dict:
         cfg = self.clients.get(client_id)
         if cfg is None:
             acct = self.accounts.get(client_id)
@@ -387,7 +391,9 @@ class App:
         given = request.headers.get("X-API-Key", "")
         expected = cfg.get("api_key", "")
         # a valid key or sign-in always works: someone spamming wrong keys can't lock the real owner out
-        if given and self.accounts.session_client(given) == client_id:
+        with self.lock:
+            signed_in = bool(given) and self.accounts.session_client(given) == client_id
+        if signed_in:
             # an admin viewing a business can only read, plus: build competitor plans, and connect the business's
             # Facebook with the admin's own login (agencies run their clients' ad accounts)
             if request.method not in ("GET", "HEAD", "OPTIONS") and self.accounts.session_viewer(given) and \
@@ -447,8 +453,10 @@ class App:
         if p.kind == "refund":
             return bool(p.refund_of and db.execute("SELECT 1 FROM merged_payments WHERE client_id=? AND source=? AND external_id=?",
                                                    (client_id, p.source, p.refund_of)).fetchone())
-        if db.execute("SELECT 1 FROM merged_payments WHERE client_id=? AND source=? AND external_id=?",
-                      (client_id, p.source, p.external_id)).fetchone():
+        was = db.execute("SELECT kept_source, kept_id FROM merged_payments WHERE client_id=? AND source=? AND external_id=?",
+                         (client_id, p.source, p.external_id)).fetchone()
+        if was:
+            self.store.fill_from_twin(client_id, was[0], was[1], p)       # also heals sales merged before this fix
             return True
         if db.execute("SELECT 1 FROM payments WHERE client_id=? AND source=? AND external_id=?",
                       (client_id, p.source, p.external_id)).fetchone():
@@ -483,6 +491,7 @@ class App:
         db.execute("INSERT OR IGNORE INTO merged_payments VALUES (?,?,?,?,?,?)",
                    (client_id, p.source, p.external_id, twin.source, twin.external_id, int(time.time())))
         db.commit()
+        self.store.fill_from_twin(client_id, twin.source, twin.external_id, p)
         log.info("%s: %s order %s is the same sale as %s %s; kept once", client_id, p.source, p.external_id, twin.source, twin.external_id)
         return True
 
@@ -2463,18 +2472,19 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                     dd = json.loads(data or "{}")
                 except ValueError:
                     dd = {}
-                rows.append((src, ext, amount, cur, at, sent_meta, dd.get("payment_method"), dd.get("utm_source"), dd.get("ttclid"), dd.get("fbclid")))
+                rows.append((src, ext, amount, cur, at, sent_meta, dd.get("payment_method"), dd.get("utm_source"),
+                             None if dd.get("gclid") and not dd.get("ttclid") else dd.get("ttclid"), dd.get("fbclid"), dd.get("gclid")))
             tt = {r[0]: (r[1], r[2]) for r in state.store.db.execute(
                 "SELECT event_id, status, reason FROM tiktok_delivered WHERE client_id=? AND event_id NOT LIKE '%refund%'", (client_id,))}
             meta_live = bool(state.connected_meta(client_id))
             tt_on = bool(state.store.db.execute("SELECT 1 FROM tiktok_pixels WHERE client_id=? AND active=1", (client_id,)).fetchone())
             out = []
-            for src, ext, amount, cur, at, sent_meta, pm, utm, ttc, fbc in rows:
+            for src, ext, amount, cur, at, sent_meta, pm, utm, ttc, fbc, gc in rows:
                 ref = eng.store.refunded_amount(client_id, ext)
                 t = tt.get(str(ext)[:200])
                 out.append({"order": str(ext)[-8:], "source": src, "amount": amount, "currency": cur, "at": at,
                             "payment": pm or "", "refunded": round(ref, 2),
-                            "from_ad": "TikTok ad" if ttc else "Facebook / Instagram ad" if fbc else
+                            "from_ad": "Google ad" if gc and not (ttc or fbc) else "TikTok ad" if ttc else "Facebook / Instagram ad" if fbc else
                             {"tiktok": "TikTok", "instagram": "Instagram", "ig": "Instagram", "facebook": "Facebook", "fb": "Facebook",
                              "whatsapp": "WhatsApp", "snapchat": "Snapchat", "google": "Google"}.get((utm or "").lower(), (utm or "").title()) or "Direct / unknown",
                             "meta": "sent" if sent_meta else ("waiting" if meta_live else "not connected"),
@@ -2878,6 +2888,8 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
             return sorted(set(state.clients) | {r[0] for r in state.store.db.execute("SELECT client_id FROM accounts")})
 
     def order_origin(p) -> str:
+        if p.gclid and not (p.ttclid or p.fbclid):
+            return "Google ad"
         if p.ttclid:
             return "TikTok ad"
         if p.fbclid:
