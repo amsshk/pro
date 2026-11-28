@@ -3240,6 +3240,61 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
                 log.warning("TikTok alert check for %s failed: %s", cid, e)
     state.tiktok_watch_all = tiktok_watch_all
 
+    def tiktok_campaigns_all() -> None:
+        """Emails for every TikTok campaign, whoever made it: a new campaign (name and ID), and a campaign switched on or off.
+        The first look only records what exists, so nothing old is announced."""
+        if not mailer.available():
+            return
+        with state.lock:
+            state.store.db.execute("CREATE TABLE IF NOT EXISTS tiktok_camp_state (client_id TEXT NOT NULL, campaign_id TEXT NOT NULL,"
+                                   " name TEXT, on_flag INTEGER NOT NULL, PRIMARY KEY (client_id, campaign_id))")
+            installed = state.client_mails.installed_at("tt_camps")
+            ids = state.tiktok_ads.all()
+        for cid in ids:
+            try:
+                if is_admin(cid) or not state.known(cid):
+                    continue
+                with state.lock:
+                    row = state.tiktok_ads.get(cid)
+                if not row or not row["advertiser_id"]:
+                    continue
+                camps = tiktok_api.campaigns(tt_http(), tt_token(cid, row), row["advertiser_id"])
+                with state.lock:
+                    seen = {r[0]: r[1] for r in state.store.db.execute(
+                        "SELECT campaign_id, on_flag FROM tiktok_camp_state WHERE client_id=?", (cid,)).fetchall()}
+                with state.lock:
+                    first = not state.client_mails.sent(cid, "camp_baseline", "1")
+                    if first:
+                        state.client_mails.mark(cid, "camp_baseline", "1")
+                for c in camps:
+                    if not c["id"] or c["name"].startswith("promote_"):
+                        continue
+                    data = {"campaign": c["name"] or c["id"], "platform": "TikTok", "id": c["id"]}
+                    if c["id"] not in seen:
+                        made = ad_created(c.get("created"))
+                        if not first and (made is None or made >= installed - 3600):
+                            data["new"] = True
+                            if c["on"]:
+                                mail_once(cid, "live", "new-" + c["id"], data)
+                            else:
+                                mail_once(cid, "paused", "new-" + c["id"], {**data, "new": True})
+                    elif bool(seen[c["id"]]) != c["on"]:
+                        mail_once(cid, "live" if c["on"] else "paused", f"{c['id']}-{int(time.time())}", data)
+                    with state.lock:
+                        state.store.db.execute("INSERT INTO tiktok_camp_state VALUES (?,?,?,?) ON CONFLICT(client_id, campaign_id)"
+                                               " DO UPDATE SET name=excluded.name, on_flag=excluded.on_flag",
+                                               (cid, c["id"], c["name"], 1 if c["on"] else 0))
+                        state.store.db.commit()
+            except Exception as e:
+                log.warning("TikTok campaign check for %s failed: %s", cid, e)
+    state.tiktok_campaigns_all = tiktok_campaigns_all
+
+    def ad_created(s):
+        try:
+            return datetime.strptime(str(s)[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
+        except ValueError:
+            return None
+
     @flask.get("/digest/<client_id>")
     def digest_view(client_id):
         """The switch, plus a preview of today's email (?preview=1)."""
@@ -7257,7 +7312,7 @@ table{{width:100%;border-collapse:collapse;font-size:14px}}td,th{{text-align:lef
     return flask
 
 
-MAIL_JOBS = ("billing_auto", "order_mails_all", "trial_mail_all", "plan_mails_all", "weekly_mails_all", "tiktok_watch_all")
+MAIL_JOBS = ("billing_auto", "order_mails_all", "trial_mail_all", "plan_mails_all", "weekly_mails_all", "tiktok_watch_all", "tiktok_campaigns_all")
 
 
 def _start_worker(state: App, every: int) -> None:

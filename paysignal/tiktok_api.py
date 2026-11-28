@@ -660,3 +660,20 @@ def adgroups(http, token: str, advertiser_id: str) -> list[dict]:
             break
         page += 1
     return out
+
+
+def campaigns(http, token: str, advertiser_id: str) -> list[dict]:
+    """All campaigns that aren't deleted: id, name, on/off (operation_status) and TikTok's detailed status. Used for the
+    'new campaign' and 'campaign on / off' emails."""
+    out, page = [], 1
+    while True:
+        d = _get(http, token, "campaign/get", {"advertiser_id": advertiser_id, "page": page, "page_size": 100,
+                                               "filtering": {"primary_status": "STATUS_NOT_DELETE"}}, "reading campaigns")
+        for c in d.get("list") or []:
+            out.append({"id": str(c.get("campaign_id") or ""), "name": c.get("campaign_name") or "",
+                        "on": c.get("operation_status") == "ENABLE", "status": str(c.get("secondary_status") or ""),
+                        "created": c.get("create_time") or ""})
+        if page >= int((d.get("page_info") or {}).get("total_page") or 1) or page >= 10:
+            break
+        page += 1
+    return out

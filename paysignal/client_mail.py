@@ -92,10 +92,17 @@ def render(kind: str, name: str, d: dict, app_url: str) -> tuple[str, str, str]:
             subject = f"{name}: your campaign is live"
             lead = "Your campaign is now live."
             body = [f"{camp} is running on {plat}."]
+            if d.get("id"):
+                body.append(f"Campaign ID: {d['id']}")
+            if d.get("new"):
+                lead = "A new campaign was created."
+                subject = f"{name}: new campaign {camp}"
         else:
             subject = f"{name}: your campaign is paused"
             lead = "Your campaign is paused."
             body = [f"{camp} on {plat} is paused."]
+            if d.get("id"):
+                body.append(f"Campaign ID: {d['id']}")
             if d.get("reason") == "billing":
                 body.append("Your free ad test ended, so ProAds paused it. Add a card on Plan & billing and it runs again.")
         body.append("Spending only happens while a campaign is live.")
