@@ -29,7 +29,10 @@ def test_job_sends_each_email_once(tmp_path, monkeypatch):
     st.billing.upsert("glow-clinic", ads_trial_started=int(time.time() - days * 86400 - 3600))   # ended an hour ago
     st.trial_mail_all()
     st.trial_mail_all()
-    time.sleep(0.3)
+    for _ in range(50):
+        if any("ad test" in x[1] for x in sent):
+            break
+        time.sleep(0.1)
     assert [x for x in sent if "ad test" in x[1]] == [("o@glow.ae", "Glow Clinic: your free ad test has ended")]
     _, text, html = trial_mail.render("ended", "Glow Clinic", {"pro": "AED 299", "premium": "AED 799"}, "5%", "https://x.net")
     assert "https://x.net/app#/billing" in text and "AED 299" in text and "Add your plan" in html
@@ -39,7 +42,11 @@ def test_failed_reminder_is_retried_and_test_email_reports_why(tmp_path, monkeyp
     from paysignal import mailer
     tries = []
     monkeypatch.setattr(mailer, "available", lambda: True)
-    monkeypatch.setattr(mailer, "send_checked", lambda to, s, t, html=None: (tries.append(s) or (len(tries) > 1, "" if len(tries) > 1 else "SMTPAuthenticationError: bad login")))
+    def flaky(to, s, t, html=None):                      # the first ad-test email fails, everything else goes
+        tries.append(s)
+        first_fail = "ad test" in s and sum("ad test" in x for x in tries) == 1
+        return (not first_fail, "SMTPAuthenticationError: bad login" if first_fail else "")
+    monkeypatch.setattr(mailer, "send_checked", flaky)
     app = create_app({"pro": {"api_key": "admin-key-0123456789abc"}}, str(tmp_path / "t.db"), start_worker=False)
     c = app.test_client()
     c.post("/auth/signup", json={"business": "Glow Clinic", "email": "o@glow.ae", "password": "first-password-1", "terms": True, "phone": "0501234567"})
@@ -47,8 +54,8 @@ def test_failed_reminder_is_retried_and_test_email_reports_why(tmp_path, monkeyp
     days = st.billing.ads_access("glow-clinic")["trial_days"]
     st.billing.upsert("glow-clinic", ads_trial_started=int(time.time() - days * 86400 - 3600))
     st.trial_mail_all(); st.trial_mail_all(); st.trial_mail_all()
-    assert len(tries) == 2                                    # failed once, retried, then marked sent
+    assert len([t for t in tries if 'ad test' in t]) == 2                                    # failed once, retried, then marked sent
     r = c.post("/admin/pro/test-email", headers={"X-API-Key": "admin-key-0123456789abc"}, json={"to": "me@x.com"}).json
     assert r["sent"] is True and r["recent_reminders"][0]["client_id"] == "glow-clinic"
     r = c.post("/admin/pro/test-email", headers={"X-API-Key": "admin-key-0123456789abc"}, json={"to": "me@x.com", "kind": "ended"}).json
-    assert r["sent"] is True and tries[-1] == "[Test] Test business: your free ad test has ended"
+    assert r["sent"] is True and "[Test] Test business: your free ad test has ended" in tries

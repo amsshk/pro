@@ -85,7 +85,11 @@ def test_signup_and_client_email_copy_reach_admin(tmp_path, monkeypatch):
     c.post("/auth/signup", json={"business": "Glow Clinic", "email": "o@glow.ae", "password": "first-password-1", "terms": True, "phone": "0501234567"})
     st = app.extensions["paysignal"]
     assert st.deliver_client_mail("glow-clinic", "plan_ended", {}) is True
-    time.sleep(0.3)
-    subjects = [s for to, s in sent if to == "admin@x.net"]
-    assert any(s.startswith("[ProAds] New sign-up: Glow Clinic") for s in subjects)
-    assert any(s.startswith("[Copy]") for s in subjects)
+    def subjects():
+        return [s for to, s in sent if to == "admin@x.net"]
+    for _ in range(50):                                   # the notices go out from background threads
+        if any(s.startswith("[ProAds] New sign-up") for s in subjects()) and any(s.startswith("[Copy]") for s in subjects()):
+            break
+        time.sleep(0.1)
+    assert any(s.startswith("[ProAds] New sign-up: Glow Clinic") for s in subjects())
+    assert any(s.startswith("[Copy]") for s in subjects())

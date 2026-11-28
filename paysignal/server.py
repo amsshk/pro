@@ -2781,8 +2781,9 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
 
     def client_address(cid: str):
         """(email, business name) to write to, or None."""
-        acct = state.accounts.get(cid)
-        cfg = state.config(cid)
+        with state.lock:                                  # called from background threads: one database user at a time
+            acct = state.accounts.get(cid)
+            cfg = state.config(cid)
         email = (acct or {}).get("email") or cfg.get("email")
         if not email:
             return None
@@ -2832,7 +2833,11 @@ def create_app(clients: dict | None = None, db_path: str | None = None, start_wo
         threading.Thread(target=run, daemon=True, name="news-mail").start()
 
     def deliver_client_mail(cid: str, kind: str, data: dict) -> bool:
-        if not mailer.available() or not state.known(cid):
+        if not mailer.available():
+            return False
+        with state.lock:
+            known = state.known(cid)
+        if not known:
             return False
         if is_admin(cid):                  # ProAds' own account: only its new-sale emails, to the ProAds inbox
             who = (admin_inbox(), "ProAds") if kind == "orders" and admin_inbox() else None
